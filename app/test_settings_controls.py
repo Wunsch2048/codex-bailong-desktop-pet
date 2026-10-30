@@ -16,6 +16,7 @@ APP=QApplication.instance() or QApplication([])
 
 class BubbleStub(QObject):
     dataBusyChanged=Signal(str,bool)
+    panel_page='status'
     quota_busy=reset_busy=token_busy=False
     def return_to_status(self):pass
 

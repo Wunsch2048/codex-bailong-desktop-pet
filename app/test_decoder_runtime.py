@@ -59,6 +59,29 @@ class DecoderRuntimeTests(unittest.TestCase):
         self.assertFalse(cache.begin('stale',reserve=100,cancel=lambda:True))
         cache.put('stale',[],90,entry_limit=100,cancel=lambda:True)
         self.assertEqual(cache.stats()['bytes'],60);self.assertIsNotNone(cache.get('new'));self.assertIsNone(cache.get('stale'))
+    def test_prepared_loop_reuses_exact_frames_without_reopening_source(self):
+        cache=DecodedLoopCache();segments=[]
+        def drain(segment):
+            self.assertTrue(segment.ready.wait(2));self.assertIsNone(segment.error);frames=[segment.first]
+            while True:
+                raw,delay,index=segment.frames.get(timeout=2)
+                if raw is None:self.assertIsNone(index);break
+                frames.append((raw,delay,index))
+            return frames
+        try:
+            cold=PreparedSegment(self.path,16,3,6,cache=cache);segments.append(cold);expected=drain(cold)
+            with patch('stream_player.Image.open',side_effect=AssertionError('Source reopened for a warm loop')):
+                warm=PreparedSegment(self.path,16,3,6,cache=cache);segments.append(warm);actual=drain(warm)
+            self.assertEqual(expected,actual);self.assertEqual([x[2] for x in actual],[3,4,5,6]);self.assertGreater(cache.stats()['hits'],0)
+        finally:
+            for segment in segments:segment.close()
+    def test_cancelled_prepared_loop_does_not_publish_partial_cache(self):
+        cache=DecodedLoopCache();segment=PreparedSegment(self.path,16,0,9,autostart=False,cache=cache);calls=[0]
+        def cancelled():calls[0]+=1;return calls[0]>3
+        try:
+            with Image.open(self.path) as image:segment.produce(image,cancel=cancelled)
+            self.assertEqual(cache.stats()['entries'],0);self.assertLessEqual(segment.frames.qsize(),6)
+        finally:segment.close()
     def test_adaptive_clock_follows_native_frame_and_speed_without_busy_wait(self):
         self.p.path=self.path;self.p.next_time=.042;self.p.playhead=0;self.p.last_clock=100
         self.assertEqual(self.p.next_delay_ms(now=100),42)
@@ -95,7 +118,7 @@ class DecoderRuntimeTests(unittest.TestCase):
     def test_press_feedback_temporarily_keeps_fast_clock_and_stopped_tick_stays_stopped(self):
         from desktop import DesktopPet
         tick=QTimer();tick.start(42)
-        obj=SimpleNamespace(tick=tick,player=SimpleNamespace(next_delay_ms=lambda speed:42),settings={'playback_speed':1},sustained=SimpleNamespace(speed_factor=lambda p:1),press_feedback=time.monotonic(),schedule_movement=lambda:None)
+        obj=SimpleNamespace(locomotion=SimpleNamespace(active=False),tick=tick,player=SimpleNamespace(next_delay_ms=lambda speed:42),settings={'playback_speed':1},sustained=SimpleNamespace(speed_factor=lambda p:1),press_feedback=time.monotonic(),schedule_movement=lambda:None)
         try:
             DesktopPet.schedule_animation(obj);self.assertEqual(tick.interval(),16)
             obj.press_feedback=0;DesktopPet.schedule_animation(obj);self.assertEqual(tick.interval(),42)

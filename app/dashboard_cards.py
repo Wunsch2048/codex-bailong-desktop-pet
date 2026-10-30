@@ -1,4 +1,7 @@
 """Quota rings and a switchable token-chart/reset card."""
+from settings_controls import play_animation
+from theme_registry import color as theme_color
+from theme_runtime import set_theme_style,theme_style_source
 import calendar
 import math
 import time
@@ -14,11 +17,10 @@ DASH_HEIGHT=102
 
 def paint_deck_surface(p,rect):
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(QColor('#e3d9ed'),1));p.setBrush(QColor('#f1ebf7'));p.drawRoundedRect(rect.adjusted(3,.5,-.5,-.5),10,10)
-    p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#faf8fc'));p.drawRoundedRect(rect.adjusted(0,.5,-3,-3),10,10)
+    p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f5f2f7')));p.drawRoundedRect(rect,10,10)
 
 def ring_color(window):
-    if window.get('remaining') is not None and window['remaining']<=15:return QColor('#a37688')
+    if window.get('remaining') is not None and window['remaining']<=15:return QColor(theme_color('#a37688'))
     return GREEN if window.get('name')=='一周' else PURPLE
 
 from ring_widgets import QuotaRings
@@ -34,7 +36,7 @@ class DeckTabs(QWidget):
     def select(self,page,animate=True):
         self.layout().activate();self.page=page;target=QRectF(self.buttons[page].geometry())
         self.animation.stop();self._from=QRectF(self.pill);self._to=target
-        if animate and self.isVisible() and not self.pill.isEmpty():self.animation.start()
+        if animate and self.isVisible() and not self.pill.isEmpty():play_animation(self.animation)
         else:self.pill=target;self.update()
         for key,button in self.buttons.items():button.setChecked(key==page)
     def _advance(self,f):
@@ -49,7 +51,7 @@ class DeckTabs(QWidget):
         if self.buttons:self.pill=QRectF(self.buttons[self.page].geometry())
         super().hideEvent(event)
     def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#eae3f1'));p.drawRoundedRect(self.pill,5,5)
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#eae3f1')));p.drawRoundedRect(self.pill,5,5)
 
 class CardDeck(QWidget):
     selected=Signal(str)
@@ -66,7 +68,7 @@ class CardDeck(QWidget):
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly);button.setFont(font(12,True));button.setFixedSize(45 if key=='tokens' else 35,20)
             button.setToolTip('Token用量柱状图与今日小时曲线' if key=='tokens' else ('有重置公告待落实，点击查看' if reset_has_priority(reset_snapshot) else '查看额外重置公告'))
             accent='#75618d'
-            button.setStyleSheet('QToolButton{'+FONT_CSS+'font-size:12px;color:'+accent+';border:0;border-radius:5px;padding:1px;background:transparent;}QToolButton:hover:!checked{background:#f1ecf6;}')
+            set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:12px;color:'+accent+';border:0;border-radius:5px;padding:1px;background:transparent;}QToolButton:hover:!checked{background:#f1ecf6;}')
             button.clicked.connect(lambda checked=False,k=key:self.selected.emit(k));row.addWidget(button,1);tabs.buttons[key]=button
         layout.addWidget(tabs)
         self.stack=QStackedWidget();self.stack.setFixedHeight(78);layout.addWidget(self.stack);self.set_page(page,False)

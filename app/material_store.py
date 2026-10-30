@@ -162,6 +162,21 @@ class MaterialStore:
             work=Path(work);archive=work/'materials.zip';stage=work/'extracted';stage.mkdir()
             maximum=spec['bytes']+len(spec['files'])*4096+1024*1024
             try:
+                # Catalog SHA-256 checks authorize both local reuse and individual
+                # remote entries. Old catalogs without archive metadata use full ZIPs.
+                if spec.get('archiveSha256') and type(spec.get('archiveBytes')) is int and 0<spec['archiveBytes']<=maximum:
+                    from material_incremental import reuse_files,extract_missing,RangeUnavailable
+                    reused=reuse_files(self,tier,stage,cancel,progress)
+                    if reused:
+                        try:
+                            if len(reused)!=len(spec['files']):extract_missing(url,spec,stage,reused,opener or open_url,cancel,progress)
+                            self.verify(stage,tier,cancel,progress);self._receipt(stage,tier)
+                            cancelled(cancel);self._commit(stage,root,tier)
+                            return root
+                        except RangeUnavailable:
+                            # Range may be stripped by a proxy. Same URL, ordinary
+                            # full archive validation below; active resources survive.
+                            progress(0,spec['archiveBytes'],'downloading')
                 response=(opener or open_url)(url,{'Accept':'application/octet-stream'})
                 with response,archive.open('wb') as output:
                     total=int(response.headers.get('Content-Length','0'));done=0
@@ -175,6 +190,7 @@ class MaterialStore:
                 if exc.code==404:raise MaterialError('这套素材尚未公开发布；本机已有素材和卡片功能仍可使用') from exc
                 raise MaterialError('素材服务暂时不可用，请稍后重试') from exc
             except (URLError,TimeoutError,OSError) as exc:raise MaterialError('素材下载连接失败，请稍后重试') from exc
+            except (zipfile.BadZipFile,RuntimeError) as exc:raise MaterialError('素材压缩包无效') from exc
             cancelled(cancel)
             if spec.get('archiveSha256') and (archive.stat().st_size!=spec.get('archiveBytes') or hash_file(archive,cancel)!=spec['archiveSha256']):raise MaterialError('动画补丁压缩包校验失败')
             try:

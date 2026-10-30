@@ -134,22 +134,36 @@ def main():
     path=data_dir()/'codex-watch-state.json';replacement=None
     try:
         while enabled():
-            # Install/rollback owns its launch transaction; do not race it.
-            if not (install_root()/'deployment-journal.json').exists():
-                command=current_command()
-                if command is None:break
-                if getattr(sys,'frozen',False) and Path(command[0]).resolve()!=Path(sys.executable).resolve():
-                    replacement=command;break
-                sessions=desktop_sessions()
-                if gate.observe(sessions):
-                    try:
-                        spawn(command+['--from-codex'])
-                        state.update(launches=state['launches']+1,last_launch=time.time());state.pop('error',None)
-                    except OSError as error:
-                        state['error']=str(error)[:180];gate.sessions=set()
-                previous=state.get('codex_open');state['codex_open']=None if sessions is None else bool(sessions)
-                if previous!=state['codex_open'] or 'written' not in state or state.get('last_launch',0)>state['written']:
-                    state['written']=time.time();atomic(path,state)
+            try:
+                # Install/rollback owns its launch transaction; do not race it.
+                state['paused_for_deployment']=(install_root()/'deployment-journal.json').exists()
+                if not state['paused_for_deployment']:
+                    command=current_command()
+                    if command is None:
+                        raise OSError('当前安装入口暂不可用，等待下次检查')
+                    if getattr(sys,'frozen',False) and Path(command[0]).resolve()!=Path(sys.executable).resolve():
+                        replacement=command;break
+                    sessions=desktop_sessions()
+                    if gate.observe(sessions):
+                        try:
+                            spawn(command+['--from-codex'])
+                            state.update(launches=state['launches']+1,last_launch=time.time())
+                        except OSError:
+                            gate.sessions=set()
+                            raise
+                    state['codex_open']=None if sessions is None else bool(sessions)
+                state.pop('error',None)
+            except (OSError,ValueError,psutil.Error) as error:
+                # A temporary process/entry read failure must not kill the
+                # independent listener needed for the next Codex launch.
+                state['error']=str(error)[:180]
+            now=time.time()
+            signature=(state.get('codex_open'),state.get('paused_for_deployment'),state.get('error'),state['launches'])
+            if signature!=state.get('_signature') or now-state.get('written',0)>=30:
+                state['_signature']=signature;state['written']=now
+                try:atomic(path,{k:v for k,v in state.items() if k!='_signature'})
+                except OSError:
+                    state.pop('_signature',None) # retry diagnostics next poll
             time.sleep(POLL_SECONDS)
     finally:kernel.CloseHandle(handle)
     if replacement and enabled():spawn(replacement+[WATCH_FLAG])

@@ -3,6 +3,7 @@
 Reference: Apple's WWDC23 10194 at 11:12 and 12:43. Captures are prepared
 once per navigation; each frame is only a few raster draws on a fixed canvas.
 """
+from theme_registry import color as theme_color
 from dataclasses import dataclass,field
 import math
 from PySide6.QtCore import QRectF,QPoint,QPointF,QSizeF,Qt
@@ -33,7 +34,7 @@ def complete_frame(bubble):
     image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
     p=QPainter(image);p.setRenderHint(QPainter.RenderHint.Antialiasing)
     if not bubble.is_compact():
-        p.setBrush(QColor(SURFACE));p.setPen(QPen(QColor('#e0d9e6'),1))
+        p.setBrush(QColor(theme_color(SURFACE)));p.setPen(QPen(QColor(theme_color('#e0d9e6')),1))
         p.drawRoundedRect(QRectF(0,0,size.width(),size.height()).adjusted(.5,.5,-.5,-.5),PANEL_RADIUS,PANEL_RADIUS)
     bubble.content.render(p,QPoint(),QRegion(),QWidget.RenderFlag.DrawChildren);p.end()
     return image
@@ -97,7 +98,8 @@ class SurfaceState:
             heading=getattr(bubble,'_status_title',None)
             candidates={'heading':heading.parentWidget() if heading is not None else None,
                         'conversations':bubble.status_view,'quota':getattr(bubble,'quota_summary_card',None),
-                        'statistics':bubble.deck,'today_tokens':bubble.today_tokens_card}
+                        'statistics':bubble.deck,'today_tokens':bubble.today_tokens_card,
+                        'live_rate':getattr(bubble,'live_rate_card',None)}
             candidates.update({'action_'+str(i):widget for i,widget in enumerate(getattr(bubble,'_header_actions',[]))})
             for key,widget in candidates.items():
                 if widget is not None and widget.isVisibleTo(root) and widget.width()>0 and widget.height()>0:
@@ -120,7 +122,16 @@ class SurfaceState:
                 if quota.alert_badge.isVisibleTo(root):
                     shared['quota_alert']=QRectF(QPointF(quota.alert_badge.mapTo(root,QPoint())),QSizeF(quota.alert_badge.size()))
             if 'today_tokens' in shared:
-                footer=shared['today_tokens'];shared['today_tokens_link']=QRectF(footer.right()-45,footer.y(),45,footer.height())
+                footer=shared['today_tokens'];daily=bubble.today_tokens_card
+                if getattr(daily,'compact',False):
+                    from typography import ui_font
+                    link=QFontMetrics(ui_font(10)).horizontalAdvance('24h ›')+10
+                    shared['today_tokens_link']=QRectF(footer.right()-link,footer.y(),link,footer.height())
+                    shared['today_tokens_amount']=QRectF(footer.x()+30,footer.y(),max(1,footer.width()-link-30),footer.height())
+                else:shared['today_tokens_link']=QRectF(footer.right()-45,footer.y(),45,footer.height())
+            if 'live_rate' in shared:
+                footer=shared['live_rate']
+                shared['live_rate_value']=QRectF(footer.x()+30,footer.y(),max(1,footer.width()-30),footer.height())
             deck=bubble.deck
             if deck is not None and 'statistics' in shared:
                 controls={'statistics_tab_'+key:widget for key,widget in deck.tabs.buttons.items()}
@@ -132,13 +143,15 @@ class SurfaceState:
                     from typography import ui_font
                     point=QPointF(plot.mapTo(root,QPoint()));w,h=plot.width(),plot.height()
                     shared['statistics_plot']=QRectF(point,QSizeF(plot.size()))
-                    title_height=max(16,QFontMetrics(ui_font(11,True)).height())
-                    shared['statistics_plot_title']=QRectF(point.x(),point.y(),w,title_height)
+                    if plot.chart_mode()!='combo':
+                        title_height=max(16,QFontMetrics(ui_font(11,True)).height())
+                        shared['statistics_plot_title']=QRectF(point.x(),point.y(),w,title_height)
                     label_height=QFontMetrics(ui_font(11)).height()+2;label_y=point.y()+h-label_height
-                    edge_width=30 if plot.chart_mode()=='line' else w/2
+                    hourly=plot.series['mode']=='line'
+                    edge_width=30 if hourly else w/2
                     shared['statistics_plot_left']=QRectF(point.x(),label_y,edge_width,label_height)
                     shared['statistics_plot_right']=QRectF(point.x()+w-edge_width,label_y,edge_width,label_height)
-                    if plot.chart_mode()=='line':shared['statistics_plot_middle']=QRectF(point.x()+w/2-14,label_y,28,label_height)
+                    if hourly:shared['statistics_plot_middle']=QRectF(point.x()+w/2-14,label_y,28,label_height)
                     if plot.series['available'] and not max((v['value'] for v in plot.series['bins'] if not v['future']),default=0):
                         metrics=QFontMetrics(ui_font(10,True));size=QSizeF(metrics.horizontalAdvance('暂无用量')+4,metrics.height()+4)
                         center=plot.chart_rect().center()+point
@@ -160,10 +173,10 @@ class SharedPart:
     """Prepared endpoint rasters and bounded reusable blend buffers."""
     def __init__(self,start,end,key):
         self.frames=[];self.rects=[];self.pixel_rects=[];self.buffers=None;self.buffer_builds=0
-        self.fit=('left' if key in ('quota','conversations','today_tokens','statistics_plot_left','statistics_reset') or key.startswith(('conversation_title_','conversation_detail_')) else
-                  'right' if key.startswith('quota_value_') or key in ('today_tokens_link','statistics_plot_right') else
+        self.fit=('left' if key in ('quota','conversations','today_tokens','live_rate','statistics_plot_left','statistics_reset') or key.startswith(('conversation_title_','conversation_detail_')) else
+                  'right' if key.startswith('quota_value_') or key in ('today_tokens_link','today_tokens_amount','live_rate_value','statistics_plot_right') else
                   'center' if key.startswith(('statistics_tab_','statistics_range_')) or key in ('statistics_plot_title','statistics_plot_middle','statistics_plot_empty','conversation_counter') else 'stretch')
-        self.backgrounds=[];self.corner=10 if key=='quota' else 6 if key=='today_tokens' else 0
+        self.backgrounds=[];self.corner=10 if key=='quota' else 6 if key in ('today_tokens','live_rate') else 0
         self.single=key.startswith('quota_track_') or key=='statistics_plot';self.background_painter=None
         for state in (start,end):
             local=state.shared_bounds[key];ratio=state.content.devicePixelRatioF()
@@ -221,7 +234,7 @@ class SharedPart:
         source=QRectF(self.frames[0].rect())
         if self.backgrounds:
             color=QColor(*[round(a+(z-a)*f) for a,z in zip(self.backgrounds[0].getRgb(),self.backgrounds[1].getRgb())])
-            p.setPen(Qt.PenStyle.NoPen);p.setBrush(color)
+            p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(color))
             if self.corner:
                 path=QPainterPath();path.addRoundedRect(target,self.corner,self.corner);p.setClipPath(path,Qt.ClipOperation.IntersectClip);p.drawPath(path)
             else:p.fillRect(target,color)
@@ -240,6 +253,15 @@ class SharedPart:
 
 
 class SurfaceMorph:
+    def translate(self,delta):
+        """Move prepared geometry only; reuse every raster and blend buffer."""
+        for state in (self.start,self.end):
+            state.rect.translate(delta);state.icon_rect.translate(delta)
+            if state.frame_origin is not None:state.frame_origin+=delta
+            state.satellites=[(rect.translated(delta),image) for rect,image in state.satellites]
+        for part in self.shared_parts.values():part.rects=[rect.translated(delta) for rect in part.rects]
+        if self._landing:
+            key,*rest=self._landing;self._landing=((key[0]+delta.x(),key[1]+delta.y(),*key[2:]),*rest)
     def __init__(self,start,end):
         self.start=start;self.end=end;self._landing=None
         self.shrinking=end.rect.width()*end.rect.height()<start.rect.width()*start.rect.height()
@@ -322,16 +344,16 @@ class SurfaceMorph:
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         a,z=self.start,self.end;rect=self.geometry(time).translated(-canvas.x(),-canvas.y())
         f=container_progress(time);blend=stage(time,0.,.42)
-        ca=QColor(ISLAND if a.island else SURFACE);cz=QColor(ISLAND if z.island else SURFACE)
+        ca=QColor(theme_color(ISLAND if a.island else SURFACE));cz=QColor(theme_color(ISLAND if z.island else SURFACE))
         color=QColor(*[round(x+(y-x)*blend) for x,y in zip(ca.getRgb(),cz.getRgb())])
         radius=a.radius+(z.radius-a.radius)*f
         # Match the live widget's inset fill/stroke, including antialiased alpha.
         # Filling the entire uninset rect left a brighter edge at handoff.
         inset=rect.adjusted(.5,.5,-.5,-.5)
-        border_a=QColor('#494052' if a.island else '#e0d9e6');border_z=QColor('#494052' if z.island else '#e0d9e6')
+        border_a=QColor(theme_color('#494052' if a.island else '#e0d9e6'));border_z=QColor(theme_color('#494052' if z.island else '#e0d9e6'))
         border=QColor(*[round(x+(y-x)*blend) for x,y in zip(border_a.getRgb(),border_z.getRgb())])
         path=QPainterPath();path.addRoundedRect(inset,radius,radius)
-        p.save();p.setPen(QPen(border,1));p.setBrush(color);p.drawRoundedRect(inset,radius,radius);p.setClipPath(path)
+        p.save();p.setPen(QPen(border,1));p.setBrush(theme_color(color));p.drawRoundedRect(inset,radius,radius);p.setClipPath(path)
         outgoing,incoming=self.content_opacities(time)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         for state,image,opacity,scale in ((a,self.body_frames[0],outgoing,1.-.025*stage(time,0.,.18)),(z,self.body_frames[1],incoming,.975+.025*incoming)):

@@ -7,6 +7,26 @@ from desktop_core import atomic_json
 PREFIX='outputs/白龙桌宠素材/'
 class MaterialMismatch(UpdateError):pass
 
+def stage_failure(error,exe_written=False):
+    """Report an OS security error, without declaring every missing file a virus."""
+    current=error;seen=set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current));code=getattr(current,'winerror',None)
+        if code in (225,226):
+            return f'Windows安全防护阻止或移除了更新文件（错误{code}）。请查看保护历史记录，并反馈检测名称。'
+        name=getattr(current,'filename',None)
+        if exe_written and isinstance(current,FileNotFoundError) and name and Path(name).name.casefold()=='bailongenhanced.exe':
+            return '主程序解压后无法读取，可能被安全软件隔离。请查看保护历史记录；尚不能据此判断误报。'
+        current=current.__cause__ or current.__context__
+    return str(error)[:120]
+
+def cleanup_stage(path,base,preparation_failed):
+    try:remove_owned_tree(path,base)
+    except (OSError,UpdateError):
+        # Quarantine/access errors during cleanup must not replace the original
+        # actionable extraction failure with a generic worker error.
+        if not preparation_failed:raise
+
 def safe(root,name):
     if not isinstance(name,str) or '\\' in name or ':' in name or not name:raise UpdateError('程序包路径无效')
     parts=name.split('/');p=PurePosixPath(name)
@@ -70,6 +90,7 @@ def stage_program(release,cache,app_root,progress=lambda *a:None,cancel=lambda:F
     from app_updates import open_url
     archive=download_archive(release,paths,progress,cancel,opener or open_url)
     pending=paths['staging'];source=paths['source'];remove_owned_tree(pending,pending.parent);pending.mkdir()
+    exe_written=False;preparation_failed=False
     try:
         check_cancel(cancel);progress(release.size,release.size,'extracting')
         with zipfile.ZipFile(archive) as z:
@@ -105,6 +126,7 @@ def stage_program(release,cache,app_root,progress=lambda *a:None,cancel=lambda:F
                         check_cancel(cancel);written+=len(chunk)
                         if written>f['bytes']:raise UpdateError('程序包展开大小异常')
                         dst.write(chunk)
+                if n=='BailongEnhanced.exe':exe_written=True
                 if digest_file(p,cancel)!=f['sha256']:raise UpdateError('程序包文件校验失败')
             cat=json.loads((pending/'app/material_catalog.json').read_text(encoding='utf-8'))
             if cat.get('schema')!=1 or cat['tiers']['light']!=tier:raise MaterialMismatch('目标素材规格不同，需使用完整安装包')
@@ -121,8 +143,10 @@ def stage_program(release,cache,app_root,progress=lambda *a:None,cancel=lambda:F
         remove_owned_tree(source,source.parent);pending.replace(source)
         atomic_json(paths['receipt'],dict(kind='program',version=release.version,archiveSha256=release.sha256,exeSha256=files['BailongEnhanced.exe']['sha256'],manifestSha256=digest_file(source/'payload-manifest.json'),materialId=release.material_id))
         progress(release.size,release.size,'ready');return source
-    except (OSError,ValueError,KeyError,zipfile.BadZipFile,RuntimeError) as exc:raise UpdateError('程序包准备失败，当前版本未改动：'+str(exc)[:120]) from exc
-    finally:remove_owned_tree(pending,pending.parent)
+    except (OSError,ValueError,KeyError,zipfile.BadZipFile,RuntimeError) as exc:
+        preparation_failed=True
+        raise UpdateError('程序包准备失败，当前版本未改动：'+stage_failure(exc,exe_written)) from exc
+    finally:cleanup_stage(pending,pending.parent,preparation_failed)
 
 def verify_ready(source,cache,version,archive_sha=None,full=True):
     paths=program_paths(cache,version);source=Path(source).absolute()

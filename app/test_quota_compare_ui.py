@@ -22,13 +22,17 @@ class QuotaComparePresentationTests(unittest.TestCase):
    m=cycle_messages(row(**changes),{});self.assertIn(expected,m['title']);self.assertFalse(m['show_coverage'])
  def test_real_change_is_labeled_as_estimate_not_official_quota(self):
   m=cycle_messages(row(drop=35,change=-30,baseline_count=2),{})
-  self.assertIn('推测总量减少 30.0%',m['title']);self.assertIn('上一周期',m['reason']);self.assertNotIn('前 2 轮',m['reason']);self.assertFalse(m['show_coverage'])
+  self.assertIn('推测容量减少 30.0%',m['title']);self.assertIn('上一周期',m['reason']);self.assertNotIn('前 2 轮',m['reason']);self.assertFalse(m['show_coverage'])
+ def test_workload_block_preserves_capacity_and_does_not_show_old_change(self):
+  c=row(drop=35,change=-25,comparison_block='使用条件记录不完整，暂不判断涨跌')
+  m=cycle_messages(c,{})
+  self.assertEqual(m['title'],'使用条件不可比');self.assertIn('仍按本轮用法保留',m['reason']);self.assertIsNotNone(c['estimated_total'])
  def test_disclosure_selection_and_hover_preserve_view_geometry(self):
   v=QuotaCompareView();v.setFixedWidth(246);v.set_snapshot({'quota_history':{'cycles':[row(),row(id='old',closed=True,start=1791695200)]}});v.show();APP.processEvents()
   try:
    self.assertEqual(v.coverage.value(),150);self.assertTrue(v.rules.isHidden());self.assertTrue(v.estimate_hint.isHidden())
-   v.rules_button.click();v.rules.complete();APP.processEvents();self.assertTrue(v.note.isVisible());self.assertIn('5 个百分点',v.note.text())
-   v.rules_button.click();v.rules.complete();APP.processEvents();self.assertTrue(v.rules.isHidden())
+   v.rules_button.click();APP.processEvents();self.assertTrue(v.explanation.isVisible());self.assertEqual(v.explanation.geometry(),v.rect());self.assertIn('5 个百分点',v.note.text())
+   v.explanation.back.click();APP.processEvents();self.assertTrue(v.rules.isHidden());self.assertFalse(v.rules_button.isChecked())
    before=v.sizeHint();v.show_plot_readout('10/18 已用 15M / 推测 100M');APP.processEvents();self.assertEqual(v.sizeHint(),before)
    v.show_plot_readout('');self.assertEqual(v.readout.text(),'历史周期')
    v.previous.click();self.assertEqual(v.selected_id,'old');self.assertIn('不能用于历史对比',v.comparison_reason.text())

@@ -19,7 +19,7 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("白龙桌宠程序安装器")]
 [assembly: AssemblyProduct("白龙桌宠增强版")]
 [assembly: AssemblyCompany("Wunsch2048")]
-[assembly: AssemblyDescription("校验离线程序包后打开安装界面；开机启动由用户选择")]
+[assembly: AssemblyDescription("校验程序包后打开安装界面；开机启动由用户选择")]
 [assembly: AssemblyVersion("@@VERSION@@.0")]
 [assembly: AssemblyFileVersion("@@VERSION@@.0")]
 
@@ -79,7 +79,7 @@ static class ProgramPatchBootstrap {
             if(name!="payload-manifest.json" && !files.ContainsKey(name)) throw new InvalidDataException("暂存目录包含未识别文件");
         }
     }
-    static string InstalledSource(string local) {
+    static string InstalledSource(string local,string version) {
         var install=Path.Combine(local,"Programs","BailongEnhanced");
         if(Environment.GetEnvironmentVariable("BAILONG_ISOLATED")!="1") {
             using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\BailongEnhanced")) {
@@ -96,9 +96,10 @@ static class ProgramPatchBootstrap {
         if(!File.Exists(path)) return null;
         var current=Text(ReadJson(path),"current");
         if(!Regex.IsMatch(current,@"^\d+\.\d+\.\d+-[A-Za-z0-9-]+$")) throw new InvalidDataException("现有安装记录无效");
-        if(new Version(current.Split('-')[0])>new Version(VersionNumber)) throw new InvalidOperationException("本机程序版本较新，无需安装此程序补丁。");
+        if(new Version(current.Split('-')[0])>new Version(version)) throw new InvalidOperationException("本机程序版本较新，无需安装此程序补丁。");
         return Safe(Path.Combine(install,"versions"),current);
     }
+    internal static void CheckInstalledVersion(string local,string version) { InstalledSource(local,version); }
     static string FindMedia(string local,string old,string id,Dictionary<string,object> media) {
         var roots=new List<string>();
         if(old!=null) roots.Add(Path.Combine(old,"outputs","白龙桌宠素材"));
@@ -117,11 +118,12 @@ static class ProgramPatchBootstrap {
         }
         return null;
     }
-    static string Stage(string payloadPath) {
+    internal static string StageVerifiedPackage(string payloadPath,string version,string payloadSha) {
+        if(!Regex.IsMatch(version,@"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$") || !Regex.IsMatch(payloadSha,"^[0-9a-f]{64}$")) throw new InvalidDataException("程序版本或校验值无效");
         var local=Environment.GetEnvironmentVariable("LOCALAPPDATA");
         if(String.IsNullOrWhiteSpace(local)) throw new InvalidOperationException("无法确定用户数据目录");
-        local=Path.GetFullPath(local);var old=InstalledSource(local);
-        var cache=Safe(Path.Combine(local,"BailongEnhanced","updates"),VersionNumber+"/program");Directory.CreateDirectory(cache);
+        local=Path.GetFullPath(local);var old=InstalledSource(local,version);
+        var cache=Safe(Path.Combine(local,"BailongEnhanced","updates"),version+"/program");Directory.CreateDirectory(cache);
         var archivePath=Safe(cache,"package.zip");
         if(!File.Exists(archivePath)) {
             var pending=Safe(cache,"package."+Guid.NewGuid().ToString("N")+".pending");
@@ -129,15 +131,22 @@ static class ProgramPatchBootstrap {
                 if(input==null) throw new InvalidDataException("程序补丁载荷缺失");
                 using(var output=File.Create(pending)) input.CopyTo(output);
             }
-            if(HashFile(pending)!=PayloadSha) throw new InvalidDataException("程序补丁 SHA-256 不匹配");
+            if(HashFile(pending)!=payloadSha) throw new InvalidDataException("程序补丁 SHA-256 不匹配");
             File.Move(pending,archivePath);
         }
-        if(HashFile(archivePath)!=PayloadSha) throw new InvalidDataException("下载缓存的程序补丁已改变");
+        if(HashFile(archivePath)!=payloadSha) throw new InvalidDataException("下载缓存的程序补丁已改变");
         using(var archive=ZipFile.OpenRead(archivePath)) {
             var descriptor=ZipJson(archive,"program-update.json");var manifest=ZipJson(archive,"payload-manifest.json");
-            if(Text(descriptor,"version")!=VersionNumber || Text(manifest,"version")!=VersionNumber || Text(descriptor,"kind")!="program" || !descriptor.ContainsKey("optionalMaterials") || !Convert.ToBoolean(descriptor["optionalMaterials"])) throw new InvalidDataException("程序补丁版本不匹配");
+            if(Text(descriptor,"version")!=version || Text(manifest,"version")!=version || Convert.ToInt32(descriptor["schema"])!=1 || Text(descriptor,"kind")!="program" || !descriptor.ContainsKey("optionalMaterials") || !Convert.ToBoolean(descriptor["optionalMaterials"])) throw new InvalidDataException("程序补丁版本不匹配");
             var files=Dict(manifest["files"]);var core=new Dictionary<string,object>(StringComparer.Ordinal);var media=new Dictionary<string,object>(StringComparer.Ordinal);
+            long total=0;
+            if(files.Count>20128) throw new InvalidDataException("程序文件数量过多");
+            foreach(var value in files.Values) {
+                var record=Dict(value);var size=Convert.ToInt64(record["bytes"]);
+                if(size<0 || size>=2147483648 || !Regex.IsMatch(Text(record,"sha256"),"^[0-9a-f]{64}$")) throw new InvalidDataException("程序文件校验信息无效");
+            }
             foreach(var pair in files) { Safe(cache,pair.Key); if(pair.Key.StartsWith(MediaPrefix,StringComparison.Ordinal)) media.Add(pair.Key,pair.Value); else core.Add(pair.Key,pair.Value); }
+            foreach(var value in core.Values) {total+=Convert.ToInt64(Dict(value)["bytes"]);if(total>2147483647) throw new InvalidDataException("程序包展开体积过大");}
             if(!core.ContainsKey("BailongEnhanced.exe") || !core.ContainsKey("app/material_catalog.json") || core.Count>20000) throw new InvalidDataException("程序补丁缺少必要文件");
             var catalog=ZipJson(archive,"app/material_catalog.json");var light=Dict(Dict(catalog["tiers"])["light"]);var id=Text(light,"id");
             if(!Regex.IsMatch(id,"^[0-9a-f]{24}$") || id!=Text(descriptor,"materialId")) throw new InvalidDataException("动画素材标识不匹配");
@@ -145,7 +154,7 @@ static class ProgramPatchBootstrap {
             foreach(var item in (IEnumerable)light["files"]) {
                 var record=Dict(item);var name=MediaPrefix+Text(record,"path");
                 if(!media.ContainsKey(name) || Text(Dict(media[name]),"sha256")!=Text(record,"sha256") || Convert.ToInt64(Dict(media[name])["bytes"])!=Convert.ToInt64(record["bytes"])) throw new InvalidDataException("动画复用清单不匹配");
-                count++;
+                count++;if(count>128) throw new InvalidDataException("动画复用清单过大");
             }
             if(count!=media.Count) throw new InvalidDataException("动画复用清单不完整");
             var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -174,15 +183,16 @@ static class ProgramPatchBootstrap {
                 manifest["files"]=staged;AtomicJson(Safe(pending,"payload-manifest.json"),manifest);Verify(pending,staged);Directory.Move(pending,source);
             }
             var ready=ReadJson(Safe(source,"payload-manifest.json"));var readyFiles=Dict(ready["files"]);
-            if(Text(ready,"version")!=VersionNumber) throw new InvalidDataException("已有暂存版本不匹配");
+            if(Text(ready,"version")!=version) throw new InvalidDataException("已有暂存版本不匹配");
             foreach(var pair in core) if(!readyFiles.ContainsKey(pair.Key) || Text(Dict(readyFiles[pair.Key]),"sha256")!=Text(Dict(pair.Value),"sha256")) throw new InvalidDataException("已有暂存程序不匹配");
             foreach(var pair in readyFiles) if(!files.ContainsKey(pair.Key) || Text(Dict(files[pair.Key]),"sha256")!=Text(Dict(pair.Value),"sha256")) throw new InvalidDataException("已有暂存文件清单不匹配");
             if(readyFiles.Count!=core.Count && readyFiles.Count!=files.Count) throw new InvalidDataException("已有暂存动画不完整");
             Verify(source,readyFiles);
-            AtomicJson(Safe(cache,"receipt.json"),new {kind="program",version=VersionNumber,archiveSha256=PayloadSha,exeSha256=Text(Dict(files["BailongEnhanced.exe"]),"sha256"),manifestSha256=HashFile(Safe(source,"payload-manifest.json")),materialId=id});
+            AtomicJson(Safe(cache,"receipt.json"),new {kind="program",version=version,archiveSha256=payloadSha,exeSha256=Text(Dict(files["BailongEnhanced.exe"]),"sha256"),manifestSha256=HashFile(Safe(source,"payload-manifest.json")),materialId=id});
             return source;
         }
     }
+    static string Stage(string payloadPath) { return StageVerifiedPackage(payloadPath,VersionNumber,PayloadSha); }
     [STAThread] static int Main(string[] args) {
         string probe=null,payload=null;
         for(int i=0;i<args.Length;i++) {

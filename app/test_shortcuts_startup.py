@@ -87,6 +87,21 @@ class StartupTests(unittest.TestCase):
         self.assertFalse(gate.observe(set()));self.assertFalse(gate.observe(set()))
         self.assertTrue(gate.observe({(30,345.)}));self.assertFalse(gate.observe({(30,345.)}))
         self.assertTrue(gate.observe({(40,456.)})) # restart entirely between samples
+    def test_listener_survives_close_reopen_and_transient_io_failure(self):
+        kernel=Mock();kernel.CreateMutexW.return_value=123
+        reads=[{(10,1.)},OSError('transient'),set(),set(),{(20,2.)}]
+        with patch.object(cs.ctypes,'WinDLL',return_value=kernel),patch.object(cs.ctypes,'get_last_error',return_value=0),patch.object(cs,'enabled',side_effect=[True]*5+[False]),patch.object(cs,'install_root',return_value=self.root),patch.object(cs,'current_command',return_value=['pet.exe']),patch.object(cs,'desktop_sessions',side_effect=reads),patch.object(cs,'spawn') as launch,patch.object(cs.time,'sleep'):
+            self.assertEqual(cs.main(),0)
+        self.assertEqual(launch.call_count,2)
+        self.assertTrue(all(c.args[0]==['pet.exe','--from-codex'] for c in launch.call_args_list))
+        state=cs.read_json(cs.data_dir()/'codex-watch-state.json')
+        self.assertTrue(state['codex_open']);self.assertNotIn('error',state)
+        kernel.CloseHandle.assert_called_once_with(123)
+    def test_listener_retries_failed_state_write_without_relaunching_pet(self):
+        kernel=Mock();kernel.CreateMutexW.return_value=123
+        with patch.object(cs.ctypes,'WinDLL',return_value=kernel),patch.object(cs.ctypes,'get_last_error',return_value=0),patch.object(cs,'enabled',side_effect=[True,True,False]),patch.object(cs,'install_root',return_value=self.root),patch.object(cs,'current_command',return_value=['pet.exe']),patch.object(cs,'desktop_sessions',return_value={(10,1.)}),patch.object(cs,'spawn') as launch,patch.object(cs,'atomic',side_effect=[OSError('locked'),None]) as write,patch.object(cs.time,'sleep'):
+            self.assertEqual(cs.main(),0)
+        self.assertEqual(write.call_count,2);launch.assert_called_once()
     def test_desktop_detector_excludes_cli_chatgpt_only_and_helpers(self):
         def process(pid,path,args):
             p=Mock(pid=pid,info={'name':Path(path).name});p.exe.return_value=path;p.cmdline.return_value=args;p.create_time.return_value=100.;return p

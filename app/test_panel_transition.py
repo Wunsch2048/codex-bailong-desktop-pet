@@ -75,8 +75,8 @@ class PanelTests(unittest.TestCase):
         for mode in ('auto','mini'):
             b.set_mode(mode);t=b.size_transition;m=t.morph;native=QRect(b.geometry())
             mini=m.start if m.start.island else m.end
-            self.assertEqual(round(mini.rect.width()),132);self.assertEqual(len(mini.satellites),2)
-            self.assertEqual(round(mini.rect.height()),40)
+            self.assertEqual(round(mini.rect.width()),124);self.assertEqual(len(mini.satellites),2)
+            self.assertEqual(round(mini.rect.height()),38)
             self.assertEqual(mini.content.toImage().pixelColor(2,2).alpha(),0)
             for step in range(40):
                 t.animation.setCurrentTime(round(step*t.animation.duration()/40));r=t.visible_geometry()

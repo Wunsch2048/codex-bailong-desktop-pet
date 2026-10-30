@@ -3,9 +3,19 @@
   "default": "light",
   "tiers": {
     "light": {
-      "id": "8849481e60e0b3f2314ec6a0",
+      "id": "e90b0319cd7cc1a012cf52ff",
       "resolution": 512,
       "files": [
+        {
+          "path": "quality-user-20261030/move01left.webp",
+          "bytes": 54042572,
+          "sha256": "750a1e515a39ac256c9d38b14258c74ce27e82815263473f3bfa43dfc85827ec"
+        },
+        {
+          "path": "quality-user-20261030/move01right.webp",
+          "bytes": 54042572,
+          "sha256": "750a1e515a39ac256c9d38b14258c74ce27e82815263473f3bfa43dfc85827ec"
+        },
         {
           "path": "quality-v1/drag.webp",
           "bytes": 20436020,
@@ -162,17 +172,85 @@
           "sha256": "799a86014a49bf6d5acb38824aaae9a448078013a018cefa2b4fd7b1b22259ae"
         },
         {
+          "path": "quality-v6/idle03.webp",
+          "bytes": 30139644,
+          "sha256": "933da6910dae2005ef5952de6a7646ed661481702a2d41e086e828fd66273d32"
+        },
+        {
+          "path": "quality-v6/idle04.webp",
+          "bytes": 30031850,
+          "sha256": "29ca6c317365590f131fa83f63b732296493303c9ba6edf1d9000d3e2ccd8b43"
+        },
+        {
+          "path": "quality-v6/idle05.webp",
+          "bytes": 37965954,
+          "sha256": "b65553a6d77f8d91ad407945026640f29d991f589304be9959284694d5cce918"
+        },
+        {
+          "path": "quality-v6/idle06.webp",
+          "bytes": 36734712,
+          "sha256": "94f00f9cfafcd9a37ade20ae78a79a968c9fe6023f2c3ee371e9996959d710d3"
+        },
+        {
+          "path": "quality-v6/move02-seam.webp",
+          "bytes": 1238982,
+          "sha256": "064f730738b750feb7f9eca1c5ec55a2d18c04afddf0ab56d450e11dd341c500"
+        },
+        {
+          "path": "quality-v6/move02.webp",
+          "bytes": 34802322,
+          "sha256": "2ef22d507da49ed243d415119d6d341734fd9463555e2581e56ddae26ae4756b"
+        },
+        {
+          "path": "quality-v6/move02left.webp",
+          "bytes": 44946056,
+          "sha256": "c9939f339646dfb2df4ce05c97094a83840675fe06e6d5f49ee622fdd4b49cc0"
+        },
+        {
+          "path": "quality-v6/move03right-seam.webp",
+          "bytes": 1217042,
+          "sha256": "d9c06338f8adda792ce8645ab7cbc0ac97072faf375203cd6864e42920bc10f1"
+        },
+        {
+          "path": "quality-v6/move03right.webp",
+          "bytes": 53963948,
+          "sha256": "9e9e64dfb0d3ac2dd009717890decc0098344c143a29e4c5c7ac6b63bf0a975f"
+        },
+        {
+          "path": "quality-v7/move03left-seam.webp",
+          "bytes": 946072,
+          "sha256": "df340d2e3152d63944b775ce49aec03ffbabbbc7e8cf30f641383bb6011fdbcf"
+        },
+        {
+          "path": "quality-v7/move03left.webp",
+          "bytes": 46668536,
+          "sha256": "a8e6664aad1f6e382b99f52c8365036edd10af446899a2884fad64a688933c0f"
+        },
+        {
           "path": "素材清单.json",
-          "bytes": 17157,
-          "sha256": "fe91d24c6bfa87304c21e41eb7139569eb0864a17e1ca5f9fea5d3e5f5f46ead"
+          "bytes": 26061,
+          "sha256": "529eca31b7f55bcb3288e8caea9c42beabcf667b03834c8e374e0413cdc95536"
         }
       ],
-      "bytes": 618037639
+      "bytes": 1044786805,
+      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip",
+      "archiveBytes": 1044792307,
+      "archiveSha256": "35b6950fb7b14793af24791b284444440e3f8741cf594581b7fd49e4344687b0"
     },
     "hd": {
-      "id": "934269f1c8e31be56d0a78d2",
+      "id": "e26d8826cefcc901eb5d1d2c",
       "resolution": 720,
       "files": [
+        {
+          "path": "quality-user-20261030/move01left.webp",
+          "bytes": 91769510,
+          "sha256": "b9068f4ba6961f9f06922b2533a3b91f0dd818fe40e9a20c3785e951262e3936"
+        },
+        {
+          "path": "quality-user-20261030/move01right.webp",
+          "bytes": 91769510,
+          "sha256": "b9068f4ba6961f9f06922b2533a3b91f0dd818fe40e9a20c3785e951262e3936"
+        },
         {
           "path": "quality-v1/drag.webp",
           "bytes": 36795814,
@@ -329,13 +407,71 @@
           "sha256": "9f82cc558f12949177ac7a81ca7efce149f68d4a1207c908b8f536af54a6f2e2"
         },
         {
+          "path": "quality-v6/idle03.webp",
+          "bytes": 50428240,
+          "sha256": "0ea4eb98d2664356995d36aeac84288f6f41f441fe0778b27bd4aa327d916fd7"
+        },
+        {
+          "path": "quality-v6/idle04.webp",
+          "bytes": 50434988,
+          "sha256": "162d203752e801c902a21a72fa3e0c6c1473bb73cfba3d942c1337880f1649b8"
+        },
+        {
+          "path": "quality-v6/idle05.webp",
+          "bytes": 63723604,
+          "sha256": "808b38f04ccc9b28d64f145f901418f6018f6e3b12427312b362ce495d537992"
+        },
+        {
+          "path": "quality-v6/idle06.webp",
+          "bytes": 62036448,
+          "sha256": "6a6b43220af3d91d2bfa9c5fa1cc5c75c61c7198d0c144d9e7278e8e185971fb"
+        },
+        {
+          "path": "quality-v6/move02-seam.webp",
+          "bytes": 2058878,
+          "sha256": "76e2c50c9ce66723577987120d9baf196001918eed0068b1c33dff37ae619760"
+        },
+        {
+          "path": "quality-v6/move02.webp",
+          "bytes": 58643802,
+          "sha256": "479a8f5f017526c46ab2be890cf45dad84178a25bdcf06f9392b67cb75528b62"
+        },
+        {
+          "path": "quality-v6/move02left.webp",
+          "bytes": 75754612,
+          "sha256": "7eb1dbf24378d1099446dd11ee3051c49435d49c945e0cedec5edf080f981d42"
+        },
+        {
+          "path": "quality-v6/move03right-seam.webp",
+          "bytes": 2041940,
+          "sha256": "e56a646d9693545f9f1667df2d13b8ff51e4a8cdeca739ff3f0a4f8dd83c0d2e"
+        },
+        {
+          "path": "quality-v6/move03right.webp",
+          "bytes": 90714004,
+          "sha256": "a704ce80efeacdbbad30206fd50bd40abab3a5a9e27c31de6b928ab4bb08491d"
+        },
+        {
+          "path": "quality-v7/move03left-seam.webp",
+          "bytes": 1573392,
+          "sha256": "283a1efbad2dab9da838384db4be6354da31d1d72f309361162b15f55786f1ff"
+        },
+        {
+          "path": "quality-v7/move03left.webp",
+          "bytes": 79651042,
+          "sha256": "6d2c895a530996e49b20c272b7bafa310c7730116c29e04de255d614fff1b5db"
+        },
+        {
           "path": "素材清单.json",
-          "bytes": 17157,
-          "sha256": "fe91d24c6bfa87304c21e41eb7139569eb0864a17e1ca5f9fea5d3e5f5f46ead"
+          "bytes": 26061,
+          "sha256": "529eca31b7f55bcb3288e8caea9c42beabcf667b03834c8e374e0413cdc95536"
         }
       ],
-      "bytes": 1083268129,
-      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/materials-934269f1c8e31be56d0a78d2/bailong-hd-934269f1c8e31be56d0a78d2.zip"
+      "bytes": 1803877003,
+      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-hd.zip",
+      "archiveBytes": 1803882505,
+      "archiveSha256": "88072be5a37de41740c8c47c5de33aae13febd8d430cf4a95fc4ba210fae6ecc"
     }
-  }
+  },
+  "releaseVersion": "1.3.0"
 }

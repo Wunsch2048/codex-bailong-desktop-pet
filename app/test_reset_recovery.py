@@ -53,7 +53,7 @@ class ResetRecoveryTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    path=Path(tmp)/'reset-watch.json';tracker=ResetTracker(path)
    tracker.update(dict(events=[],scheduled=old),now-3600)
-   evidence=LocalResetEvidence(Path(tmp)/'evidence.json');evidence.state['reset']=dict(observed=now-1800)
+   evidence=LocalResetEvidence(Path(tmp)/'evidence.json');evidence.state['reset']=dict(observed=now-1800,window='一周',kind='extra')
    self.assertFalse(reset_has_priority(evidence.decorate(tracker.snapshot)))
    snapshot,alerts=tracker.update(dict(events=[dict(old,announced=now-3600)],scheduled=new),now)
    self.assertEqual(snapshot['pending'],new);self.assertEqual(ResetTracker(path).snapshot['pending'],new)

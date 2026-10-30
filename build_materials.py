@@ -40,6 +40,19 @@ def convert(record):
     print(f"light {record['id']}: {result['bytes']} bytes; {len(expected)} frames verified",flush=True)
     return result
 
+def retain_publication_catalog(computed,existing):
+    """Keep versioned download metadata only when every verified file matches."""
+    if not existing or not existing.get('releaseVersion'):return computed
+    from animation_updates import validate_catalog
+    validate_catalog(existing,existing['releaseVersion'])
+    if computed.get('schema')!=existing.get('schema') or computed.get('default')!=existing.get('default'):
+        raise ValueError('发布素材目录结构与本轮构建不一致')
+    for name in ('light','hd'):
+        for key in ('id','resolution','files','bytes'):
+            if computed['tiers'][name][key]!=existing['tiers'][name][key]:
+                raise ValueError('发布素材目录与本轮校验文件不一致：'+name+'/'+key)
+    return existing
+
 def build():
     optimized=optimize_all();DEST.mkdir(parents=True,exist_ok=True)
     manifest=ROOT/'outputs/白龙桌宠素材/素材清单.json';shutil.copy2(manifest,DEST/manifest.name)
@@ -54,6 +67,9 @@ def build():
     tier=tiers['hd'];tag='materials-'+tier['id'];name='bailong-hd-'+tier['id']+'.zip'
     tier['url']=f'https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/{tag}/{name}'
     catalog=dict(schema=1,default='light',tiers=tiers)
+    catalog_path=ROOT/'app/material_catalog.json'
+    existing=json.loads(catalog_path.read_text(encoding='utf-8')) if catalog_path.is_file() else None
+    catalog=retain_publication_catalog(catalog,existing)
     (ROOT/'app/material_catalog.json').write_text(json.dumps(catalog,ensure_ascii=False,indent=2),encoding='utf-8')
     proof=dict(passed=True,recipe=RECIPE,lightBytes=tiers['light']['bytes'],hdBytes=tier['bytes'],files=light)
     (ROOT/'build/materials/verification.json').write_text(json.dumps(proof,ensure_ascii=False,indent=2),encoding='utf-8')

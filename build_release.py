@@ -59,6 +59,16 @@ def build_windows_bundle(version):
         path=output/asset
         if not path.is_file() or path.stat().st_size==0:raise FileNotFoundError(f'发布校验清单缺少必需文件: {asset}')
         with path.open('rb') as stream:records[asset]=hashlib.file_digest(stream,'sha256').hexdigest()
+    # Keep first-install metadata when a full base is published alongside a
+    # cumulative program archive. Do not erase its checksum on the final pass.
+    from program_channel import validate,CHANNEL
+    channel=output/CHANNEL
+    if channel.is_file():
+        validate(json.loads(channel.read_text(encoding='utf-8-sig')),maximum=version)
+        records[CHANNEL]=hashlib.sha256(channel.read_bytes()).hexdigest()
+    online=output/f'bailong-desktop-pet-{version}-setup.exe'
+    if online.is_file():
+        with online.open('rb') as stream:records[online.name]=hashlib.file_digest(stream,'sha256').hexdigest()
     sums.write_text(''.join(digest+'  '+asset+'\n' for asset,digest in sorted(records.items())),encoding='utf-8')
     Path(str(archive)+'.sha256').write_text(full_sha+'  '+archive.name+'\n',encoding='utf-8')
     return archive
@@ -72,6 +82,9 @@ def build(legacy_formats=False,application_only=True):
     version_info=ROOT/'build/windows-version-info.txt';version_info.write_text(windows_version_resource(VERSION),encoding='utf-8')
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--icon',str(ROOT/'app/branding/bailong.ico'),'--version-file',str(version_info),'--onedir','--name','BailongEnhanced','--distpath','release','--workpath','build','--specpath','build','--paths','app','--exclude-module','imageio_ffmpeg',*tls_data,'app/enhanced.py'],cwd=ROOT,check=True)
     release=ROOT/'release/BailongEnhanced'
+    from build_tray_host import build as build_tray_host
+    tray_proof=build_tray_host(release/'tray/BailongTray.exe')
+    (release/'tray/host-build.json').write_text(json.dumps(tray_proof,indent=2),encoding='utf-8')
     (release/'app/branding').mkdir(parents=True,exist_ok=True)
     shutil.copy2(ROOT/'app/branding/bailong.ico',release/'app/branding/bailong.ico')
     from package_trim import trim_qt
@@ -190,4 +203,7 @@ if __name__=='__main__':
     parser.add_argument('--package',action='store_true',help='Explicitly generate the full installer for a GitHub release')
     args=parser.parse_args()
     if args.legacy_formats and not args.package:parser.error('--legacy-formats also requires --package')
+    if args.package:
+        from build_local import require_release_regression
+        require_release_regression()
     build(args.legacy_formats,application_only=not args.package)

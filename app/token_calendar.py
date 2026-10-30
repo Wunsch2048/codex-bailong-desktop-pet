@@ -40,6 +40,23 @@ class TokenUsageIndex:
         self.legacy_import_pending=False
         from log_catalog import LogCatalog
         self.catalog=LogCatalog(self.home)
+        self._maintenance=None;self._maintenance_result=None
+
+    def prepare(self,stop=lambda:False):
+        """Called by the one index worker before it opens a writable connection."""
+        from index_maintenance import IndexMaintenance
+        if self._maintenance_result is not None:return self._maintenance_result
+        if self._maintenance is None:self._maintenance=IndexMaintenance(self.path)
+        try:
+            result=self._maintenance.step(stop)
+        except (OSError,sqlite3.DatabaseError,ValueError,KeyError,TypeError) as error:
+            self._maintenance.defer()
+            # Never create a new empty index if a file swap needs recovery.
+            if not self.path.is_file() or (self._maintenance.state or {}).get('phase') in ('swapping','installed'):
+                raise RuntimeError('统计数据库整理尚需恢复，原文件已保留') from error
+            result=dict(state='deferred',pending=False,error=type(error).__name__)
+        if not result.get('pending'):self._maintenance_result=result
+        return result
 
     def connect(self):
         db=sqlite3.connect(self.path,timeout=5)
@@ -96,6 +113,7 @@ class TokenUsageIndex:
     def poll(self,now=None,stop=lambda:False,cycle=None):
         from performance_metrics import METRICS
         files=self.catalog.discover(check=True);errors=self.catalog.errors;readable=0;schema_errors=0
+        self.project_files=tuple(files)
         with closing(self.connect()) as db, db:
             for path in sorted(files):
                 if stop():break
@@ -121,7 +139,31 @@ class TokenUsageIndex:
             progress=import_step(db,files,stop)
             result['quota_history']=quota_history_snapshot(db,cycle,now,
                 readable>0 and not result['partial'] and not result.get('unavailable'),progress)
+            from project_cost import update as update_projects,snapshot as project_snapshot
+            project_progress=update_projects(db,files,stop)
+            result['projects']=project_snapshot(db,time.time() if now is None else now,project_progress,files,self.home)
+            from rate_index import update as rate_update,snapshot as rate_snapshot
+            rate_progress=rate_update(db,files,stop)
+            result['rates']=rate_snapshot(db,time.time() if now is None else now,rate_progress)
+            if result['report']:result['report']['rates']=result['rates']
             return result
+
+    def rate_step(self,stop=lambda:False):
+        from rate_index import update,snapshot
+        with closing(sqlite3.connect(self.path,timeout=.5)) as db,db:
+            progress=update(db,self.project_files,stop)
+            return snapshot(db,time.time(),progress)
+
+    def project_step(self,stop=lambda:False):
+        """Continue only the cost index; leave Token/quota history scans alone."""
+        from project_cost import update
+        with closing(sqlite3.connect(self.path,timeout=.5)) as db, db:
+            return update(db,self.project_files,stop,budget=.15)
+
+    def project_snapshot(self,progress):
+        from project_cost import snapshot
+        with closing(sqlite3.connect(self.path,timeout=.5)) as db, db:
+            return snapshot(db,time.time(),progress,self.project_files,self.home)
 
     def snapshot(self,db,now=None,errors=0):
         now=time.time() if now is None else now;start,end=month_bounds(now)

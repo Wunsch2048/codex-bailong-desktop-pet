@@ -1,9 +1,11 @@
 """In-card choice sheets; QComboBox data/signals remain compatible."""
+from theme_registry import color as theme_color
+from theme_runtime import set_theme_style,theme_style_source
 from PySide6.QtCore import Qt,QPoint,QRect,QEvent,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QPainter,QColor,QPen,QFontMetrics
 from PySide6.QtWidgets import QComboBox,QFrame,QVBoxLayout,QLineEdit,QListWidget,QListWidgetItem,QApplication,QGraphicsOpacityEffect
 from typography import FONT_CSS,ui_font
-from ui_theme import SURFACE,PANEL,INK,MUTED,PRIMARY,BORDER,SELECTED
+from ui_theme import SURFACE,PANEL,INK,MUTED,PRIMARY,BORDER,SELECTED,hide_scrollbars
 from settings_controls import motion_enabled
 
 
@@ -28,12 +30,12 @@ class ChoiceCombo(QComboBox):
     def display_text(self):return self.currentText()
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor(PANEL if self.hasFocus() or self._panel else SURFACE));p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(theme_color(PANEL if self.hasFocus() or self._panel else SURFACE)));p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(self.rect().adjusted(1,1,-1,-1),7,7)
-        p.setFont(ui_font(12));p.setPen(QColor(INK if self.isEnabled() else MUTED))
+        p.setFont(ui_font(12));p.setPen(QColor(theme_color(INK if self.isEnabled() else MUTED)))
         value=QFontMetrics(p.font()).elidedText(self.display_text(),Qt.TextElideMode.ElideRight,max(0,self.width()-34))
         p.drawText(self.rect().adjusted(9,0,-26,0),Qt.AlignmentFlag.AlignVCenter,value)
-        p.setPen(QPen(QColor(MUTED),1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
+        p.setPen(QPen(QColor(theme_color(MUTED)),1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
         x=self.width()-15;y=self.height()/2
         p.drawLine(QPoint(x-3,int(y-3)),QPoint(x,int(y-6)));p.drawLine(QPoint(x,int(y-6)),QPoint(x+3,int(y-3)))
         p.drawLine(QPoint(x-3,int(y+3)),QPoint(x,int(y+6)));p.drawLine(QPoint(x,int(y+6)),QPoint(x+3,int(y+3)))
@@ -42,15 +44,14 @@ class ChoiceCombo(QComboBox):
 class ChoiceSheet(QFrame):
     def __init__(self,owner):
         super().__init__(owner.window());self.owner=owner;self.closing=False
-        self.setObjectName('choice_sheet');self.setStyleSheet(
-            f'QFrame#choice_sheet{{background:{SURFACE};border:1px solid {BORDER};border-radius:10px;}}'
+        self.setObjectName('choice_sheet');set_theme_style(self,f'QFrame#choice_sheet{{background:{SURFACE};border:1px solid {BORDER};border-radius:10px;}}'
             'QListWidget{'+FONT_CSS+f'font-size:12px;color:{INK};background:transparent;border:0;outline:0;}}'
             f'QListWidget::item{{padding:7px 8px;border-radius:6px;}}QListWidget::item:selected{{background:{SELECTED};color:{INK};}}'
             f'QListWidget::item:hover{{background:{PANEL};}}QLineEdit{{'+FONT_CSS+f'font-size:12px;color:{INK};background:{PANEL};border:0;border-radius:6px;padding:6px;}}')
         layout=QVBoxLayout(self);layout.setContentsMargins(6,6,6,6);layout.setSpacing(4)
         self.search=QLineEdit();self.search.setPlaceholderText('搜索');self.search.setClearButtonEnabled(True)
         self.search.setVisible(owner.count()>7);layout.addWidget(self.search)
-        self.list=QListWidget();self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list=hide_scrollbars(QListWidget())
         self.list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel);layout.addWidget(self.list)
         for i in range(owner.count()):
             item=QListWidgetItem(('✓  ' if i==owner.currentIndex() else '    ')+owner.itemText(i))

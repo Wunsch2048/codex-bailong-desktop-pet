@@ -33,22 +33,76 @@ class DraftTests(unittest.TestCase):
 
 
 class InteractionTests(unittest.TestCase):
-    def test_quota_alert_opens_prepared_cycle_page_without_toggling_main_card(self):
+    def test_theme_swatches_apply_persist_and_keep_unrelated_draft(self):
+        from theme_registry import current,palette
+        s=self.settings();s.fields['move_speed'].setValue(123)
+        choices=s.fields['theme'];choices.setCurrentIndex(choices.findData('starfield'));s.apply();settle(self.pet)
+        self.assertEqual(current(),'starfield');self.assertEqual(self.pet.settings['move_speed'],123)
+        stored=json.loads((self.root/'settings.json').read_text(encoding='utf-8'))
+        self.assertEqual(stored['theme'],'starfield');self.assertFalse(s.theme_custom.isVisible())
+        self.assertIn(palette()['ink'],s.styleSheet());self.assertFalse(s.draft.dirty)
+        choices.setCurrentIndex(choices.findData('custom'))
+        s.fields['theme_surface'].setText('#ffffff');s.fields['theme_ink'].setText('#ffffff');s.apply();settle(self.pet)
+        self.assertIn('对比度不足',s.status.text());self.assertEqual(current(),'custom');self.assertEqual(self.pet.settings['theme'],'starfield');self.assertIn('theme',s.draft.dirty)
+        s.reload();settle(self.pet)
+        self.pet.apply_settings(dict(theme='bailong'),save=False);settle(self.pet)
+
+    def test_preview_is_not_saved_by_position_or_other_settings_and_navigation_restores(self):
+        from theme_registry import current,THEME_KEYS
+        s=self.settings();saved={k:self.pet.settings[k] for k in THEME_KEYS}
+        s.fields['theme'].setCurrentIndex(s.fields['theme'].findData('division'));settle(self.pet)
+        self.assertEqual(current(),'division');self.assertEqual({k:self.pet.settings[k] for k in THEME_KEYS},saved)
+        self.pet.save_settings();disk=json.loads((self.root/'settings.json').read_text(encoding='utf-8'))
+        self.assertEqual({k:disk[k] for k in THEME_KEYS},saved)
+        self.pet.apply_settings(dict(sound=False));settle(self.pet);self.assertEqual(current(),'division')
+        s.fields['move_speed'].setValue(123);self.pet.bubble.return_to_status();settle(self.pet)
+        self.assertEqual(current(),saved['theme']);self.assertIn('move_speed',s.draft.dirty)
+        self.assertFalse(set(THEME_KEYS)&s.draft.dirty);self.assertIsNone(self.pet._theme_preview)
+
+    def test_preview_save_failure_and_discard_keep_committed_theme(self):
+        from theme_registry import current
+        s=self.settings();saved=self.pet.settings['theme']
+        s.fields['theme'].setCurrentIndex(s.fields['theme'].findData('division'));settle(self.pet)
+        with patch.object(self.pet,'save_settings',side_effect=OSError('fixture write failure')):s.apply()
+        settle(self.pet);self.assertEqual(self.pet.settings['theme'],saved);self.assertEqual(current(),'division')
+        self.assertIn('theme',s.draft.dirty);s.discard_button.click();settle(self.pet)
+        self.assertEqual(current(),saved);self.assertIsNone(self.pet._theme_preview)
+
+    @patch('settings_controls.motion_enabled',return_value=True)
+    def test_quota_alert_opens_prepared_cycle_page_without_toggling_main_card(self,_motion):
         from card_surface_probe import sample
         self.pet.bubble.token_snapshot=sample();b=self.pet.bubble;before=b.geometry()
         self.pet.open_quota_comparison();r=b.report
+        if b.size_transition.running:
+            self.assertFalse(r.isVisible());self.assertIsNone(r._frame)
+            b.size_transition.complete()
         self.assertTrue(r.requested);self.assertEqual(r.page,'cycle');self.assertIsNotNone(r._frame)
-        # Existing docking may move the compact card to keep the whole report
-        # on screen. It must not expand it or start a second card transition.
+        # Reserving report space may animate the host's position; once landed
+        # it must retain the original card size and never expand its contents.
         self.assertEqual(b.size(),before.size());self.assertFalse(b.size_transition.running)
         placed=b.geometry()
-        r.animation.setCurrentTime(110);progress=r.animation.currentTime()
+        r.animation.setCurrentTime(110);fraction=r.fraction;frame=r._frame
         self.pet.open_quota_comparison()
-        self.assertIs(b.report,r);self.assertEqual(r.animation.currentTime(),progress)
+        self.assertIs(b.report,r);self.assertFalse(r.requested)
+        self.assertEqual(r.fraction,fraction);self.assertIs(r._frame,frame)
+        self.pet.open_quota_comparison();self.assertTrue(r.requested);self.assertEqual(r.fraction,fraction)
         r.animation.setCurrentTime(r.animation.duration());APP.processEvents();size=r.size()
         r.set_page('models');self.pet.open_quota_comparison()
         self.assertEqual(r.page,'cycle');self.assertTrue(r.requested);self.assertEqual(r.size(),size)
         self.assertEqual(b.geometry(),placed)
+        r.page_fade.animation.setCurrentTime(r.page_fade.animation.duration())
+        self.pet.open_quota_comparison();self.assertFalse(r.requested)
+        r.animation.setCurrentTime(r.animation.duration());APP.processEvents();self.assertFalse(r.isVisible())
+        b._header_actions[1].click();r.animation.setCurrentTime(r.animation.duration());APP.processEvents()
+        self.assertTrue(r.requested)
+        with patch.object(r,'set_snapshot',side_effect=AssertionError('closing must not refresh or rebuild')):
+            b._header_actions[1].click()
+        self.assertFalse(r.requested);r.animation.setCurrentTime(r.animation.duration());APP.processEvents()
+        self.assertFalse(r.isVisible())
+        # Closing the panel now returns the host through its own animation.
+        # Do not mistake the temporary union canvas for the final card bounds.
+        settle(self.pet)
+        self.assertEqual(b.size(),before.size());self.assertFalse(b.size_transition.running)
 
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)

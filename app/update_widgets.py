@@ -1,11 +1,12 @@
 """Embedded update card; no extra window and no automatic downloads."""
+from theme_runtime import set_theme_style,theme_style_source
 import re
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QProgressBar,QPlainTextEdit
 from card_motion import AnimatedDisclosure
-from ui_theme import MUTED,PRIMARY
+from ui_theme import MUTED,PRIMARY,hide_scrollbars
 
 def size_text(value):
     if value>=1024**3:return f'{value/1024**3:.2f} GB'
@@ -16,21 +17,21 @@ class UpdatePanel(QWidget):
     def __init__(self,controller,parent=None):
         super().__init__(parent);self.controller=controller;self.setObjectName('app_update_panel')
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(6)
-        self.version=QLabel();self.version.setWordWrap(True);self.version.setStyleSheet(f'font-size:12px;font-weight:500;color:{PRIMARY};');layout.addWidget(self.version)
-        self.status=QLabel();self.status.setWordWrap(True);self.status.setStyleSheet('font-size:11px;font-weight:500;color:#393343;');layout.addWidget(self.status)
+        self.version=QLabel();self.version.setWordWrap(True);set_theme_style(self.version,f'font-size:12px;font-weight:500;color:{PRIMARY};');layout.addWidget(self.version)
+        self.status=QLabel();self.status.setWordWrap(True);set_theme_style(self.status,'font-size:11px;font-weight:500;color:#393343;');layout.addWidget(self.status)
         self.progress=QProgressBar();self.progress.setRange(0,1000);self.progress.setTextVisible(False);self.progress.setFixedHeight(7)
-        self.progress.setStyleSheet('QProgressBar{border:0;border-radius:3px;background:#e8e0ef;}QProgressBar::chunk{border-radius:3px;background:#9a81b6;}');layout.addWidget(self.progress)
-        self.amount=QLabel();self.amount.setStyleSheet(f'font-size:11px;font-weight:500;color:{MUTED};');layout.addWidget(self.amount)
-        self.package=QLabel();self.package.setWordWrap(True);self.package.setStyleSheet(f'font-size:11px;font-weight:500;color:{MUTED};');layout.addWidget(self.package)
+        set_theme_style(self.progress,'QProgressBar{border:0;border-radius:3px;background:#e8e0ef;}QProgressBar::chunk{border-radius:3px;background:#9a81b6;}');layout.addWidget(self.progress)
+        self.amount=QLabel();set_theme_style(self.amount,f'font-size:11px;font-weight:500;color:{MUTED};');layout.addWidget(self.amount)
+        self.package=QLabel();self.package.setWordWrap(True);set_theme_style(self.package,f'font-size:11px;font-weight:500;color:{MUTED};');layout.addWidget(self.package)
         row=QHBoxLayout();self.check=QPushButton('检查更新');self.check.setObjectName('check_app_update');self.check.clicked.connect(controller.check);row.addWidget(self.check)
         self.install=QPushButton('下载并安装');self.install.setObjectName('install_app_update');self.install.setProperty('role','primary');self.install.clicked.connect(controller.download_install);row.addWidget(self.install)
         self.cancel=QPushButton('暂停下载');self.cancel.clicked.connect(controller.cancel);row.addWidget(self.cancel);layout.addLayout(row)
         self.details_button=QPushButton('查看更新内容');self.details_button.setCheckable(True);layout.addWidget(self.details_button)
-        self.details=QPlainTextEdit();self.details.setReadOnly(True);self.details.setMaximumHeight(160);self.details.setAccessibleName('版本更新内容')
+        self.details=hide_scrollbars(QPlainTextEdit());self.details.setReadOnly(True);self.details.setMaximumHeight(160);self.details.setAccessibleName('版本更新内容')
         self.disclosure=AnimatedDisclosure(self.details);layout.addWidget(self.disclosure);self.details_button.toggled.connect(self.disclosure.set_expanded)
         self.github=QPushButton('在 GitHub 查看此版本');self.github.clicked.connect(self.open_release);layout.addWidget(self.github)
         note=QLabel('只有点击“下载并安装”才会下载。安装器会保留设置、聊天和回退版本；更新完成后清理下载缓存。')
-        note.setWordWrap(True);note.setStyleSheet(f'font-size:11px;color:{MUTED};');layout.addWidget(note)
+        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');layout.addWidget(note)
         controller.changed.connect(self.set_state);self.set_state(controller.snapshot())
     def set_state(self,state):
         self.state=state;phase=state['phase'];busy=self.controller.job is not None

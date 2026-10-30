@@ -30,6 +30,10 @@ def checked_version(root,name):
 def ps_string(value):return "'"+str(value).replace("'","''")+"'"
 def register(exe,maintenance,startup):
     import winreg
+    # A renamed copy has the exact same binary content and detection surface.
+    # Keep the argument for old callers, but bind management to the current
+    # verified executable, including when rolling back to an older release.
+    maintenance=exe
     root=exe.parent
     from storage_locations import registered_install_root
     from windows_entries import install_entries,startup_entry
@@ -65,8 +69,7 @@ def install(payload,root=ROOT,startup=False,copy_installer=True,before_commit=No
                 archive.extractall(dest)
         exe=checked_version(root,name)/'BailongEnhanced.exe';verify_payload(dest,VERSION)
         manifest=read_manifest(root);manifest['versions'].insert(0,name);manifest['current']=name
-        maintenance=dest/'白龙安装管理.exe'
-        if copy_installer and (getattr(sys,'frozen',False) or populate is not None):shutil.copy2(exe,maintenance)
+        maintenance=exe
         from shared_assets import share
         def register_shared(sha):
             journal.setdefault('new_shared_objects',[]).append(sha);atomic(root/'deployment-journal.json',journal)
@@ -143,9 +146,10 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
     def launch_and_confirm(exe,journal):
         nonlocal ready_receipt
         token=uuid.uuid4().hex;ready_receipt=exe.parent/('.ready-'+token+'.json')
-        env=os.environ.copy();env.update(BAILONG_DEPLOY_TOKEN=token,BAILONG_DEPLOY_RECEIPT=str(ready_receipt))
+        env=dict(BAILONG_DEPLOY_TOKEN=token,BAILONG_DEPLOY_RECEIPT=str(ready_receipt))
         progress('正在确认新版窗口与本地服务就绪…')
-        process=subprocess.Popen([str(exe)],cwd=str(exe.parent),env=env,creationflags=0x08000000)
+        from process_launch import launch_own
+        process=launch_own([str(exe)],cwd=str(exe.parent),env=env,creationflags=0x08000000)
         journal['pid']=process.pid;atomic(root/'deployment-journal.json',journal)
         ready=wait_ready(process,exe,ready_receipt,token,VERSION)
         ready_receipt.unlink(missing_ok=True)
@@ -165,7 +169,9 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
             try:recover(root,system);restarted=True
             except Exception as recovery_error:raise OSError('用户数据或入口尚未恢复，旧版暂不启动；请保留备份并重试安装：'+str(recovery_error)) from error
         if old and not restarted:
-            try:subprocess.Popen([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+            try:
+                from process_launch import launch_own
+                launch_own([str(old)],cwd=str(old.parent),creationflags=0x08000000)
             except OSError:raise OSError(str(error)+'；旧版未能自动恢复，请从安装目录启动旧版。') from error
         raise
 
@@ -248,7 +254,7 @@ class Installer(QWidget):
     def finished(self,exe):
         for button in self.maintenance_buttons:button.setEnabled(True)
         if self.quick:
-            self.exe=exe;self.status.setText('部署完成，桌宠已启动。\nCodex 将由桌宠自动识别，无需重启 Codex。\n本窗口即将自动关闭；维护入口为安装目录中的“白龙安装管理.exe”。')
+            self.exe=exe;self.status.setText('部署完成，桌宠已启动。\nCodex 将由桌宠自动识别，无需重启 Codex。\n本窗口即将自动关闭；可从 Windows 应用列表进入安装管理。')
             self.install_button.setText('关闭');self.install_button.setEnabled(True);self.install_button.clicked.disconnect();self.install_button.clicked.connect(self.close)
             QTimer.singleShot(4000,self.close);return
         self.exe=exe;self.status.setText('安装完成，已确认桌宠窗口与本地服务就绪。\n程序：'+exe)
@@ -277,7 +283,7 @@ class Installer(QWidget):
             verify_version(folder,m.get('sharedAssets',{}).get(others[0]));verify_payload(folder,others[0].split('-')[0])
             from deployment_state import atomic
             atomic(ROOT/'maintenance-journal.json',dict(operation='rollback',snapshot=snapshot))
-            register(folder/'BailongEnhanced.exe',folder/'白龙安装管理.exe',self.startup.isChecked())
+            register(folder/'BailongEnhanced.exe',folder/'BailongEnhanced.exe',self.startup.isChecked())
             m['current']=others[0];write_manifest(m)
             (ROOT/'maintenance-journal.json').unlink(missing_ok=True)
             self.status.setText('已回退快捷方式到 '+others[0]+'。退出正在运行的桌宠后重新打开。')

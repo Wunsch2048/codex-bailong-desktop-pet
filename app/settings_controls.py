@@ -1,4 +1,6 @@
 """Small native controls using the companion's existing typography and palette."""
+from theme_registry import color as theme_color,palette
+from theme_runtime import set_theme_style,theme_style_source
 import os
 from functools import lru_cache
 from PySide6.QtCore import Qt,QRectF,QSize,Signal,QVariantAnimation,QEasingCurve
@@ -8,8 +10,10 @@ from typography import FONT_CSS,ui_font
 from ui_theme import INK,MUTED,PRIMARY,SELECTED,PANEL,BORDER,SURFACE,DISABLED
 
 
+_motion_mode='quality'
+
 @lru_cache(maxsize=1)
-def motion_enabled():
+def _system_motion_enabled():
     if os.environ.get('BAILONG_REDUCED_MOTION')=='1':return False
     if os.name=='nt':
         try:
@@ -18,6 +22,38 @@ def motion_enabled():
             if ctypes.windll.user32.SystemParametersInfoW(0x1042,0,ctypes.byref(enabled),0):return bool(enabled.value)
         except (OSError,AttributeError):pass
     return True
+
+def motion_enabled():
+    return _motion_mode=='quality' and _system_motion_enabled()
+
+def set_motion_mode(mode):
+    """Process-local presentation policy; persistence belongs to saved settings."""
+    global _motion_mode
+    _motion_mode='performance' if mode=='performance' else 'quality'
+
+def play_animation(animation):
+    """Keep normal finish/landing callbacks even when spatial motion is reduced."""
+    animation.start()
+    if not motion_enabled():animation.setCurrentTime(animation.duration())
+
+def settle_motion():
+    """One sweep on a mode change, never a background poll or decoder change."""
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QAbstractAnimation
+    app=QApplication.instance()
+    if app is None:return
+    if not motion_enabled():
+        for animation in app.findChildren(QAbstractAnimation):
+            if animation.state()==QAbstractAnimation.State.Running and animation.loopCount()==1:
+                animation.setCurrentTime(animation.duration())
+        # Top-level widgets are not necessarily QApplication children.
+        for widget in app.allWidgets():
+            for animation in widget.findChildren(QAbstractAnimation,options=Qt.FindChildOption.FindDirectChildrenOnly):
+                if animation.state()==QAbstractAnimation.State.Running and animation.loopCount()==1:
+                    animation.setCurrentTime(animation.duration())
+    for widget in app.allWidgets():
+        callback=getattr(widget,'motion_policy_changed',None)
+        if callback:callback()
 
 
 class SlidingSegments(QWidget):
@@ -29,7 +65,7 @@ class SlidingSegments(QWidget):
         for i,(label,key) in enumerate(self.items):
             b=QToolButton(self);b.setText(label);b.setCheckable(True);b.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             b.setCursor(Qt.CursorShape.PointingHandCursor);b.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Expanding)
-            b.setStyleSheet('QToolButton{'+FONT_CSS+f'font-size:12px;color:{MUTED};background:transparent;border:0;padding:0 {2 if compact else 4}px;}}'
+            set_theme_style(b,'QToolButton{'+FONT_CSS+f'font-size:12px;color:{MUTED};background:transparent;border:0;padding:0 {2 if compact else 4}px;}}'
                 f'QToolButton:checked{{color:{INK};}}QToolButton:focus{{border:0;outline:0;color:{PRIMARY};}}')
             b.clicked.connect(lambda checked=False,index=i:self.setCurrentIndex(index));row.addWidget(b,1);self.buttons[key]=b
         self.animation=QVariantAnimation(self);self.animation.setDuration(170)
@@ -63,8 +99,8 @@ class SlidingSegments(QWidget):
         if self.animation.state()!=self.animation.State.Running:
             self.pill=QRectF(self.buttons[self.currentData()].geometry())
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(SELECTED));p.drawRoundedRect(QRectF(self.rect()),8,8)
-        p.setBrush(QColor(SURFACE));p.drawRoundedRect(self.pill,5,5)
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color(SELECTED)));p.drawRoundedRect(QRectF(self.rect()),8,8)
+        p.setBrush(QColor(theme_color(SURFACE)));p.drawRoundedRect(self.pill,5,5)
 
 
 class SwitchRow(QCheckBox):
@@ -72,7 +108,7 @@ class SwitchRow(QCheckBox):
     def __init__(self,title,parent=None):
         super().__init__(title,parent);self.position=0.;self.setFont(ui_font(12));self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus);self.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Preferred)
-        self.setStyleSheet('QCheckBox{border:0;padding:0;background:transparent;}')
+        set_theme_style(self,'QCheckBox{border:0;padding:0;background:transparent;}')
         self.animation=QVariantAnimation(self);self.animation.setDuration(160)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic);self.animation.valueChanged.connect(self._advance)
         self.toggled.connect(self._toggle)
@@ -94,13 +130,15 @@ class SwitchRow(QCheckBox):
     def hideEvent(self,event):self.animation.stop();super().hideEvent(event)
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(PANEL if self.hasFocus() else SURFACE));p.drawRoundedRect(QRectF(self.rect()),8,8)
-        p.setFont(self.font());p.setPen(QColor(INK if self.isEnabled() else DISABLED))
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color(PANEL if self.hasFocus() else SURFACE)));p.drawRoundedRect(QRectF(self.rect()),8,8)
+        p.setFont(self.font());p.setPen(QColor(theme_color(INK if self.isEnabled() else DISABLED)))
         p.drawText(QRectF(9,7,self.width()-68,self.height()-14),int(Qt.AlignmentFlag.AlignVCenter|Qt.TextFlag.TextWordWrap),self.text())
         track=QRectF(self.width()-47,(self.height()-22)/2,38,22)
-        off=QColor(BORDER);on=QColor(PRIMARY);t=self.position
+        off=QColor(theme_color(BORDER));on=QColor(theme_color(PRIMARY));t=self.position
         mix=QColor.fromRgbF(off.redF()+(on.redF()-off.redF())*t,off.greenF()+(on.greenF()-off.greenF())*t,off.blueF()+(on.blueF()-off.blueF())*t)
         if not self.isEnabled():p.setOpacity(.45)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(mix);p.drawRoundedRect(track,11,11)
-        p.setBrush(QColor('#ffffff'));p.drawEllipse(QRectF(track.x()+2+16*t,track.y()+2,18,18))
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(mix));p.drawRoundedRect(track,11,11)
+        colors=palette();a=QColor(colors['switchOffKnob']);z=QColor(colors['switchOnKnob'])
+        knob=QColor.fromRgbF(a.redF()+(z.redF()-a.redF())*t,a.greenF()+(z.greenF()-a.greenF())*t,a.blueF()+(z.blueF()-a.blueF())*t)
+        p.setBrush(knob);p.drawEllipse(QRectF(track.x()+2+16*t,track.y()+2,18,18))
         p.setOpacity(1)

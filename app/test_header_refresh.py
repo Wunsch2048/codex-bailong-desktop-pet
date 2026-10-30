@@ -44,13 +44,13 @@ class HeaderRefreshTests(unittest.TestCase):
     def assert_header_fits(self):
         b=self.bubble;targets=b._header_actions;name=b._status_title.parentWidget()
         for target in targets:
-            self.assertEqual((target.width(),target.height()),(28,28))
+            self.assertEqual((target.width(),target.height()),(26,26))
             self.assertEqual(target.text(),'');self.assertTrue(target.accessibleName())
             self.assertTrue(b.rect().contains(self.bounds(target)))
             self.assertFalse(self.bounds(name).intersects(self.bounds(target)))
         for i,target in enumerate(targets):
             for other in targets[i+1:]:self.assertFalse(self.bounds(target).intersects(self.bounds(other)))
-        self.assertEqual(b._status_title.height(),28)
+        self.assertEqual(b._status_title.height(),26)
     def test_common_headings_fit_on_first_paint_and_live_updates(self):
         b=self.bubble
         for expanded in (False,True):

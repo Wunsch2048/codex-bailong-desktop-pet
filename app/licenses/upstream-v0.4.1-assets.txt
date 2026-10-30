@@ -1,1 +1,6 @@
-素材随Releases发布，不纳入Git历史。25段动画来自项目作者提供的角色素材及透明处理版本。未额外授予美术素材商用或再分发许可。
+素材随 Releases 发布，不纳入 Git 历史。35 段逻辑动画来自原项目 v0.4.1 / v0.5.1 及其角色素材与透明处理版本。本项目另行适配透明边缘、尺寸、循环衔接与播放逻辑；辅助接缝不另计为新动作。
+
+原项目：https://github.com/jingh12312-rgb/bailong-desktop-pet
+本次新增来源：https://github.com/jingh12312-rgb/bailong-desktop-pet/releases/tag/v0.5.1
+
+未额外授予美术素材商用或再分发许可。本说明不把原项目或其角色素材改列为 MIT、GPL 等统一开放许可证。

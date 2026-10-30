@@ -1,3 +1,5 @@
+from theme_registry import color as theme_color
+from theme_runtime import set_theme_style,theme_style_source
 import json, random, sys, time, threading, gzip, os
 from pathlib import Path
 from collections import OrderedDict
@@ -24,12 +26,12 @@ def clamp_position(position,size,area):
 
 class QuotaWorker(QThread):
     ready=Signal(object)
-    failed=Signal(str)
-    def __init__(self,parent=None):
-        super().__init__(parent);self.cancel=threading.Event()
+    failed=Signal(object)
+    def __init__(self,parent=None,manual=False):
+        super().__init__(parent);self.cancel=threading.Event();self.manual=manual
     def run(self):
-        try: self.ready.emit(quota_windows(read_quota(cancel=self.cancel)))
-        except Exception as error: self.failed.emit(str(error))
+        try: self.ready.emit(quota_windows(read_quota(cancel=self.cancel,manual=self.manual)))
+        except Exception as error: self.failed.emit(error)
 
 class Bubble(QWidget):
     def __init__(self):
@@ -38,7 +40,7 @@ class Bubble(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.layout=QVBoxLayout(self); self.layout.setContentsMargins(13,10,13,10);self.layout.setSpacing(5)
         self.setFixedWidth(256)
-        self.setStyleSheet('QLabel {'+FONT_CSS+'color:#332644;font-size:12px;} QProgressBar {background:#eee8f5;border:1px solid #c8b5dc;border-radius:7px;height:14px;} QProgressBar::chunk {background:#a47bc9;border-radius:6px;}')
+        set_theme_style(self,'QLabel {'+FONT_CSS+'color:#332644;font-size:12px;} QProgressBar {background:#eee8f5;border:1px solid #c8b5dc;border-radius:7px;height:14px;} QProgressBar::chunk {background:#a47bc9;border-radius:6px;}')
     def paintEvent(self,event):
         from performance_metrics import METRICS
         METRICS.add('paint')
@@ -219,6 +221,8 @@ class Pet(QWidget):
         self.bubble.hide()
         if self.mode=='quota':self.idle()
     def play_click_sound(self):
+        # Synthetic clicks in isolated/native probes must never reach speakers.
+        if os.environ.get('BAILONG_ISOLATED')=='1' or QApplication.platformName()=='offscreen':return
         if sys.platform=='win32':
             import winsound
             sound=ROOT/'app/sounds/click.wav'
@@ -240,7 +244,7 @@ class Pet(QWidget):
         if self.quota_inflight:
             # Repeated requests share the in-flight read; delivery uses the newest generation.
             self.quota_generation=token;return
-        self.quota_generation=token;self.quota_inflight=True;self.worker=QuotaWorker(self)
+        self.quota_generation=token;self.quota_inflight=True;self.worker=QuotaWorker(self,manual=True)
         self.worker.ready.connect(self.quota_ready);self.worker.failed.connect(self.quota_failed);self.worker.start()
     def quota_ready(self,windows):
         self.quota_inflight=False
@@ -248,7 +252,7 @@ class Pet(QWidget):
         self.bubble.quota(windows);self.position_bubble();self.bubble_timer.start(12000)
     def quota_failed(self,error):
         self.quota_inflight=False
-        if self.quota_generation==self.generation:self.say('暂时查不到额度：'+error,8000)
+        if self.quota_generation==self.generation:self.say('暂时查不到额度：'+str(error),8000)
     def mousePressEvent(self,event):
         if event.button()==Qt.MouseButton.RightButton:
             self.click_timer.stop();self.last_click=None
@@ -267,7 +271,8 @@ class Pet(QWidget):
             if delta.manhattanLength()>8 and not self.dragging:
                 self.dragging=True;self.click_timer.stop();self.last_click=None;self.generation+=1
                 self.bubble_timer.stop()
-                if not getattr(self,'settings',{}).get('panel_detached'):self.bubble.hide()
+                if hasattr(self,'begin_drag_panel'):self.begin_drag_panel()
+                elif not getattr(self,'settings',{}).get('panel_detached'):self.bubble.hide()
                 self.play(self.manifest.get('dragAnimation') or self.idles[0],'drag')
             if self.dragging:
                 self.move(self.constrained_position(self.origin+delta,event.globalPosition().toPoint()))

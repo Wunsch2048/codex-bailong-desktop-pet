@@ -8,6 +8,12 @@ import test_deployment_transaction as transaction_tests
 from contextlib import closing
 
 class SourceTests(unittest.TestCase):
+    def test_large_database_backup_has_a_bounded_size_based_allowance(self):
+        from directory_deploy import backup_budget
+        self.assertEqual(backup_budget(4*1024*1024),15)
+        self.assertGreater(backup_budget(3*1024**3),90)
+        self.assertGreater(backup_budget(4*1024*1024,2*1024**3),60)
+        self.assertEqual(backup_budget(2*1024**4),180)
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.source=self.root/'source';self.source.mkdir()
         self.make('BailongEnhanced.exe',b'executable')
@@ -90,7 +96,7 @@ class DirectoryTransactionTests(unittest.TestCase):
         def ready(*a):self.assertEqual(installer.read_manifest(self.root)['current'],'old')
         with patch('installer.zipfile.ZipFile',side_effect=AssertionError('ZIP must not be used')):
             exe=installer.install(None,self.root,populate=lambda d:populate_directory(source,d,VERSION),before_commit=ready)
-        self.assertTrue(self.old.is_file());self.assertEqual((exe.parent/'白龙安装管理.exe').read_bytes(),exe.read_bytes())
+        self.assertTrue(self.old.is_file());self.assertFalse((exe.parent/'白龙安装管理.exe').exists())
     def test_partial_directory_copy_and_failed_startup_restore_old_entries(self):
         source=self.source()
         def broken(dest):(dest/'part').write_bytes(b'partial');raise OSError('copy interrupted')

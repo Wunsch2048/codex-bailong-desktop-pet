@@ -55,6 +55,15 @@ def backed_memory():
         yield raw
 
 class TrayHistoryTests(unittest.TestCase):
+    def test_guid_owner_without_uid_is_verified_before_migration(self):
+        fixed=record('9',r'C:\Programs\BailongEnhanced\tray\BailongTray.exe',uid=None)
+        fixed['values']=[v for v in fixed['values'] if v[0]!='UID']+[['IconGuid','{6BAEA166-D3D9-4FFB-88C4-39A669A20E69}',1]]
+        old=record('2',OLD,promoted=1);reg=Registry([fixed,old])
+        approved=dict(keep=fixed,remove=[old],promoted=1,retired=[],inheritPin=False)
+        with backed_memory():result=history.apply_plan(reg,approved,'backup.json')
+        self.assertEqual(result['removed'],['2']);self.assertEqual(reg.rows['9']['IsPromoted'],(1,4))
+        reg.rows['9']['IconGuid']=('{different}',1)
+        self.assertFalse(history._same_record(reg,fixed))
     def test_only_exact_owned_paths_and_known_uids_are_candidates(self):
         rows=[record('1',NEW),record('2',OLD),record('3',OLD,history.LEGACY_UID),
               record('4',OTHER),record('5',OLD,321)]

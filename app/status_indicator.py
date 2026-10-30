@@ -156,6 +156,7 @@ class StatusIndicator(QWidget):
         self._last_signature=signature;self.changed.emit()
 
     def _sync_timer(self):
+        from settings_controls import motion_enabled
         now=self._motion_now()
         morphing=self.motion.started is not None and now-self.motion.started<MORPH_SECONDS
         fast=self.motion.state=='busy' or morphing or self.motion.shaking(now) or self.ack_flash()
@@ -163,12 +164,14 @@ class StatusIndicator(QWidget):
         if self.timer.interval()!=interval:
             self.timer.setInterval(interval)
             self._tick_at=None;self._paint_at=None;self._tick_gaps.clear();self._paint_gaps.clear()
-        running=self.isVisible() and not self._motion_holds and (self.motion.moving(now) or self.ack_flash())
+        running=motion_enabled() and self.isVisible() and not self._motion_holds and (self.motion.moving(now) or self.ack_flash())
         if running and not self.timer.isActive():self.timer.start()
         elif not running:
             self.timer.stop();self._tick_at=None;self._paint_at=None
 
     def set_island(self,value):self.island=value;self.update()
+
+    def motion_policy_changed(self):self._sync_timer();self.update()
 
     def _motion_now(self,now=None):
         now=self.clock() if now is None else now
@@ -229,5 +232,7 @@ class StatusIndicator(QWidget):
         if self._paint_at is not None and animating:self._paint_gaps.append((started-self._paint_at)*1000)
         self._paint_at=started if animating else None
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        paint_liquid_glyph(p,self.motion.sample(self._motion_now()),self.island)
+        from settings_controls import motion_enabled
+        pose=self.motion.sample(self._motion_now()) if motion_enabled() else self.motion.steady(self.motion.since)
+        paint_liquid_glyph(p,pose,self.island)
         p.end();self._paint_costs.append((time.perf_counter()-started)*1000)

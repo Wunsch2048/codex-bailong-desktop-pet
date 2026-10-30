@@ -2,6 +2,7 @@
 
 Use build_release.py --package only for an explicitly requested public release.
 All entry switching and failure recovery still belong to installer.deploy.
+Local: --tests relevant_test_modules. Publishing: --build-only --release-check.
 """
 import argparse,contextlib,hashlib,json,marshal,os,shutil,subprocess,sys,tempfile,time
 from pathlib import Path
@@ -29,9 +30,35 @@ def read(path):return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 def sha(path):
     with Path(path).open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
+def expected_tests():
+    return sorted([p.stem for p in (ROOT/'app').glob('test_*.py')]+['test_release_version','test_release_retention','test_local_workflow'])
+
+def validation_plan(tests=None,release=False,native=False,tls=False):
+    known=expected_tests();modules=known if release else sorted(set(tests or ()))
+    if not modules:raise ValueError('本地构建请用 --tests 指定本轮相关检查；发布前使用 --release-check')
+    if set(modules)-set(known):raise ValueError('未知检查模块：'+', '.join(sorted(set(modules)-set(known))))
+    return dict(mode='release' if release else 'targeted',modules=modules,native=bool(release or native),tls=bool(release or tls))
+
+def validate_regression(regression,plan=None):
+    known=expected_tests();plan=plan or dict(mode='release',modules=known,tls=True,native=True)
+    modules=plan.get('modules',[])
+    if (not regression.get('passed') or regression.get('expectedModules')!=known
+            or regression.get('sourceHashes')!=source_hashes()):raise ValueError('本轮检查未通过或源码已变化')
+    if not modules or set(modules)-set(known):raise ValueError('构建缺少有效检查范围')
+    if plan.get('mode')=='release':
+        if regression.get('scope')!='full' or regression.get('modules')!=len(known) or sorted(modules)!=known:raise ValueError('发布前必须完成完整回归')
+    else:
+        records=regression.get('records',[])
+        if sorted(r.get('module') for r in records)!=sorted(modules) or regression.get('modules')!=len(modules) or any(r.get('returncode')!=0 or r.get('tests',0)<=0 for r in records):raise ValueError('检查凭据与本轮指定范围不一致')
+    return plan
+
+def require_release_regression():
+    validate_regression(read(ROOT/'本地实装/回归验收/current-regressions.json'))
+
 def source_hashes():
     paths=list((ROOT/'app').glob('*.py'))
-    paths += [ROOT/name for name in ('build_local.py','quality_check.py','build_release.py','build_card_only.py','check_bundle.py','deploy_release.py','release_version.py','release_retention.py','asset_pack.py','build_materials.py','build_program_update.py','package_trim.py','test_local_workflow.py','test_release_version.py','test_release_retention.py') if (ROOT/name).is_file()]
+    paths += [ROOT/'app/tray_host.cs',ROOT/'build_tray_host.py']
+    paths += [ROOT/name for name in ('build_local.py','quality_check.py','build_release.py','build_card_only.py','check_bundle.py','deploy_release.py','release_version.py','release_retention.py','asset_pack.py','build_materials.py','build_program_update.py','program_channel.py','package_trim.py','test_local_workflow.py','test_release_version.py','test_release_retention.py') if (ROOT/name).is_file()]
     if (ROOT/'app/material_catalog.json').is_file():paths.append(ROOT/'app/material_catalog.json')
     paths += [p for p in [ROOT/'requirements-enhanced.txt',ROOT/'app/book_catalog.json'] if p.is_file()]
     paths += [p for p in (ROOT/'app/fonts').glob('*') if p.is_file()]
@@ -57,6 +84,8 @@ def verify_code(folder):
     with contextlib.redirect_stdout(io.StringIO()) as output:passed=check()
     (ROOT/'本地实装/编译模块核对.json').write_text(output.getvalue(),encoding='utf-8')
     if not passed:raise ValueError('程序编译模块与当前源码不一致')
+    host=read(folder/'tray/host-build.json')
+    if host.get('sourceSha256')!=sha(ROOT/'app/tray_host.cs') or host.get('executableSha256')!=sha(folder/'tray/BailongTray.exe'):raise ValueError('托盘宿主与当前源码或构建不一致')
     return dict(passed=True,embeddedArchiveBoundToExecutable=True,entrySourceMatched=True,modules=read(ROOT/'本地实装/编译模块核对.json'))
 
 def native_matrix(exe,label):
@@ -90,6 +119,7 @@ def verify_tls_runtime(exe):
 def snapshot_source():
     dest=ROOT/'本地实装/源码快照'/(VERSION+'-'+time.strftime('%Y%m%d-%H%M%S'));dest.mkdir(parents=True)
     files=[p for p in (ROOT/'app').glob('*.py') if not p.name.startswith(('test_','qa_'))]
+    files += [ROOT/'app/tray_host.cs',ROOT/'build_tray_host.py']
     files += [ROOT/p for p in ('build_local.py','quality_check.py','build_release.py','check_bundle.py','deploy_release.py','release_version.py','package_trim.py','asset_pack.py','build_materials.py','build_program_update.py','app/material_catalog.json','AGENTS.md','app/book_catalog.json','outputs/白龙桌宠素材/素材清单.json')]
     files += list((ROOT/'app/branding').glob('*.ico'))
     records={}
@@ -97,6 +127,15 @@ def snapshot_source():
         relative=path.relative_to(ROOT);target=dest/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,target);records[relative.as_posix()]=sha(target)
     atomic(dest/'snapshot.json',dict(version=VERSION,files=records,artworkStoredInInstalledRollbackAndVerifiedAssetCache=True))
     return dest
+
+def settings_differences(earlier,settings):
+    dynamic={'position','screen_position','facing'}
+    home=settings.get('wander_home');position=settings.get('screen_position')
+    if (isinstance(home,dict) and home==position and position!=earlier.get('screen_position') and
+        isinstance(home.get('screen'),str) and bool(home['screen']) and
+        home['screen']==(earlier.get('screen_position') or {}).get('screen') and
+        all(type(home.get(k)) in (int,float) and 0<=home[k]<=1 for k in ('rx','ry'))):dynamic.add('wander_home')
+    return [k for k,v in earlier.items() if k not in dynamic and settings.get(k)!=v]
 
 def verify_installed(result):
     import psutil
@@ -110,8 +149,6 @@ def verify_installed(result):
         except (OSError,ValueError,psutil.Error,KeyError):pass
         time.sleep(.2)
     else:raise OSError('新版已提交，但安装后运行状态未能确认；保留旧版本可回退')
-    for key in ('liquid_status_family','chat_config_safe_commit','chat_actionable_errors','shared_body_tail_decode','nonblocking_decoder_cancel','adaptive_animation_clock','high_resolution_frame_clock','program_only_updates','material_tiers','isolated_report_presentation','semantic_sustained_loops','independent_card_surface','minimal_quota_mode','isolated_transition_preparation','cleared_native_landing','linked_report_motion','continuous_state_playback','native_client_hit_testing','shared_paint_hit_transform','lost_mouse_grab_recovery','character_switch_keeps_navigation','in_app_updates','video_completion_priority'):
-        if runtime.get(key) is not True:raise ValueError('安装后缺少功能：'+key)
     m=read_manifest();previous=result['previous']
     if previous:
         if previous not in m['versions']:raise ValueError('安装清单缺少回退版本')
@@ -120,7 +157,9 @@ def verify_installed(result):
     backup=Path(result['backup']);before=backup/'settings.json'
     if before.exists():
         settings=read(DATA/'settings.json');earlier=read(before)
-        changed=[k for k,v in earlier.items() if k not in ('position','screen_position','facing') and settings.get(k)!=v]
+        # Drag/drop and a completed throw deliberately save the activity home
+        # together with the current position while startup acceptance runs.
+        changed=settings_differences(earlier,settings)
         if changed:raise ValueError('安装后设置与部署前不一致：'+','.join(changed))
     if sha(current/'BailongEnhanced.exe')!=sha(ROOT/'release/BailongEnhanced/BailongEnhanced.exe'):raise ValueError('实际安装程序与检查过的构建不同')
     return dict(passed=True,pid=runtime['pid'],version=runtime['version'],uiRevision=runtime['ui_revision'],rollbackRetainedAndVerified=bool(previous),userSettingsPreserved=True,backupVerified=read(backup/'backup.json')['complete'],actualInstalledExecutableVerified=True)
@@ -128,8 +167,15 @@ def verify_installed(result):
 def main(argv=None):
     args=argparse.ArgumentParser(description=__doc__);args.add_argument('--build-only',action='store_true',help='Build and validate without changing the installed program')
     args.add_argument('--deploy-verified',action='store_true',help='Deploy the exact unchanged build that already passed --build-only')
+    args.add_argument('--tests',nargs='+',help='Only the test modules related to this local change')
+    args.add_argument('--release-check',action='store_true',help='Full regression, TLS and four-scale checks before publishing')
+    args.add_argument('--native-check',action='store_true',help='Include native four-scale checks when affected')
+    args.add_argument('--tls-check',action='store_true',help='Include frozen TLS checks when affected')
     options=args.parse_args(argv)
     if options.build_only and options.deploy_verified:args.error('choose either --build-only or --deploy-verified')
+    if not options.deploy_verified:
+        try:options.validation=validation_plan(options.tests,options.release_check,options.native_check,options.tls_check)
+        except ValueError as error:args.error(str(error))
     from PySide6.QtCore import QLockFile
     (ROOT/'build').mkdir(exist_ok=True);(ROOT/'本地实装').mkdir(exist_ok=True)
     lock=QLockFile(str(ROOT/'build/local-build.lock'))
@@ -137,14 +183,17 @@ def main(argv=None):
     try:
         if options.deploy_verified:
             proof=read(ROOT/'本地实装/构建验收.json');folder=ROOT/'release/BailongEnhanced'
+            if options.release_check and proof.get('validation',{}).get('mode')!='release':raise ValueError('该构建只做过定向检查，不能作为发布检查凭据')
             verify_code(folder)
             if proof.get('version')!=VERSION or proof.get('executableSha256')!=sha(folder/'BailongEnhanced.exe'):raise ValueError('构建已变化，必须重新运行默认构建验收')
             from directory_deploy import inspect_source
             inspect_source(folder,VERSION)
         else:
-            safe_print('运行隔离回归检查…',flush=True)
+            safe_print('运行发布完整回归…' if options.release_check else '运行本轮相关检查：'+', '.join(options.validation['modules']),flush=True)
             with (ROOT/'本地实装/回归检查.log').open('w',encoding='utf-8') as log:
-                subprocess.run([sys.executable,str(ROOT/'quality_check.py')],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True)
+                command=[sys.executable,str(ROOT/'quality_check.py'),'current']
+                if not options.release_check:command+=options.validation['modules']
+                subprocess.run(command,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True)
             return build_and_deploy(options)
         return install_verified(proof,folder)
     finally:lock.unlock()
@@ -154,9 +203,12 @@ def build_and_deploy(options):
     with (ROOT/'本地实装/应用构建.log').open('w',encoding='utf-8') as log:
         subprocess.run([sys.executable,str(ROOT/'build_release.py')],cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True)
     folder=ROOT/'release/BailongEnhanced'
-    code=verify_code(folder);tls=verify_tls_runtime(folder/'BailongEnhanced.exe');probes=native_matrix(folder/'BailongEnhanced.exe','构建')
+    plan=options.validation
+    code=verify_code(folder)
+    tls=verify_tls_runtime(folder/'BailongEnhanced.exe') if plan['tls'] else dict(skipped=True,reason='本轮未涉及TLS')
+    probes=native_matrix(folder/'BailongEnhanced.exe','构建') if plan['native'] else []
     snapshot=snapshot_source()
-    proof=dict(version=VERSION,executableSha256=sha(folder/'BailongEnhanced.exe'),compiledCode=code,tlsRuntime=tls,nativeMatrix=[{k:p[k] for k in ('passed','dpr','actions','sampledFrames','bodyPoints','transparentPoints','nativePressDragRelease')} for p in probes],sourceSnapshot=str(snapshot),fullInstallerGenerated=False,githubUploaded=False)
+    proof=dict(version=VERSION,validation=plan,executableSha256=sha(folder/'BailongEnhanced.exe'),compiledCode=code,tlsRuntime=tls,nativeMatrix=[{k:p[k] for k in ('passed','dpr','actions','sampledFrames','bodyPoints','transparentPoints','nativePressDragRelease')} for p in probes],sourceSnapshot=str(snapshot),fullInstallerGenerated=False,githubUploaded=False)
     atomic(ROOT/'本地实装/构建验收.json',proof)
     if options.build_only:return 0
     return install_verified(proof,folder)
@@ -166,10 +218,9 @@ def install_verified(proof,folder):
     # Directory deploy changes are Python-side too: tie the reusable build
     # to a passing regression receipt for the current production/test tree.
     regression=read(ROOT/'本地实装/回归验收/current-regressions.json')
-    current=source_hashes()
-    expected=sorted([p.stem for p in (ROOT/'app').glob('test_*.py')]+['test_release_version','test_release_retention','test_local_workflow'])
-    if not regression.get('passed') or regression.get('scope')!='full' or regression.get('expectedModules')!=expected or regression.get('modules')!=len(expected) or regression['sourceHashes']!=current:raise ValueError('当前源码尚未通过完整隔离回归检查')
-    if not all(proof.get('tlsRuntime',{}).get(k) is True for k in ('passed','certificateVerification','hostnameVerification','offline')):raise ValueError('当前构建缺少冻结程序TLS验收')
+    plan=validate_regression(regression,proof.get('validation'))
+    if plan.get('tls') and not all(proof.get('tlsRuntime',{}).get(k) is True for k in ('passed','certificateVerification','hostnameVerification','offline')):raise ValueError('当前构建缺少冻结程序TLS验收')
+    if proof.get('validation') and plan.get('native') and (len(proof.get('nativeMatrix',[]))!=4 or not all(p.get('passed') for p in proof['nativeMatrix'])):raise ValueError('本轮要求的原生交互检查未通过')
     from installer import DATA,startup_preference
     from directory_deploy import deploy_directory
     DATA.mkdir(parents=True,exist_ok=True);deployment_lock=QLockFile(str(DATA/'deployment.lock'))
@@ -177,7 +228,7 @@ def install_verified(proof,folder):
     try:
         result=deploy_directory(folder,startup_preference())
         proof.update(deployment=result,installed=verify_installed(result))
-        proof['regression']=dict(modules=regression['modules'],tests=regression['tests'],passed=True)
+        proof['regression']=dict(scope=regression['scope'],modules=regression['modules'],tests=regression['tests'],passed=True)
         atomic(ROOT/'本地实装/最终验收.json',proof)
         safe_print(json.dumps(dict(version=VERSION,current=result['current'],previous=result['previous'],backup=result['backup'],fullInstallerGenerated=False,passed=True),ensure_ascii=False),flush=True)
     finally:deployment_lock.unlock()

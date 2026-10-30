@@ -115,7 +115,9 @@ def recover(root,system=False):
     path.unlink()
     if journal.get('old_running'):
         old=owned_destination(root,journal['old_running'])/'BailongEnhanced.exe'
-        if old.is_file():subprocess.Popen([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+        if old.is_file():
+            from process_launch import launch_own
+            launch_own([str(old)],cwd=str(old.parent),creationflags=0x08000000)
     return True
 
 def verify_payload(dest,version):
@@ -132,7 +134,8 @@ def verify_payload(dest,version):
 def wait_ready(process,exe,receipt,token,version,timeout=25,stable_seconds=1):
     deadline=time.monotonic()+timeout;first=None
     while time.monotonic()<deadline:
-        if process.poll() is not None:raise OSError('新版桌宠在就绪前退出，安装未提交')
+        code=process.poll()
+        if code is not None:raise OSError(f'新版桌宠在就绪前退出（0x{code & 0xffffffff:08X}），安装未提交')
         try:data=json.loads(receipt.read_text(encoding='utf-8'))
         except (OSError,ValueError):data={}
         if not isinstance(data,dict):data={}

@@ -46,15 +46,18 @@ class SatelliteReadabilityTests(unittest.TestCase):
             for point in (bounds.topLeft(),bounds.topRight(),bounds.bottomLeft(),bounds.bottomRight()):
                 self.assertLess((point.x()-20)**2+(point.y()-20)**2,14**2)
             widget.deleteLater()
-    def test_open_arc_keeps_bottom_gap_and_fills_clockwise_from_lower_left(self):
-        from ui_theme import ACCENT,TRACK
+    def test_full_ring_has_track_at_bottom_and_clockwise_balance(self):
+        from theme_registry import palette
         for value in (0,50,100,None):
             widget=QuotaSatellite([dict(name='一周',remaining=value)],'')
-            widget.move(10000,10000);widget.show();APP.processEvents();image=widget.grab().toImage();dpr=image.devicePixelRatio()
-            def color(x,y):return image.pixelColor(round(x*dpr),round(y*dpr)).name()
-            self.assertEqual(color(20,37),SURFACE)
-            self.assertEqual(color(3.5,20),ACCENT if value in (50,100) else TRACK)
-            self.assertEqual(color(36.5,20),ACCENT if value==100 else TRACK)
+            widget.move(10000,10000);widget.show();APP.processEvents();image=widget.grab().toImage()
+            def at(x,y):return image.pixelColor(round(x*image.devicePixelRatio()),round(y*image.devicePixelRatio())).name()
+            self.assertEqual(widget.size().width(),38)
+            from theme_registry import color
+            self.assertEqual(at(19,36),color(ISLAND))
+            self.assertEqual(at(33,19),palette()['pillAccent'] if value in (50,100) else palette()['pillTrack'])
+            self.assertEqual(at(5,19),palette()['pillAccent'] if value==100 else palette()['pillTrack'])
+            self.assertNotEqual(at(19,33),color(ISLAND))
             widget.hide();widget.deleteLater()
     def test_reveal_keeps_label_static_and_does_not_remeasure_fonts(self):
         from unittest.mock import patch
@@ -103,7 +106,7 @@ class ModeTests(unittest.TestCase):
     def test_island_does_not_layout_raw_messages_or_animate_invisible_scroller(self):
         self.b.set_mode('mini');self.finish();size=self.b.size();self.b.message('很长的具体任务详情'*50)
         self.assertEqual(self.b.size(),size);self.assertTrue(self.b.status_view.isHidden());self.assertFalse(self.b.status_view.animation.state().value)
-        self.assertEqual((size.width(),size.height()),(222,44))
+        self.assertEqual((size.width(),size.height()),(210,38))
         calls=[];self.b.shortcutRequested.connect(lambda:calls.append('shortcut'));self.b.findChild(QToolButton,'island_shortcut').click();self.assertEqual(calls,['shortcut'])
     def test_editing_and_report_do_not_auto_collapse(self):
         self.b.show_page('chat',QWidget());self.finish();self.b.codex_open=False;self.b.evaluate_mode(self.b.last_task_update+500)
@@ -126,6 +129,24 @@ class ModeTests(unittest.TestCase):
         icon.session_summary='已完成/执行中/一段非常长的状态描述 +62';self.b.island.refresh()
         label=self.b.island.text;self.assertLessEqual(QFontMetrics(label.font()).horizontalAdvance(label.text()),label.width())
         self.assertTrue(label.text().endswith('+62'));self.assertIn('非常长',self.b.island.accessibleName())
+    def test_status_group_centers_and_moves_without_resizing_native_canvas(self):
+        from PySide6.QtGui import QFontMetrics
+        self.b.set_mode('mini');self.finish();island=self.b.island;outer=QRect(self.b.geometry())
+        for text in ('执行中/完成','待命','思考中'):
+            self.b.status_indicator.session_summary=text;island.refresh()
+            self.assertTrue(island.animation.state().value)
+            for ms in (0,60,125,190,250):
+                island.animation.setCurrentTime(ms);self.assertEqual(self.b.geometry(),outer)
+            end=island.text.x()+1+island.text.current_ink.width()
+            self.assertAlmostEqual((island.icon.x()+end)/2,island.width()/2,delta=1)
+            self.assertFalse(island.animation.state().value)
+    def test_status_caption_pauses_for_surface_and_stops_when_hidden(self):
+        from PySide6.QtCore import QAbstractAnimation
+        self.b.set_mode('mini');self.finish();island=self.b.island
+        self.b.status_indicator.session_summary='执行中';island.refresh();island.animation.setCurrentTime(90)
+        island.freeze_motion();self.assertEqual(island.animation.state(),QAbstractAnimation.State.Paused)
+        island.resume_motion();self.assertEqual(island.animation.state(),QAbstractAnimation.State.Running)
+        island.hide();self.assertFalse(island.animation.state().value);self.assertEqual(island.text.progress,1.)
     def test_read_completion_disappears_and_retains_other_running_conversation(self):
         b=self.b;icon=b.status_indicator;clock=[0.];icon.clock=lambda:clock[0]
         for sid,state in [('a','complete'),('b','working')]:b.roster.observe(dict(session=sid,state=state,title='会话'+sid))
@@ -135,6 +156,36 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(icon.visual(),'busy');self.assertNotIn('会话a',b.status_view.text());self.assertIn('会话b',b.status_view.text())
 
 class ChartEntryTests(unittest.TestCase):
+    def test_compact_reveal_in_performance_mode_uses_complete_ring(self):
+        from settings_controls import set_motion_mode
+        set_motion_mode('performance')
+        ring=QuotaSatellite([dict(name='一周',remaining=41)],'')
+        try:
+            ring.begin_reveal();ring.show();APP.processEvents();ring.start_reveal()
+            self.assertEqual(ring.reveal.progress,1.);self.assertFalse(ring.reveal.pending)
+            self.assertFalse(ring.reveal.animation.state().value)
+        finally:ring.close();ring.deleteLater();set_motion_mode('quality');APP.processEvents()
+
+    def test_compact_ring_waits_for_landing_and_resumes_refresh_without_finishing_hidden(self):
+        from PySide6.QtCore import QAbstractAnimation
+        b=CompactBubble();b.show();APP.processEvents()
+        try:
+            for mode in ('mini','minimal','mini'):
+                b.set_mode(mode);t=b.size_transition
+                ring=next(w for w in b.content.findChildren(QuotaSatellite) if w.isVisibleTo(b.content))
+                self.assertTrue(ring.reveal.pending);self.assertEqual(ring.reveal.progress,0.)
+                ring.start_reveal();self.assertEqual(ring.reveal.animation.state(),QAbstractAnimation.State.Stopped)
+                t.complete();APP.processEvents();t.release_landing();APP.processEvents()
+                ring=next(w for w in b.content.findChildren(QuotaSatellite) if w.isVisibleTo(b.content))
+                self.assertEqual(ring.reveal.animation.state(),QAbstractAnimation.State.Running)
+                ring.reveal.animation.setCurrentTime(160);before=ring.reveal.progress
+                b.redraw();APP.processEvents()
+                fresh=next(w for w in b.content.findChildren(QuotaSatellite) if w.isVisibleTo(b.content))
+                self.assertAlmostEqual(fresh.reveal.progress,before,delta=.03)
+                self.assertEqual(fresh.reveal.animation.state(),QAbstractAnimation.State.Running)
+                fresh.reveal.animation.setCurrentTime(620)
+        finally:b.close();b.deleteLater();APP.processEvents()
+
     def test_entry_starts_at_zero_survives_status_refresh_and_stops_when_hidden(self):
         from token_charts import TokenPlot
         b=CompactBubble();b.show();APP.processEvents()

@@ -42,7 +42,7 @@ class IndependentTests(unittest.TestCase):
         p.set_fullscreen_yield(False);self.assertFalse(p._fullscreen_yielded);self.assertTrue(p.isVisible());self.assertTrue(p.bubble.isVisible())
     def test_modes_are_persistent_peers_and_minimal_has_only_one_button(self):
         p=self.pet;p.apply_settings(dict(character_visible=False));b=p.bubble
-        for mode,size in [('minimal',54),('mini',222),('minimal',54),('auto',268)]:
+        for mode,size in [('minimal',54),('mini',210),('minimal',54),('auto',268)]:
             b.set_mode(mode);self.finish();self.assertEqual(b.width(),size);self.assertEqual(p.settings['bubble_mode'],mode)
         b.set_mode('minimal');self.finish()
         self.assertTrue(b.is_minimal());self.assertFalse(b.is_island());self.assertEqual(b.height(),54)

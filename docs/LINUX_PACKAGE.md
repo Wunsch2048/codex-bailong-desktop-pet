@@ -1,6 +1,6 @@
 # 白龙桌宠 Linux 便携版
 
-v1.2.1-linux-preview.3 包含 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端，启动时自动识别。KDE 源码验收与限制详见 [KDE 说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/KDE.md)；本次包体实测环境为 CachyOS/niri，未做 KDE 安装包实机验收。
+v1.2.1-linux-preview.4 包含 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端，启动时自动识别。KDE 源码验收与限制详见 [KDE 说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/KDE.md)；本次包体实测环境为 CachyOS/niri，未做 KDE 安装包实机验收。
 
 本构建面向 CachyOS/Arch x86_64、niri 原生 Wayland。包含 Python 3.12、Qt 与轻量素材，不需要激活虚拟环境或安装系统 Python 包。不是所有 Linux 发行版通用包。
 

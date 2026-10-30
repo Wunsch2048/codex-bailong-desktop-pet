@@ -1,5 +1,8 @@
 name: Source checks
 on: [push, pull_request, workflow_dispatch]
+concurrency:
+  group: source-checks-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:

@@ -1,5 +1,7 @@
 # 开发与构建
 
+开工先阅读 [维护与防错规范](../维护与防错规范.md)；涉及界面或人物动效时同时阅读 [动画制作规范](../动画制作规范.md)。[验证入口索引](维护规范验证入口.md)列出公开测试与需要开发素材的边界。
+
 Windows x64，Python 3.12（当前本地冻结环境为3.12.14）。先安装 requirements-enhanced.txt，所有命令从仓库根目录执行。原项目与授权边界见根目录 NOTICE.md。
 
 ## 准备动画
@@ -16,9 +18,9 @@ Git不保存大型动画。安装正式版本后，在设置中下载高清素�
 
 最终EXE另做离线TLS初始化自检，要求证书和主机名校验开启。构建工具会保留解释器SSL实现依赖的附属数据文件；不要用关闭验证来替代补齐运行依赖。
 
-`python build_release.py` 仅构建应用目录，不改变本机安装。公开发布前先构建并校验完整Windows包、program.zip / program.json及 SHA256SUMS，再运行 `build_card_only.package()` 生成仅卡片安装包和独立轻量资源。仅卡片安装包需先验证素材ID、载荷清单和所有文件校验值；轻量资源以 materials-ID 预发布单独上传，软件稳定版随后发布。`python check_bundle.py` 比对编译模块。输出与缓存不提交Git。
+`python build_release.py` 仅构建应用目录，不改变本机安装；公开交付使用上面的标准release-check入口绑定检查范围。`python check_bundle.py` 比对编译模块。程序ZIP已包含运行环境，只省略可选人物素材；在线／离线安装入口按本轮交付需要生成，不默认再制作包含全部动画的大包。`build_card_only.package()`属于历史安装基包入口，只有明确需要时才使用。输出与缓存不提交Git。
 
-程序小包只省略明确匹配的动画素材，所有程序/运行库/字体来自新包。按更新内容选择附件：程序补丁提供 program.zip、program.json 和 SHA256SUMS；动画补丁提供 animation.json、轻量/高清动画 ZIP 和 SHA256SUMS。同批发布在一个稳定 Release 内共用版本。完整 Windows 包和仅卡片安装包作为安装基包按需更新，保留明确的首次安装链接；旧客户端迁移、新安装及不兼容情况使用安装基包。高清按内容ID单独发布为预发布且不设Latest，不能让资源标签取代软件稳定版。
+程序小包只省略明确匹配的动画素材，所有程序／运行库／字体来自新包。程序补丁提供program.zip、program.json、program-channel.json和SHA256SUMS；动画补丁提供animation.json、两档动画ZIP、有效程序通道和SHA256SUMS。同批附件共用一个稳定Release版本。首次安装使用当前在线入口；离线或旧客户端兼容入口按需提供。只发动画时沿用上一公开程序通道，并检查最低程序版本，不能让Latest丢失可用的首次安装指向。历史materials预发布不作为当前稳定程序入口。
 
 ## 当前首次安装与程序包
 
@@ -34,7 +36,7 @@ Git不保存大型动画。安装正式版本后，在设置中下载高清素�
 
 ## 不依赖外部动画的检查
 
-在PowerShell设置 `$env:PYTHONPATH='app'` 与 `$env:QT_QPA_PLATFORM='offscreen'`，然后运行 `.github/workflows/checks.yml` 中列出的unittest模块。CI使用相同入口并编译检查app与tools；涉及真实桌面、安装、历史素材及浏览器的验收另行运行。
+运行 `python tools/check_source.py`。该入口按模块创建独立进程与临时用户目录，并明确动画策略，避免Qt全局状态相互污染；CI还编译检查app与tools。不要把多个UI测试模块直接合并到同一unittest进程。涉及真实桌面、冻结程序、安装、历史素材及浏览器的验收另行运行，源码CI不能替代完整发布检查。
 
 ## WSL 来源
 

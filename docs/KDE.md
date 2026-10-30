@@ -2,7 +2,7 @@
 
 本分支在 [helantianshen 的 Linux/niri 适配](https://github.com/helantianshen/codex-bailong-desktop-pet/tree/3144a6769b1590f4e2665077d907b92bb7d4c4d7)上增加 KDE 支持。KDE 最初适配的 Windows 基线为 v1.0.0，linux-preview.2 起包含 KDE 后端；早期 linux-preview.1 下载包只支持 niri。按[上游 Linux issue 的审阅建议](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/2#issuecomment-6392931998)隔离平台代码、说明实机环境与功能边界。
 
-当前公开版为 v1.2.1-linux-preview.3，同步上游 v1.2.1；以下 KDE 实机记录来自此前适配，新版完整交互尚未在 KDE 复验，详见 [发布说明](releases/v1.2.1-linux-preview.3.md)。
+当前公开版为 v1.2.1-linux-preview.4，同步上游 v1.2.1；以下 KDE 实机记录来自此前适配，新版完整交互尚未在 KDE 复验，详见 [发布说明](releases/v1.2.1-linux-preview.4.md)。
 
 ## 启动
 

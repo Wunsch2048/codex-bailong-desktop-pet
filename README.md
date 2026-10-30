@@ -2,9 +2,9 @@
 
 ![文章海报](docs/media/cover.png)
 
-一只陪你使用 Codex 的白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，源码已合并上游 Windows **v1.2.1**，本 fork 提供 **Linux/niri、KDE 预览版 v1.2.1-linux-preview.3**。
+一只陪你使用 Codex 的白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，源码已合并上游 Windows **v1.2.1**，本 fork 提供 **Linux/niri、KDE 预览版 v1.2.1-linux-preview.4**。
 
-**[Linux 下载](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.2.1-linux-preview.3)** · [Windows 上游下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) · [快速部署](docs/快速部署说明.txt) · [全部新增功能](docs/新增功能说明.txt) · [开发说明](docs/DEVELOPMENT.md) · [迭代历史](docs/迭代历史.txt)
+**[Linux 下载](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.2.1-linux-preview.4)** · [Windows 上游下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) · [快速部署](docs/快速部署说明.txt) · [全部新增功能](docs/新增功能说明.txt) · [开发说明](docs/DEVELOPMENT.md) · [迭代历史](docs/迭代历史.txt)
 
 ## Linux / niri / KDE
 
@@ -22,15 +22,15 @@
 
 | 下载格式 | 启动方式 |
 | --- | --- |
-| [AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.3/Bailong-1.2.1-linux-preview.3-x86_64.AppImage) | 赋予执行权限后运行 |
-| [便携包 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.3/Bailong-1.2.1-linux-preview.3-x86_64.tar.zst) | 解压后运行目录内的 `AppRun` |
-| [SHA256 校验值](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.3/SHA256SUMS.txt) | 在下载目录执行 `sha256sum -c SHA256SUMS.txt`，需要对应文件都已下载 |
+| [AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.AppImage) | 赋予执行权限后运行 |
+| [便携包 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.tar.zst) | 解压后运行目录内的 `AppRun` |
+| [SHA256 校验值](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/SHA256SUMS.txt) | 在下载目录执行 `sha256sum -c SHA256SUMS.txt`，需要对应文件都已下载 |
 
 两种包均包含 Python 3.12、Qt 及轻量人物素材，每个约 680 MiB，不需要安装 Python 包。宿主需要 bubblewrap（`bwrap`）和本机 Codex；仅 niri 后端需要 niri，KDE 后端需要 X11/XWayland。
 
 ```sh
-chmod +x Bailong-1.2.1-linux-preview.3-x86_64.AppImage
-./Bailong-1.2.1-linux-preview.3-x86_64.AppImage
+chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
+./Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 ```
 
 当前包会先检查 `BAILONG_CODEX` 和 PATH，也可通过 `--codex-cli /绝对路径/codex` 指定。首次配置 niri 时，按[使用说明](docs/LINUX_PACKAGE.md)将包内窗口规则复制到稳定配置路径并 include；规则包含本机 niri 的 `background-effect` 扩展，其他构建需验证兼容性。KDE 不使用这些规则。
@@ -41,11 +41,11 @@ chmod +x Bailong-1.2.1-linux-preview.3-x86_64.AppImage
 
 **当前边界**：当前预览版已恢复随机动作和 Codex 回复摘要，首次升级开启一次，之后保留用户开关；声音仍由入口关闭。声音播放、聊天密钥保存、甩出惯性及 Windows 更新安装流程尚未适配，部分界面入口仍保留，请勿将其视为 Linux 可用功能。分离面板等复杂交互已进行初步人工验收，不等于全套跨屏、高 DPI 或长期稳定性验收；置顶及系统通知仍需跨桌面验收。niri/KDE 人物输入区域已采用 `alpha >= 12`，“开机启动”和“随 Codex 启动”已接入独立 systemd 用户服务，使用步骤见 [Linux 说明](docs/LINUX.md#登录图形桌面后自启动)。两个启动开关相互独立。不要使用 Windows 更新包更新 Linux 版。
 
-**本版新增**：已接入上游 v1.2.1 界面，补齐 niri 拖动期间气泡跟随、设置页边缘避让，并修复托盘首次展开菜单不完整。已接入“随 Codex 关闭”和会话跳转。退出沿用连续三次确认规则；会话链接交由已注册的 `codex://` 协议处理器打开，需 `xdg-utils`。点击任务名不提前清除未读提醒，详见 [Linux 说明](docs/LINUX.md#随-codex-关闭与会话跳转)。完整的已实现功能、限制和未适配项目见 [本版发布说明](docs/releases/v1.2.1-linux-preview.3.md)。
+**本版新增**：已接入上游 v1.2.1 界面，补齐 niri 拖动期间气泡跟随、设置页边缘避让，并修复托盘首次展开菜单不完整。已接入“随 Codex 关闭”和会话跳转。退出沿用连续三次确认规则；会话链接交由已注册的 `codex://` 协议处理器打开，需 `xdg-utils`。点击任务名不提前清除未读提醒，详见 [Linux 说明](docs/LINUX.md#随-codex-关闭与会话跳转)。完整的已实现功能、限制和未适配项目见 [本版发布说明](docs/releases/v1.2.1-linux-preview.4.md)。
 
 源码已同步上游 **v1.2.1** 的卡片过渡、悬停提示、额度变化阈值与额度对比、显示缩放恢复等改进。Linux 补接托盘额度环和 niri 提示窗口定位；托盘文字由桌面原生提示显示，外观随桌面主题。Windows 的 WSL 来源、程序迁移和更新安装流程不适用于 Linux。上述改动已进入当前预览包，具体范围见 [本次适配说明](docs/LINUX.md)。
 
-开发启动：创建独立 Python 3.12 虚拟环境并安装 `requirements-linux.txt`，然后执行 `.venv/bin/python run_linux.py`。素材准备及 PyCharm 配置见 [Linux 启动说明](docs/LINUX.md)，打包方法见[使用与构建说明](docs/LINUX_PACKAGE.md)，本次发布范围见[Linux 预览版说明](docs/releases/v1.2.1-linux-preview.3.md)。
+开发启动：创建独立 Python 3.12 虚拟环境并安装 `requirements-linux.txt`，然后执行 `.venv/bin/python run_linux.py`。素材准备及 PyCharm 配置见 [Linux 启动说明](docs/LINUX.md)，打包方法见[使用与构建说明](docs/LINUX_PACKAGE.md)，本次发布范围见[Linux 预览版说明](docs/releases/v1.2.1-linux-preview.4.md)。
 
 ## 上游 Windows 更新记录
 

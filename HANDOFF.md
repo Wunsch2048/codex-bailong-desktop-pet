@@ -1,3 +1,11 @@
+# niri 保存修复已发布并更新本机（2026-10-30）
+
+v1.2.1-linux-preview.4 已公开为预发布，目标 cc87aae（运行逻辑为已合并 PR #2 的 6b468c1）。用户确认源码拖动测试正常后授权打包、发布及本机 AppImage 更新。便携包、AppImage、SHA256SUMS 三附件的远端大小和 SHA-256 全部匹配，未登录发布页和两个包下载均返回 200，公开校验文件与本地一致。README 在公开核验后更新；旧预览版保留历史回退用途。完整功能和限制见 docs/releases/v1.2.1-linux-preview.4.md。
+
+新包在隐藏源码后验证真实 IPC/额度/Token、移动保存、跨格式位置恢复、正常退出；AppImage 直接挂载也通过。279 个载荷文件校验、素材/TLS/额度自检通过。127 项源码回归、合并与发布准备提交的 Windows/Linux CI 通过。三次启动短采样单核 CPU 14.5–46.5%、RSS 219.8–287.7 MiB，不作为性能改善证据，未新增主线程阻塞、磁盘 I/O 或 KDE 实机测量。验证期间 Codex config/auth 和日常设置哈希未变。
+
+本机安装至 ~/.local/bin/Bailong-1.2.1-linux-preview.4-x86_64.AppImage，应用菜单与已存在的 Codex 监听服务同步路径，保留启用状态；设置及启动文件备份位于 ~/.local/share/codex-bailong/update-backup-preview4，旧 AppImage 保留。上传便携包曾因 GitHub 408 超时失败，单独重试完成；未改全局代理。构建与发布证据位于 work/release-preview4，运行验证位于 /tmp/bailong-preview4-validation，均不提交。
+
 # niri 拖动位置保存合并（2026-10-30）
 
 - 审核发现 `WindowLayoutsChanged` 在手动拖动及松手交接中直接调用 `save_settings()`，每次都在界面线程原子写入 JSON，交接事件还会重复写入。现由 300ms 单次计时器合并位置保存；拖动开始取消待保存任务，拖动期间不调度，松手重锚定与普通位置变化共用同一计时器。README 同步区分 niri 与 KDE 的宿主依赖。

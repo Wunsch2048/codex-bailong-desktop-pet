@@ -18,8 +18,8 @@ jobs:
           cache-dependency-path: requirements-enhanced.txt
       - run: python -m pip install -r requirements-enhanced.txt
       - run: python -m compileall -q app tools
-      - run: python -m unittest test_storage_locations test_token_calendar test_material_store test_quota_compare_ui test_wsl_codex test_animation_updates test_quota_history test_daily_report.ReportUiTests test_quota_summary_data test_spring_motion test_status_reactions.SchedulerTests test_ring_metrics test_work_actions test_sustained_reactions test_soft_curves_navigation test_release_version test_app_updates test_loop_cache test_decoder_runtime test_animation_quality test_sustained_player test_program_updates test_status_indicator test_read_completion test_reset_card test_reset_presentation test_reset_watch test_reset_recovery test_audit_fixes test_chat_config test_chat_config_ui test_chat_transport test_typography test_liquid_status test_release_retention test_local_workflow
+      # Qt application state is process-global. Use the same module-isolated
+      # runner as release validation, rather than importing all UI suites into
+      # one process and leaking theme/motion preferences between modules.
+      - run: python quality_check.py github
       - run: python tools/check_program_bootstrap.py
-      - run: python -m unittest test_tray_history test_tray_quota test_native_landing
-
-      - run: python -m unittest test_hover_hints test_shared_card_transition test_status_handoff test_decode_geometry test_shortcuts_startup test_entry_icon

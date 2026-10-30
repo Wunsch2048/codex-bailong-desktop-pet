@@ -26,7 +26,7 @@
 | [便携包 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.3/Bailong-1.2.1-linux-preview.3-x86_64.tar.zst) | 解压后运行目录内的 `AppRun` |
 | [SHA256 校验值](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.3/SHA256SUMS.txt) | 在下载目录执行 `sha256sum -c SHA256SUMS.txt`，需要对应文件都已下载 |
 
-两种包均包含 Python 3.12、Qt 及轻量人物素材，每个约 680 MiB，不需要安装 Python 包。宿主仍需 niri、bubblewrap（`bwrap`）和本机 Codex。
+两种包均包含 Python 3.12、Qt 及轻量人物素材，每个约 680 MiB，不需要安装 Python 包。宿主需要 bubblewrap（`bwrap`）和本机 Codex；仅 niri 后端需要 niri，KDE 后端需要 X11/XWayland。
 
 ```sh
 chmod +x Bailong-1.2.1-linux-preview.3-x86_64.AppImage

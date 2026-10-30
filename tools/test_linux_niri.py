@@ -42,6 +42,35 @@ class DragTests(unittest.TestCase):
             controller.actual_position = lambda: QPoint(2150, 100)
             self.assertEqual(DesktopPet.pos(pet), QPoint(2150, 100))
 
+    def test_layout_saves_are_skipped_while_dragging_and_debounced(self):
+        """拖动不写设置，连续布局与松手交接只重启同一个保存计时器"""
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from linux_app.niri import NiriWindows
+        pet = SimpleNamespace(walking=False, _niri_drag=True, _niri_reanchor=False,
+                              save_settings=Mock(), remember_wander_home=Mock())
+        controller = SimpleNamespace(pet=pet, restored=True, last=None,
+            stream=SimpleNamespace(readLine=Mock(return_value=b'{"WindowLayoutsChanged":{"changes":[]}}\n')),
+            restore_position=Mock(), position=Mock(), save_timer=SimpleNamespace(start=Mock()),
+            move_timeout=SimpleNamespace(stop=Mock()))
+        def read(previous, current):
+            controller.actual_position = Mock(side_effect=(previous, current))
+            controller.stream.canReadLine = Mock(side_effect=(True, False))
+            NiriWindows.read(controller)
+        read(QPoint(0, 0), QPoint(20, 0))
+        pet.save_settings.assert_not_called()
+        controller.save_timer.start.assert_not_called()
+        pet._niri_drag = False
+        read(QPoint(20, 0), QPoint(30, 0))
+        controller.save_timer.start.assert_called_once_with()
+        pet.save_settings.assert_not_called()
+        controller.save_timer.start.reset_mock()
+        pet._niri_reanchor = True
+        read(QPoint(30, 0), QPoint(40, 0))
+        controller.save_timer.start.assert_called_once_with()
+        pet.remember_wander_home.assert_called_once_with()
+        pet.save_settings.assert_not_called()
+
     def test_synthetic_release_does_not_finish_native_drag(self):
         """Qt 的模拟松手必须被忽略，离开后重新进入才结束原生拖动"""
         from types import SimpleNamespace
@@ -71,7 +100,7 @@ class DragTests(unittest.TestCase):
         event = SimpleNamespace(position=lambda: QPointF(30, 30), buttons=lambda: Qt.MouseButton.LeftButton,
                                 globalPosition=Mock(side_effect=AssertionError('不应读取虚拟全局坐标')), accept=Mock())
         handle = SimpleNamespace(startSystemMove=Mock(return_value=True))
-        pet = SimpleNamespace(_niri_windows=SimpleNamespace(surfaces=SimpleNamespace(begin_pet_drag=Mock()), opacity=SimpleNamespace(setOpacity=Mock()), reveal=SimpleNamespace(stop=Mock())), settings={}, _pointer_pressed=True, _niri_press=QPoint(10, 10),
+        pet = SimpleNamespace(_niri_windows=SimpleNamespace(surfaces=SimpleNamespace(begin_pet_drag=Mock()), opacity=SimpleNamespace(setOpacity=Mock()), reveal=SimpleNamespace(stop=Mock()), save_timer=SimpleNamespace(stop=Mock())), settings={}, _pointer_pressed=True, _niri_press=QPoint(10, 10),
                               windowHandle=lambda: handle, click_timer=SimpleNamespace(stop=Mock()),
                               last_click=1, drag_samples=[1], generation=0, gate=SimpleNamespace(state='idle'),
                               bubble_timer=SimpleNamespace(stop=Mock()), bubble=SimpleNamespace(hide=Mock(), size_transition=SimpleNamespace(cancel=Mock())),
@@ -85,6 +114,7 @@ class DragTests(unittest.TestCase):
             self.assertIsNone(pet.last_click)
             event.accept.assert_called_once()
             self.assertTrue(pet._niri_drag)
+            pet._niri_windows.save_timer.stop.assert_called_once_with()
             pet.play.assert_called_once_with('drag', 'drag')
             pet.bubble.size_transition.cancel.assert_called_once()
             pet._niri_windows.surfaces.begin_pet_drag.assert_called_once()

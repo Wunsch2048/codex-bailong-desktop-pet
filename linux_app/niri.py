@@ -43,6 +43,10 @@ class NiriWindows(QObject):
         self.move_timeout = QTimer(self)
         self.move_timeout.setSingleShot(True)
         self.move_timeout.timeout.connect(self.movement_failed)
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.setInterval(300)
+        self.save_timer.timeout.connect(self.pet.save_settings)
         self.stream = QLocalSocket(self)
         self.stream.connected.connect(lambda: self.stream.write(b'"EventStream"\n'))
         self.stream.readyRead.connect(self.read)
@@ -257,9 +261,10 @@ class NiriWindows(QObject):
             if actual is not None and getattr(self.pet, '_niri_reanchor', False):
                 self.pet._niri_reanchor = False
                 self.pet.remember_wander_home()
-                self.pet.save_settings()
-            if actual is not None and actual != previous and self.restored and not self.pet.walking:
-                self.pet.save_settings()
+                self.save_timer.start()
+            elif (actual is not None and actual != previous and self.restored and not self.pet.walking
+                  and not getattr(self.pet, '_niri_drag', False)):
+                self.save_timer.start()
             self.position()
 
     def position(self):
@@ -370,6 +375,7 @@ def install(stack):
                 pet.last_click = None
                 pet.drag_samples.clear()
                 pet._niri_drag = True
+                pet._niri_windows.save_timer.stop()
                 pet._niri_left = False
                 pet._pointer_pressed = False
                 pet.dragging = True

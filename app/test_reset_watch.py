@@ -119,14 +119,19 @@ class LocalEvidenceTests(unittest.TestCase):
         from reset_watch import reset_has_priority
         self.observe(100,900,150);self.observe(95,900,160);self.observe(99,900,200)
         self.assertTrue(reset_has_priority(self.t.decorate(self.pending)))
+    def test_pro_expansion_is_not_announcement_refill(self):
+        self.t.observe([dict(name='一周',remaining=13,resetsAt=900,plan='prolite')],150,'live',self.pending)
+        self.t.observe([dict(name='一周',remaining=56,resetsAt=900,plan='prolite')],200,'live',self.pending)
+        self.assertNotIn('reset',self.t.state)
     def test_session_history_and_out_of_order_live_cannot_confirm(self):
         from reset_watch import reset_has_priority
         self.observe(40,900,150);self.observe(100,1000,200,'session');self.observe(100,1000,140)
         self.assertTrue(reset_has_priority(self.t.decorate(self.pending)))
-    def test_real_period_rollover_can_reset_even_after_new_usage(self):
+    def test_natural_rollover_does_not_satisfy_public_notice(self):
         from reset_watch import locally_reset
         self.observe(95,180,150);self.observe(90,900,200)
-        self.assertTrue(locally_reset(self.t.decorate(self.pending)))
+        self.assertFalse(locally_reset(self.t.decorate(self.pending)))
+        self.assertEqual(self.t.state['reset']['kind'],'natural')
     def test_five_hour_reset_does_not_override_known_weekly_window(self):
         from reset_watch import reset_has_priority
         for value,when in [(40,150),(100,200)]:
@@ -135,5 +140,6 @@ class LocalEvidenceTests(unittest.TestCase):
     def test_no_weekly_uses_five_hour_and_banked_notice_is_not_assumed(self):
         from reset_watch import locally_reset,reset_has_priority
         self.observe(20,180,150,name='5小时');self.observe(100,900,200,name='5小时')
-        self.assertTrue(locally_reset(self.t.decorate(self.pending)))
+        self.assertFalse(locally_reset(self.t.decorate(self.pending)))
+        self.assertTrue(reset_has_priority(self.t.decorate(self.pending)))
         self.assertTrue(reset_has_priority(self.t.decorate({'pending':dict(self.pending['pending'],reset_type='banked')})))

@@ -1,6 +1,7 @@
 """保留共享界面的绘制，只连接 Linux 托盘及本机设置"""
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QMenu
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtWidgets import QLabel, QMenu, QPushButton
 
 
 def install(stack):
@@ -30,6 +31,15 @@ def install(stack):
         template.deleteLater()
 
     build = SettingsDialog.build_page_2
+    maintenance = SettingsDialog.build_page_5
+
+    def maintenance_page(dialog):
+        """程序下载指向 Linux 社区发行页，动画仍使用共享的校验流程"""
+        maintenance(dialog)
+        button = QPushButton('打开 Linux 程序下载页')
+        button.setObjectName('linux_program_download')
+        button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl('https://github.com/helantianshen/codex-bailong-desktop-pet/releases')))
+        dialog.tab('更新与维护').insertRow(0, button)
 
     def connection_page(dialog):
         """Linux 直接连接本机 Codex，不提供 Windows 的 WSL 来源"""
@@ -54,5 +64,6 @@ def install(stack):
         hints.tray.setToolTip(title + '\n' + subtitle)
 
     stack.enter_context(replace(SettingsDialog, 'build_page_2', connection_page))
+    stack.enter_context(replace(SettingsDialog, 'build_page_5', maintenance_page))
     stack.enter_context(replace(TrayHints, 'set_text', tray_text))
     stack.enter_context(replace(DesktopPet, 'populate_tray', populate_tray))

@@ -19,6 +19,46 @@ LEGACY_UID=0xB410
 PROMOTED='IsPromoted'
 ORDER='UIOrderList'
 
+def reconcile_fixed(state,host):
+    """One migration to the stable host, not a per-version cleanup strategy."""
+    from stable_tray import TRAY_GUID
+    from storage_locations import install_root
+    from deployment_state import owned_destination
+    from desktop_core import atomic_json
+    import winreg,psutil
+    root=install_root().resolve();host=Path(host).resolve()
+    if host!=root/'tray/BailongTray.exe':return
+    marker=Path(state)/'fixed-tray-migration.json'
+    try:
+        old=json.loads(marker.read_text(encoding='utf-8'))
+        if old.get('guid')==TRAY_GUID and old.get('host')==str(host):return
+    except (OSError,ValueError):pass
+    for _ in range(30):
+        if not (root/'deployment-journal.json').exists():break
+        time.sleep(.5)
+    else:return
+    manifest=json.loads((root/'installations.json').read_text(encoding='utf-8'))
+    owned={path_key(str(owned_destination(root,n)/'BailongEnhanced.exe')) for n in manifest['versions']}
+    records=snapshot(winreg);keep=[r for r in records if path_key(r['exe'])==path_key(str(host))]
+    if len(keep)!=1:return
+    fields={n:v for n,v,t in keep[0]['values']}
+    if str(fields.get('IconGuid','')).strip('{}').lower()!=TRAY_GUID:return
+    active=set()
+    for p in psutil.process_iter(['exe']):
+        try:
+            if p.info['exe']:active.add(path_key(p.info['exe']))
+        except psutil.Error:pass
+    retired=[r for r in records if path_key(r['exe']) in owned and path_key(r['exe']) not in active and r['uid'] in (0,LEGACY_UID)]
+    donors=sorted(retired,key=lambda r:r.get('promoted')==1,reverse=True)
+    keep=keep[0];promotion=keep.get('promoted')
+    if promotion not in (0,1) and donors:promotion=donors[0].get('promoted')
+    inherit=bool(keep.get('promoted')==0 and donors and donors[0].get('promoted')==1)
+    if inherit:promotion=1
+    approved=dict(keep=keep,remove=retired,promoted=promotion,retired=[],inheritPin=inherit)
+    backup=Path(state)/'tray-history-backups'/('fixed-'+time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8]+'.json')
+    result=apply_plan(winreg,approved,backup)
+    atomic_json(marker,dict(guid=TRAY_GUID,host=str(host),**result))
+
 
 def path_key(path):
     return ntpath.normcase(ntpath.normpath(path)) if isinstance(path,str) and ntpath.isabs(path) else ''
@@ -118,8 +158,10 @@ def snapshot(reg):
 def _same_record(reg,record):
     try:
         with reg.OpenKey(reg.HKEY_CURRENT_USER,KEY+'\\'+record['name'],0,reg.KEY_READ) as key:
-            return (reg.QueryValueEx(key,'ExecutablePath')[0]==record['exe']
-                    and reg.QueryValueEx(key,'UID')[0]==record['uid'] and reg.QueryInfoKey(key)[0]==0)
+            if reg.QueryValueEx(key,'ExecutablePath')[0]!=record['exe'] or reg.QueryInfoKey(key)[0]!=0:return False
+            if record['uid'] is not None:return reg.QueryValueEx(key,'UID')[0]==record['uid']
+            fields={n:v for n,v,t in record['values']}
+            return bool(fields.get('IconGuid')) and reg.QueryValueEx(key,'IconGuid')[0]==fields['IconGuid']
     except FileNotFoundError:return False
 
 

@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 
 from version import VERSION
-DEFAULTS=dict(schema=2,scale=1.0,playback_speed=1.0,action_gap=2.0,
-    random_interval=25.0,move_speed=55.0,move_range=1.0,wander_range_revision=1,wander_horizontal_only=True,wander_home=None,drag_physics=True,
+DEFAULTS=dict(schema=2,ui_animation_mode='quality',theme='bailong',theme_accent='#8b78a6',theme_surface='#fcfafc',theme_ink='#393343',scale=1.0,playback_speed=1.0,action_gap=2.0,
+    random_interval=25.0,move_speed=55.0,move_range=1.0,wander_range_revision=1,wander_horizontal_only=True,wander_home=None,wander_mode='edge',wander_side='auto',wander_zone=[.50,.18,.99,.99],drag_physics=True,edge_docking=True,
     on_top=True,video_fullscreen_yield=True,fullscreen_yield_mode='video',no_move=False,mouse_through=False,wandering=True,random_actions=True,
     commentary=True,sound=True,bubble=True,quota_visible=True,quota_decline_threshold=10.,quota_increase_threshold=15.,self_talk=False,character_visible=True,card_anchor=None,panel_detached=False,codex_exit=False,
     status_actions=True,status_action_interval=12.,status_response_revision=2,update_checks=True,token_chart_range='all',bubble_mode='auto',
@@ -31,14 +31,22 @@ def atomic_json(path,value):
 
 def normalized(raw):
     out=copy.deepcopy(DEFAULTS);out.update(raw if isinstance(raw,dict) else {})
-    # Earlier builds saved 0.75 for everyone, including users who never tuned
-    # the hidden control. Move only that old default to the new visible default.
-    if isinstance(raw,dict) and raw.get('wander_range_revision')!=1 and raw.get('move_range')==.75:
-        out['move_range']=1.0
+    if out.get('ui_animation_mode') not in ('performance','quality'):out['ui_animation_mode']='quality'
+    from theme_registry import theme_id,valid_hex
+    out['theme']=theme_id(out.get('theme'))
+    for key in ('theme_accent','theme_surface','theme_ink'):
+        if not valid_hex(out.get(key)):out[key]=DEFAULTS[key]
+    if out['theme']=='custom':
+        from theme_registry import values
+        try:values('custom',out)
+        except ValueError:out['theme']='bailong'
+    # A saved value equal to an older default may still be a deliberate choice.
+    # New defaults apply to absent keys, never overwrite valid saved tuning.
     out['wander_range_revision']=1
-    # Upgrade only the previous default; retain deliberate nondefault tuning.
-    if isinstance(raw,dict) and raw.get('status_response_revision',0)!=2 and raw.get('status_action_interval')==18:
-        out['status_action_interval']=12.
+    from roaming import MODES,clean_zone
+    if out.get('wander_mode') not in MODES:out['wander_mode']='edge'
+    if out.get('wander_side') not in ('auto','left','right'):out['wander_side']='auto'
+    out['wander_zone']=clean_zone(out.get('wander_zone'))
     out['status_response_revision']=2
     for k,lo,hi in [('scale',.4,2.5),('playback_speed',.25,3),('action_gap',0,60),
         ('random_interval',3,600),('move_speed',10,300),('move_range',.1,1),

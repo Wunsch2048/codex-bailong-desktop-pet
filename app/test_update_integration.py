@@ -10,7 +10,11 @@ from app_updates import parse_release,cache_paths
 APP=journeys.APP
 
 class UpdateIntegration(unittest.TestCase):
-    setUp=journeys.InteractionTests.setUp
+    def setUp(self):
+        """用隔离能力夹具检查 Windows 更新界面及安装流程"""
+        support=patch('app_updates.program_updates_supported',return_value=True)
+        support.start();self.addCleanup(support.stop)
+        journeys.InteractionTests.setUp(self)
     tearDown=journeys.InteractionTests.tearDown
     settings=journeys.InteractionTests.settings
     def wait(self,check):

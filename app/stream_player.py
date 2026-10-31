@@ -18,12 +18,19 @@ from decode_runtime import STATS,opened
 
 class PreparedSegment:
     """Decode a tail ahead of time; one first frame plus a six-frame queue."""
-    def __init__(self,path,size,start,end,autostart=True):
+    def __init__(self,path,size,start,end,autostart=True,cache=None):
         self.path=Path(path);self.size=size;self.start=start;self.end=end;self.ready=threading.Event()
+        self.cache=cache;self.cache_key=(str(self.path),size,self.path.stat().st_mtime_ns,start,end) if cache is not None else None
         self.stop=threading.Event();self.frames=queue.Queue(6);self.first=None;self.error=None
         self.thread=None
         def decode():
             try:
+                cached=self.cache.get(self.cache_key) if self.cache is not None else None
+                if cached is not None:
+                    packed,delay,index=cached[0];self.first=(zlib.decompress(packed),delay,index);self.ready.set()
+                    for packed,delay,index in cached[1:]:
+                        if not self.emit((zlib.decompress(packed),delay,index)):return
+                    self.emit((None,0,None));return
                 opened(Path(path))
                 with Image.open(path) as image:
                     self.produce(image)
@@ -39,13 +46,20 @@ class PreparedSegment:
         self.error=type(error).__name__;self.ready.set();self.emit((None,0,self.error))
     def produce(self,image,cancel=lambda:False):
         if not 0<=self.start<=self.end<image.n_frames:raise ValueError('动画帧范围超出素材')
+        collect=self.cache is not None and self.cache.begin(self.cache_key,cancel=self.stop.is_set)
+        packed_frames=[];packed_size=0
         for i in range(self.start,self.end+1):
             if self.stop.is_set() or cancel():return
             image.seek(i);image.load();STATS.add('decoded_frames')
             raw=image.convert('RGBA').resize((self.size,self.size),Image.Resampling.LANCZOS).tobytes()
             frame=(raw,max(.015,float(image.info.get('duration',1000/24))/1000),i)
+            if collect:
+                packed=zlib.compress(raw,1);packed_size+=len(packed)
+                if packed_size>self.cache.entry_limit:self.cache.skip(self.cache_key);packed_frames.clear();collect=False
+                else:packed_frames.append((packed,frame[1],i))
             if i==self.start:self.first=frame;self.ready.set()
             elif not self.emit(frame,cancel):return
+        if collect and not cancel():self.cache.put(self.cache_key,packed_frames,packed_size,cancel=self.stop.is_set)
         self.emit((None,0,None),cancel)
     def close(self):
         self.stop.set();STATS.add('asynchronous_cancels')
@@ -63,13 +77,14 @@ class StreamPlayer:
     def cache_key(path,size,start_frame=0,end_frame=None):
         path=Path(path);return (str(path),size,path.stat().st_mtime_ns,start_frame,end_frame)
 
-    def adopt(self,prepared):
+    def adopt(self,prepared,continuous=False):
         if not prepared.ready.is_set() or prepared.error or prepared.first is None:raise ValueError('收尾素材尚未准备好')
+        lateness=max(0.,self.playhead-self.next_time) if continuous and self.ended else 0.
         self.close();self.path=prepared.path;self.size=prepared.size;self.duration=(prepared.end-prepared.start+1)/24
         self.stop=prepared.stop;self.frames=prepared.frames;self.thread=prepared.thread;self.ended=False;self.error=None;self.cache_loop=False
         self.range_start=prepared.start;self.range_end=prepared.end
-        raw,delay,index=prepared.first;self.frame_index=index;self.playhead=0.;self.frame_start=0.;self.next_time=delay
-        self.last_clock=time.perf_counter();self.deadline=self.last_clock+delay
+        raw,delay,index=prepared.first;self.frame_index=index;self.playhead=min(lateness,delay*.9);self.frame_start=0.;self.next_time=delay
+        self.last_clock=time.perf_counter();self.deadline=self.last_clock+delay-self.playhead
         return self.pixmap(raw,self.size)
 
     def start(self,path,size,duration=4,start_frame=0,first_fraction=0.,cache_loop=False,end_frame=None,seed=None,cached_frames=None):

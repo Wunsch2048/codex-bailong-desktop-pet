@@ -57,9 +57,9 @@ class SustainedTests(unittest.TestCase):
         s=self.scheduler();s.observe(event(),0)
         for i in range(2000):s.confirm(str(i),'turn',True,1)
         self.assertEqual(len(s.leases),32);self.assertFalse(s.openings)
-    def test_new_defaults_migrate_only_previous_default_once(self):
+    def test_new_defaults_only_fill_missing_values_and_preserve_saved_tuning(self):
         self.assertEqual(normalized({})['status_action_interval'],12)
-        self.assertEqual(normalized({'status_action_interval':18})['status_action_interval'],12)
+        self.assertEqual(normalized({'status_action_interval':18})['status_action_interval'],18)
         self.assertEqual(normalized({'status_action_interval':30})['status_action_interval'],30)
         self.assertEqual(normalized({'status_action_interval':18,'status_response_revision':2})['status_action_interval'],18)
 

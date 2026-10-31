@@ -27,6 +27,13 @@ TRAY_WEEK='#70b8ff'
 TRAY_LOW='#ff949d'
 MODEL_COLORS=['#8b78a6','#8297a5','#aa8194','#a19170','#7d9c94','#a89ab6']
 
+def hide_scrollbars(area):
+    """Keep wheel scrolling and caret navigation without visible scrollbars."""
+    from PySide6.QtCore import Qt
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    return area
+
 def editor_stylesheet(font_css):
     return ('QWidget{'+font_css+f'font-size:12px;color:{INK};}}'
         f'QLabel,QCheckBox,QRadioButton,QGroupBox{{color:{INK};}}'

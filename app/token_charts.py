@@ -1,4 +1,6 @@
 """Small, readable token bars and calendar-day hourly consumption curve."""
+from theme_registry import color as theme_color,chart_color
+from theme_runtime import set_theme_style,theme_style_source
 import time
 from datetime import datetime
 from PySide6.QtCore import Qt,QRectF,QPointF,QEvent,Signal
@@ -6,80 +8,61 @@ from PySide6.QtGui import QPainter,QPen,QColor,QPainterPath,QFontMetrics
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QToolButton,QToolTip,QSizePolicy
 from compact_bubble import font,INK,MUTED,FONT_CSS
 from token_calendar import usage_series,compact_tokens,TOKEN_RANGES
-from chart_reveal import ChartReveal,RasterChart
+from chart_reveal import ChartReveal,RasterChart,bar_shape
 from chart_curve import SmoothTrace
+from rate_chart import ComboChart
 
-class TokenPlot(QWidget,RasterChart):
+class TokenPlot(QWidget,RasterChart,ComboChart):
     def __init__(self,snapshot,period,parent=None,now=None):
-        super().__init__(parent);self.hits=[];self.points=[];self.reveal=ChartReveal(self)
-        self.setMouseTracking(True);self.setMinimumWidth(0);self.set_data(snapshot,period,now)
+        super().__init__(parent);self.hits=[];self.points=[];self.reveal=ChartReveal(self,420)
+        self.init_combo();self.setMouseTracking(True);self.setMinimumWidth(0);self.set_data(snapshot,period,now)
 
     def set_data(self,snapshot,period,now=None):
+        self.dismiss_inspection();self.period=period
         self.snapshot=snapshot or {};self.now=time.time() if now is None else now
         self.series=usage_series(snapshot,period,self.now);self.invalidate_layers()
+        if period=='all' and self.series.get('bucket_days',1)>1:
+            # Keep daily rate observations daily even when long-history usage used grouped columns.
+            from datetime import timedelta
+            first=datetime.fromisoformat(self.series['start']).date();last=datetime.fromisoformat(self.series['end']).date()
+            history=self.snapshot.get('history_days',self.snapshot.get('days',{})) or {}
+            self.series['bins']=[dict(start=str(first+timedelta(days=i)),end=str(first+timedelta(days=i)),label=str(first+timedelta(days=i)),value=history.get(str(first+timedelta(days=i)),0),current=first+timedelta(days=i)==last,future=False) for i in range((last-first).days+1)]
+            self.series['bucket_days']=1
         s=self.series;bucket=s.get('bucket_days',1)
-        description=f"{s['title']} · {s['total']:,} Tokens；{s['start']} 至 {s['end']}。"
+        description=f"{s['title']}，{s['total']:,} Tokens；{s['start']} 至 {s['end']}。"
         description+='每小时消耗，非累计曲线；当天00–24时，当前小时尚未结束。' if s['mode']=='line' else f'每根柱覆盖{bucket}天，悬停查看日期与用量。'
         description+='仅本机可读取日志；输入含缓存，输出含推理，均不重复相加。'
         if self.snapshot.get('checked'):description+='截至'+datetime.fromtimestamp(self.snapshot['checked']).strftime('%m-%d %H:%M')+'。'
         if not s['available']:description+='统计中或暂不可用。'
         if self.snapshot.get('partial'):description+='部分日志暂不可读。'
         self.setAccessibleName('Codex Token '+('小时曲线' if s['mode']=='line' else '用量柱状图'))
-        self.setAccessibleDescription(description);self.setToolTip(description);self.update()
+        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('');self.update()
 
     def chart_rect(self):
         # Both the title and the mixed Chinese/numeric axis use the shared
         # small-text font. Reserve its actual height instead of a 12px strip.
         line_height=QFontMetrics(font(11)).height()
-        top=max(18,line_height+3);bottom=line_height+3
+        top=4;bottom=line_height+3
         return QRectF(2,top,max(1,self.width()-4),max(5,self.height()-top-bottom))
-    def chart_mode(self):return self.series['mode']
+    def chart_mode(self):return 'combo'
     trace_color='#8d76ab'
-    def paintEvent(self,event):self.paint_layers()
+    def paintEvent(self,event):self.paint_combo()
     def render_layers(self,p,dynamic):
-        s=self.series;w=self.width();h=self.height();p.setFont(font(11,True));p.setPen(INK)
-        title=s['title']+' · '+compact_tokens(s['total']) if s['available'] else ('暂不可用' if self.snapshot.get('unavailable') else '统计中…')
-        p.drawText(QRectF(0,0,w,max(16,QFontMetrics(p.font()).height())),Qt.AlignmentFlag.AlignCenter,QFontMetrics(p.font()).elidedText(title,Qt.TextElideMode.ElideRight,w))
-        plot=self.chart_rect();bottom=plot.bottom();bins=s['bins'];top=max((b['value'] for b in bins if not b['future']),default=0)
-        p.setPen(QPen(QColor('#d8cde3'),.8));p.drawLine(QPointF(plot.left(),bottom),QPointF(plot.right(),bottom))
-        p.setPen(QPen(QColor('#e9e1f0'),.6));p.drawLine(QPointF(plot.left(),plot.top()),QPointF(plot.right(),plot.top()))
-        self.hits=[];self.points=[];self.curve=None;static=p;p=dynamic
-        if s['mode']=='bars':
-            slot=plot.width()/max(1,len(bins));gap=1 if len(bins)>15 else 2
-            for i,b in enumerate(bins):
-                height=plot.height()*b['value']/max(1,top);x=plot.left()+i*slot
-                rect=QRectF(x,bottom-height,max(.6,slot-gap),height)
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#8d76ab' if b['current'] else '#b19bc9'))
-                if height:p.drawRoundedRect(rect,min(1.5,rect.width()/3),min(1.5,height/3))
-                else:
-                    p.setPen(QPen(QColor('#c8bbd7'),1));p.drawLine(QPointF(x,bottom),QPointF(x+rect.width(),bottom))
-                self.hits.append((QRectF(x,plot.top(),slot,plot.height()+1),b))
-            left=s['start'][5:].replace('-','/');right=s['end'][5:].replace('-','/')
-            if s['start'][:4]!=s['end'][:4]:
-                left=s['start'][2:4]+'年'+str(int(s['start'][5:7]));right=s['end'][2:4]+'年'+str(int(s['end'][5:7]))
+        return self._render_combo(p,dynamic)
+    def _render_combo(self,p,dynamic):
+        s=self.series;plot=self.chart_rect();bins=s['bins'];rates=self.snapshot.get('rates') or {}
+        if s['mode']=='line':items=rates.get('today') or [];left,right='00时','24时'
         else:
-            slot=plot.width()/24;path=QPainterPath();last=None
-            current=datetime.fromtimestamp(self.now).hour
-            future_left=plot.left()+(current+1)*slot
-            static.fillRect(QRectF(future_left,plot.top(),max(0,plot.right()-future_left),plot.height()),QColor('#f0ebf5'))
-            for i,b in enumerate(bins):
-                self.hits.append((QRectF(plot.left()+i*slot,plot.top(),slot,plot.height()+1),b))
-                if b['future'] or not s['available']:continue
-                point=QPointF(plot.left()+(i+.5)*slot,bottom-plot.height()*b['value']/max(1,top));self.points.append(point)
-                last=point
-            if self.points:
-                self.curve=SmoothTrace(self.points);path=self.curve.path
-                fill=QPainterPath(path);fill.lineTo(last.x(),bottom);fill.lineTo(self.points[0].x(),bottom);fill.closeSubpath()
-                p.fillPath(fill,QColor('#e3d7ef'));p.setPen(QPen(QColor('#8d76ab'),1.8,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin));p.drawPath(path)
-            left,right='00时','24时'
-        p=static;p.setFont(font(11));p.setPen(MUTED)
-        label_height=QFontMetrics(p.font()).height()+2;label_top=h-label_height
-        p.drawText(QRectF(0,label_top,w/2,label_height),Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter,left)
-        p.drawText(QRectF(w/2,label_top,w/2,label_height),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,right)
-        if s['mode']=='line':p.drawText(QRectF(w/2-14,label_top,28,label_height),Qt.AlignmentFlag.AlignCenter,'12')
-        if s['available'] and not top:
-            p.setFont(font(10,True));p.setPen(MUTED);p.drawText(plot,Qt.AlignmentFlag.AlignCenter,'暂无用量')
-
+            items=[(rates.get('days') or {}).get(b['start']) for b in bins]
+            left,right=s['start'][5:].replace('-','/'),s['end'][5:].replace('-','/')
+        self.combo_layers(p,dynamic,bins,items,plot,s['available'])
+        self.hits=[(record['rect'],b) for record,b in zip(self._combo_records,bins)]
+        self.points=[QPointF(record['rect'].center().x(),plot.bottom()) for record,b in zip(self._combo_records,bins) if not b.get('future') and s['available']]
+        p.setFont(font(11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2
+        for x,label,align in [(0,left,Qt.AlignmentFlag.AlignLeft),(self.width()/2,right,Qt.AlignmentFlag.AlignRight)]:
+            p.drawText(QRectF(x,top,self.width()/2,QFontMetrics(p.font()).height()+2),align|Qt.AlignmentFlag.AlignVCenter,label)
+        if s['mode']=='line':p.drawText(QRectF(self.width()/2-14,top,28,QFontMetrics(p.font()).height()+2),Qt.AlignmentFlag.AlignCenter,'12')
+        if not s['available']:p.drawText(plot,Qt.AlignmentFlag.AlignCenter,'暂不可用' if self.snapshot.get('unavailable') else '统计中…')
     def detail(self,b):
         if b['future']:value='尚未到来'
         elif not self.series['available']:value='统计暂不可用' if self.snapshot.get('unavailable') else '正在统计…'
@@ -89,12 +72,19 @@ class TokenPlot(QWidget,RasterChart):
         return text+'\n本机 Codex 日志 · 输入（含缓存）+ 输出（含推理）'
     def begin_reveal(self):self.ensure_layers();self.reveal.prepare()
     def start_reveal(self):self.reveal.start()
-    def hideEvent(self,event):self.reveal.stop();super().hideEvent(event)
+    def hideEvent(self,event):self.dismiss_inspection();self.reveal.stop();super().hideEvent(event)
+    def leaveEvent(self,event):self.dismiss_inspection();super().leaveEvent(event)
+    def mouseMoveEvent(self,event):self.inspect_at(event.position());super().mouseMoveEvent(event)
+    def keyPressEvent(self,event):
+        if not self.combo_key(event):super().keyPressEvent(event)
+    def focusOutEvent(self,event):
+        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.dismiss_inspection()
+        super().focusOutEvent(event)
 
     def event(self,event):
         if event.type()==QEvent.Type.ToolTip:
-            for rect,b in self.hits:
-                if rect.contains(event.pos()):QToolTip.showText(event.globalPos(),self.detail(b),self);return True
+            QToolTip.hideText();self.inspect_at(QPointF(event.pos()));self.show_inspection();event.accept();return True
+        if event.type() in (QEvent.Type.Move,QEvent.Type.Resize) and hasattr(self,'_popup'):self.dismiss_inspection()
         return super().event(event)
 
 class TokenChartCard(QWidget):
@@ -109,7 +99,7 @@ class TokenChartCard(QWidget):
             button.setAccessibleName(tip);button.setCheckable(True);button.setChecked(self.period==key);button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus);button.setCursor(Qt.CursorShape.PointingHandCursor);button.setFixedHeight(18)
-            button.setStyleSheet('QToolButton{'+FONT_CSS+'font-size:11px;font-weight:500;color:#76638c;border:0;padding:0;background:transparent;border-radius:4px;}QToolButton:checked{background:#e8def0;color:#514360;}QToolButton:hover{background:#eee7f5;}')
+            set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:11px;font-weight:500;color:#76638c;border:0;padding:0;background:transparent;border-radius:4px;}QToolButton:checked{background:#e8def0;color:#514360;}QToolButton:hover{background:#eee7f5;}')
             button.clicked.connect(lambda checked=False,k=key:self.rangeChanged.emit(k));row.addWidget(button,1);self.range_buttons[key]=button
         layout.addWidget(tabs);self.plot=TokenPlot(snapshot,self.period,self,now);layout.addWidget(self.plot,1)
         self.setAccessibleName(self.plot.accessibleName());self.setAccessibleDescription(self.plot.accessibleDescription())

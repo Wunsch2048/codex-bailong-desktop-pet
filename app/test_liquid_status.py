@@ -92,6 +92,7 @@ class LiquidStatusTests(unittest.TestCase):
                         self.assertAlmostEqual(math.hypot(moving[i].x-8,moving[i].y-8),33/8)
 
     def test_three_colors_survive_contact_on_both_backgrounds(self):
+        references={}
         for time in (0, .69*BUSY_BREATH_SECONDS,1.69*BUSY_BREATH_SECONDS,2.69*BUSY_BREATH_SECONDS):
             parts=busy_liquid_parts(time)
             for island in (False,True):
@@ -99,9 +100,10 @@ class LiquidStatusTests(unittest.TestCase):
                 for index,part in enumerate(parts):
                     color=image.pixelColor(round(part.x*4),round(part.y*4))
                     self.assertGreater(color.alpha(),250)
-                    if index==1:self.assertGreater(color.green()-color.red(),20)
-                    elif index==2:self.assertGreater(color.red()-color.green(),20)
-                    else:self.assertGreater(color.blue()-color.green(),15)
+                    rgb=color.getRgb()[:3];key=(island,index)
+                    if key not in references:references[key]=rgb
+                    self.assertLessEqual(max(abs(a-b) for a,b in zip(rgb,references[key])),24)
+        for island in (False,True):self.assertEqual(len({references[(island,i)] for i in range(3)}),3)
 
     def test_idle_rotates_as_rigid_triad_without_crossing_breathing_or_bonding(self):
         motion=GlyphMotion()

@@ -38,6 +38,12 @@ def seam_items(manifest):
             if not isinstance(extra,str) or not isinstance(count,int) or isinstance(count,bool) or not 1<=count<=24:raise ValueError('持续动作变体接缝无效')
             if extra==name:continue
             items.append(dict(id=f'{action["id"]}-seam-{index}',file=extra,playbackFile=extra,durationMs=round(count*1000/24),name='持续动作变化接缝'))
+    for action in manifest.get('moveAnimations',[]):
+        p=action.get('locomotion') if isinstance(action,dict) else None
+        if not isinstance(p,dict) or not p.get('seamFile'):continue
+        count=p.get('seamFrames');fps=p.get('fps')
+        if type(count) is not int or not 1<=count<=24 or fps not in (24,30):raise ValueError('移动动作接缝无效')
+        items.append(dict(id=action['id']+'-seam',file=p['seamFile'],playbackFile=p['seamFile'],durationMs=round(count*1000/fps),name='移动动作衔接'))
     return items
 
 def profile_paths(root,item):

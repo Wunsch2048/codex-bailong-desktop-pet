@@ -87,6 +87,19 @@ class SharedCardTransitionTests(unittest.TestCase):
         self.assertFalse(calls)
         self.assertAlmostEqual(next(iter(self.b.quota_summary_card.values.values())),.73)
         self.assertEqual(self.b.deck.content.plot.reveal.progress,1.)
+    @patch("compact_bubble.time.time",return_value=1800000001.)
+    def test_pure_size_toggles_reuse_details_but_new_quota_invalidates_them(self,clock):
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();first=self.b.details_tabs
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
+        self.assertFalse(first.isVisible())
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();self.assertIs(self.b.details_tabs,first)
+        self.b.windows=[dict(name='一周',remaining=17,resetsAt=None)];self.b.redraw();APP.processEvents()
+        self.assertIsNot(self.b.details_tabs,first)
+    def test_expired_prepared_details_are_rebuilt_on_next_open(self):
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();first=self.b.details_tabs
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
+        self.b._details_cache_until=0
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();self.assertIsNot(self.b.details_tabs,first)
     def test_capsule_and_editor_routes_keep_the_existing_transition(self):
         self.b.set_mode('mini');self.b.size_transition.animation.pause()
         self.assertFalse(self.b.size_transition.morph.shared_parts)

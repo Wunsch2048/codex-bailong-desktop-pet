@@ -297,6 +297,7 @@ class RolloutTail:
         self.catalog=LogCatalog(self.home);self.files={};self.last_scan=0;self.seeded=False
         self.health=dict(state='unknown',code='starting');self.pins=set();self.generation=None
         self.discovered=set();self.file_ids={};self.queue=[];self.by_id={}
+        self.rate_observer=None
     def set_pins(self,ids):self.pins={session_id(s) for s in ids}
     def poll(self):
         from performance_metrics import METRICS
@@ -363,6 +364,8 @@ class RolloutTail:
                 if not isinstance(obj,dict):continue
                 if obj.get('type') in ('session_meta','event_msg','response_item','turn_context'):state['recognized']=True
                 historical=state['history'] or (state.get('discovery_cutoff') is not None and safe_time(obj.get('timestamp'))<state['discovery_cutoff'])
+                if self.rate_observer and obj.get('type')=='event_msg' and isinstance(obj.get('payload'),dict):
+                    self.rate_observer(sid,obj['payload'],safe_time(obj.get('timestamp')),historical=historical)
                 events.extend(self.reducer.apply(sid,obj,historical=historical))
             if state['offset']>=size:state['history']=False;state['discovery_cutoff']=None
         # Keep 32 recently used files plus every active/unread/displayed one.

@@ -1,4 +1,6 @@
 """Compact activity rings with legible icons attached to their moving heads."""
+from settings_controls import play_animation
+from theme_registry import color as theme_color
 import math
 import bisect
 from functools import lru_cache
@@ -44,11 +46,22 @@ def ring_geometry(count):
     if count==5:return [36,28,20,12,4],6,6
     return [36,30,24,18,12,6],4.5,4.5
 
+@lru_cache(maxsize=128)
+def _metric_ink(value,background,ink):
+    from theme_registry import contrast,mix
+    for _ in range(24):
+        if contrast(value,background)>=3:break
+        value=mix(value,ink,.08)
+    return value
+
 def metric_color(metric,index=0):
-    if metric.get('low'):return QColor('#98566d')
-    if metric['kind']=='time':return QColor('#587586')
-    if metric['kind']=='tokens':return QColor('#936a83')
-    return QColor('#577c78') if metric.get('label')=='一周' else QColor('#76618f')
+    from theme_registry import palette
+    if metric.get('low'):value=theme_color('#98566d')
+    elif metric['kind']=='time':value=theme_color('#587586')
+    elif metric['kind']=='tokens':value=theme_color('#936a83')
+    else:value=theme_color('#577c78' if metric.get('label')=='一周' else '#76618f')
+    p=palette()
+    return QColor(_metric_ink(value,p['panel'],p['ink']))
 
 def metric_name(metric):
     if metric['kind']=='time':return '距重置'
@@ -57,11 +70,11 @@ def metric_name(metric):
 
 def draw_metric_icon(p,point,kind,badge,color=None):
     p.save();p.translate(point);p.scale(badge/13*1.22,badge/13*1.22)
-    ink=QColor(color or '#493b5b');p.setPen(QPen(ink,1.6,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin));p.setBrush(Qt.BrushStyle.NoBrush)
+    ink=QColor(theme_color(color or '#493b5b'));p.setPen(QPen(ink,1.6,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin));p.setBrush(Qt.BrushStyle.NoBrush)
     if kind=='clock':
         p.drawEllipse(QRectF(-3.6,-3.6,7.2,7.2));p.drawLine(QPointF(0,-2.1),QPointF(0,0));p.drawLine(QPointF(0,0),QPointF(2,1))
     elif kind=='bolt':
-        p.setBrush(ink);p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(theme_color(ink));p.setPen(Qt.PenStyle.NoPen)
         p.drawPolygon(QPolygonF([QPointF(.8,-4.3),QPointF(-3.2,.5),QPointF(-.6,.5),QPointF(-1,4.3),QPointF(3.2,-.6),QPointF(.5,-.6)]))
     elif kind=='tokens':
         p.drawEllipse(QRectF(-4,-4,8,8));p.setFont(font(7,True))
@@ -86,16 +99,17 @@ class QuotaRings(QWidget):
             self.targets[key]=target;self.starts[key]=self.cache.get(key,target) if metric['progress'] is not None else target;self.values[key]=self.starts[key]
         self.animation=QVariantAnimation(self);self.animation.setDuration(420);self.animation.setStartValue(0.0);self.animation.setEndValue(1.0);self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.animation.valueChanged.connect(self.animate)
-        if any(abs(self.starts[k]-v)>.0005 for k,v in self.targets.items()):self.animation.start()
+        if any(abs(self.starts[k]-v)>.0005 for k,v in self.targets.items()):play_animation(self.animation)
         else:self.animate(1.0)
         self.timer=QTimer(self);self.timer.setInterval(1000);self.timer.timeout.connect(self.update_time)
         self.setToolTip('\n\n'.join(m['description'] for m in self.metrics)+'\n'+caption+'\n点击展开全部信息')
         self.setAccessibleName('额度、重置倒计时与今日 Token 活动环');self.setAccessibleDescription(self.toolTip());self.setCursor(Qt.CursorShape.PointingHandCursor)
     def sizeHint(self):return QSize(121,HEIGHT)
     def begin_reveal(self):
-        self.animation.stop();self.starts={k:0. for k in self.targets};self.animate(0.)
+        from settings_controls import motion_enabled
+        self.animation.stop();self.starts={k:0. for k in self.targets};self.animate(0. if motion_enabled() else 1.)
     def start_reveal(self):
-        if self.isVisible() and any(abs(self.values[k]-v)>.0005 for k,v in self.targets.items()):self.animation.start()
+        if self.isVisible() and any(abs(self.values[k]-v)>.0005 for k,v in self.targets.items()):play_animation(self.animation)
     def animate(self,fraction):
         for key,target in self.targets.items():self.values[key]=self.starts[key]+(target-self.starts[key])*fraction;self.cache[key]=self.values[key]
         self.update()
@@ -108,7 +122,7 @@ class QuotaRings(QWidget):
     def showEvent(self,event):
         super().showEvent(event)
         if any(abs(self.values[k]-v)>.0005 for k,v in self.targets.items()):
-            self.starts=dict(self.values);self.animation.start()
+            self.starts=dict(self.values);play_animation(self.animation)
         if not self.demo:self.timer.start()
     def hideEvent(self,event):
         self.animation.stop();self.timer.stop();super().hideEvent(event)
@@ -168,13 +182,13 @@ class QuotaRings(QWidget):
                 QToolTip.showText(event.globalPos(),metric['description']+extra+'\n点击展开全部信息',self);return True
         return super().event(event)
     def paintEvent(self,event):
-        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#f5f2f7'));p.drawRoundedRect(QRectF(self.rect()),11,11)
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),11,11)
         radii,stroke,badge=ring_geometry(len(self.metrics));cx=self.width()/2;cy=CENTER_Y
         for index,metric in enumerate(self.metrics):
             radius=radii[index]
             # Continuous, substantial tracks with a quiet tinted remainder.
             # The lower opening holds the text; three 12px bands keep 2px gaps.
-            color=metric_color(metric,index);track=QColor(color);track.setAlpha(35)
+            color=metric_color(metric,index);track=QColor(theme_color(color));track.setAlpha(35)
             p.setPen(QPen(track,stroke,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap));p.setBrush(Qt.BrushStyle.NoBrush)
             p.save();p.translate(cx,cy);p.rotate(TILT)
             p.drawArc(QRectF(-radius*AXIS_X,-radius*AXIS_Y,radius*2*AXIS_X,radius*2*AXIS_Y),round((90-ARC_START)*16),-round(ARC_SWEEP*16));p.restore()
@@ -187,8 +201,8 @@ class QuotaRings(QWidget):
             anchor=self.head_point(index);color=metric_color(metric,index)
             if math.hypot(point.x()-anchor.x(),point.y()-anchor.y())>2:
                 p.setPen(QPen(color,1.2));p.drawLine(anchor,point)
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(color);p.drawEllipse(anchor,2,2)
-            p.setPen(QPen(INK if self.active==index else color,1.6 if self.active==index else 1.25));p.setBrush(QColor('#fffdff'));p.drawEllipse(point,badge/2,badge/2)
+                p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(color));p.drawEllipse(anchor,2,2)
+            p.setPen(QPen(INK if self.active==index else color,1.6 if self.active==index else 1.25));p.setBrush(QColor(theme_color('#fffdff')));p.drawEllipse(point,badge/2,badge/2)
             draw_metric_icon(p,point,metric['icon'],badge)
         selected=self.metrics[self.active if self.active is not None else 0]
         label=metric_name(selected)
@@ -198,10 +212,10 @@ class QuotaRings(QWidget):
             label='额度剩余'
             value=' / '.join(m['display'] for m in quotas)
         # Nest the caption in the bottom opening, just below the inner endcaps.
-        p.setFont(font(11,True));p.setPen(MUTED);p.drawText(QRectF(2,CENTER_Y+8,self.width()-4,15),Qt.AlignmentFlag.AlignCenter,label)
+        p.setFont(font(11,True));p.setPen(theme_color(MUTED));p.drawText(QRectF(2,CENTER_Y+8,self.width()-4,15),Qt.AlignmentFlag.AlignCenter,label)
         value_font=font(14,True);p.setFont(value_font)
         if p.fontMetrics().horizontalAdvance(value)>self.width()-8:p.setFont(font(12,True))
-        p.setPen(INK);p.drawText(QRectF(2,CENTER_Y+22,self.width()-4,21),Qt.AlignmentFlag.AlignCenter,value)
+        p.setPen(theme_color(INK));p.drawText(QRectF(2,CENTER_Y+22,self.width()-4,21),Qt.AlignmentFlag.AlignCenter,value)
 
 @lru_cache(maxsize=1)
 def badge_offsets():
@@ -226,10 +240,10 @@ class RingLegend(QWidget):
         gap=max(1,(self.width()-sum(widths))/max(1,len(widths)-1));x=max(0,(self.width()-sum(widths)-gap*(len(widths)-1))/2);self.hits=[]
         for i,(metric,width) in enumerate(zip(self.rings.metrics,widths)):
             rect=QRectF(x,0,width,self.height());self.hits.append(rect)
-            if self.active==i:p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#ece6f2'));p.drawRoundedRect(rect,5,5)
+            if self.active==i:p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#ece6f2')));p.drawRoundedRect(rect,5,5)
             point=QPointF(x+8,10);color=metric_color(metric,i)
-            p.setPen(QPen(color,1));p.setBrush(QColor('#fffdff'));p.drawEllipse(point,8,8);draw_metric_icon(p,point,metric['icon'],16)
-            p.setFont(font(size,True));p.setPen(INK);p.drawText(QRectF(x+17,0,width-17,self.height()),Qt.AlignmentFlag.AlignVCenter,fm.elidedText(metric_name(metric),Qt.TextElideMode.ElideRight,max(1,round(width-17))));x+=width+gap
+            p.setPen(QPen(color,1));p.setBrush(QColor(theme_color('#fffdff')));p.drawEllipse(point,8,8);draw_metric_icon(p,point,metric['icon'],16)
+            p.setFont(font(size,True));p.setPen(theme_color(INK));p.drawText(QRectF(x+17,0,width-17,self.height()),Qt.AlignmentFlag.AlignVCenter,fm.elidedText(metric_name(metric),Qt.TextElideMode.ElideRight,max(1,round(width-17))));x+=width+gap
     def mouseMoveEvent(self,event):
         self.rings.set_active(next((i for i,rect in enumerate(self.hits) if rect.contains(event.position())),None));super().mouseMoveEvent(event)
     def leaveEvent(self,event):self.rings.set_active(None);super().leaveEvent(event)

@@ -98,7 +98,11 @@ class LogTrackingTests(unittest.TestCase):
         with p.open('a') as out:out.write(row('task_started',turn_id='new')+row('task_complete'))
         self.assertEqual(len([e for e in tail.poll() if e['kind']=='complete']),1)
     def test_directory_cache_catches_changes_and_full_fallback_after_sleep(self):
-        c=LogCatalog(self.home);c.discover(now=0);p=self.log(1);self.assertIn(p,c.discover(now=1,check=True))
+        c=LogCatalog(self.home);c.discover(now=0);folder=self.home/'sessions';before=folder.stat().st_mtime_ns;p=self.log(1)
+        # NTFS may coalesce immediately adjacent directory timestamps. Make the
+        # fixture's change explicit instead of depending on wall-clock precision.
+        os.utime(folder,ns=(before+1_000_000_000,before+1_000_000_000))
+        self.assertIn(p,c.discover(now=1,check=True))
         old=c.last_full;c.discover(now=100);self.assertGreater(c.last_full,old)
     def test_imported_archive_is_history_and_never_notifies(self):
         tail=RolloutTail(self.home);tail.poll();archive=self.home/'archived_sessions';archive.mkdir()

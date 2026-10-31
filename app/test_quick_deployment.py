@@ -35,7 +35,9 @@ class QuickDeploymentTests(unittest.TestCase):
   old=self.root/'old/BailongEnhanced.exe'
   with patch.object(installer,'stop_existing',return_value=old),patch.object(installer,'install',side_effect=OSError('bad payload')),patch.object(installer.subprocess,'Popen') as launch:
    with self.assertRaises(OSError):installer.deploy(Path('payload.zip'),True,self.root)
-   launch.assert_called_once_with([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+   launch.assert_called_once();self.assertEqual(launch.call_args.args[0],[str(old)])
+   self.assertEqual(launch.call_args.kwargs['cwd'],str(old.parent))
+   self.assertEqual(launch.call_args.kwargs['env']['PYINSTALLER_RESET_ENVIRONMENT'],'1')
  def test_unrelated_process_with_same_filename_is_never_stopped(self):
   exe=self.existing();owned=Mock();owned.info={'exe':str(exe)};owned.cmdline.return_value=[str(exe)];other=Mock();other.info={'exe':str(self.root/'unrelated/BailongEnhanced.exe')}
   with patch('psutil.process_iter',return_value=[other,owned]),patch('psutil.wait_procs',return_value=([owned],[])) as wait,patch.object(installer.subprocess,'run') as run:

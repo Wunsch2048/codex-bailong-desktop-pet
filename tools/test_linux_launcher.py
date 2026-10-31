@@ -3,6 +3,7 @@ from argparse import Namespace
 from contextlib import ExitStack
 from pathlib import Path
 import json
+import itertools
 import os
 import tempfile
 import unittest
@@ -12,10 +13,10 @@ from linux_app import launcher
 
 class LauncherTests(unittest.TestCase):
     """正式入口必须保留用户状态，且不能把桌宠文件写入 Codex 目录"""
-    def test_behavior_migration_then_respects_saved_switches(self):
-        """实际装配入口首次开启旧禁用项，之后保留各自开关且不启用声音"""
+    def test_startup_preserves_saved_switches_with_or_without_old_markers(self):
+        """实际装配入口保留合法偏好，迁移标记不改变三个开关"""
+        from desktop_core import normalized
         pet = Mock()
-        pet.settings = dict(random_actions=False, commentary=False, sound=True, linux_wandering_ready=True)
         pet.apply_settings.side_effect = lambda values, save=True: pet.settings.update(values)
         args = Namespace(desktop='niri', codex_home=Path('/unused/codex'), codex_cli=Path('/unused/cli'))
         with ExitStack() as stack:
@@ -23,16 +24,37 @@ class LauncherTests(unittest.TestCase):
                 stack.enter_context(patch('linux_app.' + target))
             stack.enter_context(patch('desktop.DesktopPet', return_value=pet))
             stack.enter_context(patch('enhanced.ResetThread'))
+            keys = ('wandering', 'random_actions', 'commentary')
+            for values in itertools.product((False, True), repeat=3):
+                for markers in ({}, dict(linux_behaviors_ready=True, linux_wandering_ready=True)):
+                    with self.subTest(values=values, markers=markers):
+                        saved = dict(zip(keys, values), **markers)
+                        pet.settings = normalized(saved)
+                        pet.apply_settings.reset_mock()
+                        for _ in range(2):
+                            launcher.create_pet(stack, args)
+                            self.assertEqual({k: pet.settings[k] for k in keys}, dict(zip(keys, values)))
+                        self.assertFalse(pet.settings['sound'])
+                        self.assertTrue(all(call.kwargs.get('save') is False for call in pet.apply_settings.call_args_list))
+            pet.settings = normalized(dict(wandering=False))
             launcher.create_pet(stack, args)
+            self.assertFalse(pet.settings['wandering'])
             self.assertTrue(pet.settings['random_actions'])
             self.assertTrue(pet.settings['commentary'])
-            self.assertTrue(pet.settings['linux_behaviors_ready'])
-            for random_actions, commentary in ((False, True), (True, False), (False, False)):
-                pet.settings.update(random_actions=random_actions, commentary=commentary)
-                launcher.create_pet(stack, args)
-                self.assertEqual(pet.settings['random_actions'], random_actions)
-                self.assertEqual(pet.settings['commentary'], commentary)
-                self.assertFalse(pet.settings['sound'])
+
+    def test_new_state_defaults_do_not_rewrite_an_existing_file(self):
+        """新安装默认开启行为，已有设置文件逐字保留"""
+        with tempfile.TemporaryDirectory() as folder, patch('material_store.MaterialStore') as store:
+            store.return_value.current = 'light'
+            state = Path(folder)
+            with patch.object(launcher, 'ROOT', state):
+                launcher.prepare_state(state)
+                config = state / 'settings.json'
+                self.assertTrue(all(json.loads(config.read_text())[key] for key in ('wandering', 'random_actions', 'commentary')))
+                previous = '{"wandering": false, "random_actions": false, "commentary": false}'
+                config.write_text(previous)
+                launcher.prepare_state(state)
+                self.assertEqual(config.read_text(), previous)
 
     def test_environment_is_separate(self):
         """真实数据源与桌宠写入目录保持独立"""

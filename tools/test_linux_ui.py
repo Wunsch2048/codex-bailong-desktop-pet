@@ -4,7 +4,7 @@ from types import SimpleNamespace, MethodType
 from unittest.mock import Mock, patch
 import unittest
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QObject, Qt
+from PySide6.QtCore import QEvent, QPoint, QRect, QObject, QTimer, Qt
 from PySide6.QtWidgets import QApplication, QWidget, QSystemTrayIcon, QGraphicsOpacityEffect, QMenu
 from compact_bubble import CompactBubble
 from daily_report import DailyReport
@@ -50,12 +50,66 @@ class LinuxUiTests(unittest.TestCase):
             values = observed.call_args
             self.assertEqual(values.args[3].topLeft(), QPoint(325, 400))
             self.assertEqual(values.kwargs['card_top'], 390)
+            self.assertEqual(popup.windowType(), Qt.WindowType.ToolTip)
             self.assertIs(popup.windowHandle().transientParent(), report.windowHandle())
             self.assertIn(popup, manager.entries)
             self.assertEqual(popup.windowHandle().mask().boundingRect(), QRect(-1, -1, 1, 1))
             self.assertEqual(popup.geometry().topLeft(), manager.entries[popup]['point'])
             self.assertLessEqual(abs(popup.geometry().bottom() - bubble.y()), 2)
             self.assertEqual(bubble.pos(), QPoint(280, 390))
+            local = QWidget.mapToGlobal(report, QPoint()) + popup.pos() - report.pos()
+            self.assertEqual(QWidget.pos(popup), local)
+            popup.present('刷新', '', anchor, bubble.screen(), card_top=virtual.y(), owner=bubble)
+            self.assertIs(popup.windowHandle().transientParent(), bubble.windowHandle())
+            self.assertIs(popup._linux_popup_parent, bubble)
+            self.assertEqual(QWidget.pos(popup), QWidget.mapToGlobal(bubble, QPoint()) + popup.pos() - bubble.pos())
+        manager.timer.stop()
+
+    def test_adjacent_hints_reposition_the_same_popup_without_hover_delay(self):
+        """首次悬停仍等待，已显示的提示在按钮间直接改内容与原生位置"""
+        bubble = CompactBubble()
+        bubble.show()
+        APP.processEvents()
+        controller = QObject()
+        controller.pet = SimpleNamespace(bubble=bubble, closing=False)
+        controller.windows = {}
+        controller.action = Mock()
+        manager = surfaces.Surfaces(controller)
+        manager.bind(bubble)
+        manager.entries[bubble]['point'] = QPoint(280, 390)
+        hints = bubble.inline_explanations
+        with ExitStack() as stack:
+            surfaces.install(stack)
+            hints.eventFilter(bubble._header_actions[0], QEvent(QEvent.Type.Enter))
+            self.assertTrue(hints.delay.isActive())
+            self.assertFalse(hints.popup.isVisible())
+            hints.delay.stop()
+            hints._show()
+            popup = hints.popup
+            popup.animation.setCurrentTime(popup.animation.duration())
+            handle = popup.windowHandle()
+            for index, title in ((1, '数据'), (2, '收起'), (3, '详情'), (0, '刷新')):
+                previous = QWidget.pos(popup)
+                hints.eventFilter(bubble._header_actions[index], QEvent(QEvent.Type.Enter))
+                self.assertEqual(popup.title, title)
+                self.assertFalse(hints.delay.isActive())
+                self.assertEqual(popup.level, 1.)
+                self.assertIs(popup.windowHandle(), handle)
+                self.assertNotEqual(QWidget.pos(popup), previous)
+                self.assertEqual(QWidget.pos(popup), QWidget.mapToGlobal(bubble, QPoint()) + popup.pos() - bubble.pos())
+                self.assertEqual(popup.windowType(), Qt.WindowType.ToolTip)
+                manager.sync()
+            controller.action.assert_not_called()
+            self.assertFalse(bubble.content.testAttribute(Qt.WidgetAttribute.WA_NativeWindow))
+            hints.dismiss(True)
+            self.assertFalse(hints.watch.isActive())
+            self.assertFalse(popup.isVisible())
+            from live_rate_ui import SessionRateBubble
+            inspector = SessionRateBubble()
+            inspector.present('速率', '', QRect(bubble.pos(), bubble.size()), bubble.screen(), owner=bubble)
+            self.assertEqual(inspector.windowType(), Qt.WindowType.Tool)
+            self.assertIsNone(getattr(inspector, '_linux_popup_parent', None))
+            inspector.close()
         manager.timer.stop()
 
     def test_tray_text_and_settings_are_scoped_to_linux(self):
@@ -123,6 +177,7 @@ class LinuxUiTests(unittest.TestCase):
         controller = QObject()
         controller.pet = SimpleNamespace(bubble=bubble, closing=False, isVisible=lambda: False)
         controller.windows = {}
+        controller.reveal = QTimer(controller)
         controller.opacity = QGraphicsOpacityEffect(bubble)
         controller.opacity.setOpacity(1)
         bubble.setGraphicsEffect(controller.opacity)
@@ -179,6 +234,7 @@ class LinuxUiTests(unittest.TestCase):
         controller = QObject()
         controller.pet = pet
         controller.windows = {}
+        controller.reveal = QTimer(controller)
         controller.opacity = QGraphicsOpacityEffect(bubble)
         controller.opacity.setOpacity(1)
         bubble.setGraphicsEffect(controller.opacity)
@@ -220,6 +276,50 @@ class LinuxUiTests(unittest.TestCase):
             for child in (bubble.content, transition.cover):
                 self.assertFalse(child.testAttribute(Qt.WidgetAttribute.WA_NativeWindow))
                 self.assertIsNone(child.windowHandle())
+        manager.timer.stop()
+
+    def test_moving_during_navigation_translates_the_prepared_canvas(self):
+        """程序化移动与开合重叠时，末帧和真实卡片使用同一角色锚点"""
+        pet = QWidget()
+        pet.move(200, 400)
+        pet.show()
+        pet.closing = False
+        controller = QObject()
+        controller.pet = pet
+        controller.windows = {}
+        controller.reveal = QTimer(controller)
+        controller.opacity = QGraphicsOpacityEffect()
+        controller.opacity.setOpacity(1)
+        manager = surfaces.Surfaces(controller)
+        with ExitStack() as stack:
+            surfaces.install(stack)
+            bubble = CompactBubble(pet)
+            pet.bubble = bubble
+            bubble.setGraphicsEffect(controller.opacity)
+            bubble.show()
+            manager.bind(bubble)
+            APP.processEvents()
+            bubble.compact_requested()
+            transition = bubble.size_transition
+            for stage in ('preparing', 'playing', 'landing'):
+                with self.subTest(stage=stage):
+                    self.assertEqual(transition._linux_stage, stage)
+                    rect = QRect(transition.landing.geometry())
+                    target = QRect(transition.target_rect if transition.running else bubble.geometry())
+                    delta = QPoint(30, -20)
+                    pet.move(pet.pos() + delta)
+                    manager.sync()
+                    self.assertEqual(transition.landing.geometry(), rect.translated(delta))
+                    self.assertEqual(transition.target_rect if transition.running else bubble.geometry(), target.translated(delta))
+                    if stage == 'preparing':
+                        APP.processEvents()
+                        transition.release_landing()
+                    elif stage == 'playing':
+                        transition.complete()
+            transition.release_landing()
+            self.assertEqual(controller.opacity.opacity(), 1)
+            self.assertFalse(transition.landing.isVisible())
+            bubble.close()
         manager.timer.stop()
 
     def test_drag_editor_uses_same_anchor_regardless_of_entry_position(self):

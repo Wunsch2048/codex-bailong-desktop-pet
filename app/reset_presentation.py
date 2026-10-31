@@ -26,7 +26,7 @@ def reset_view(snapshot,error=False,now=None):
         next_change=min(remaining,remaining-(total_minutes-1)*60)
         if remaining==60:next_change=.001  # The next visible value is “<1”.
     if locally_reset(snapshot):
-        phase='local_reset';eyebrow='本机额度';value='已重置';unit='';minutes=None;note='公告仍待确认';next_change=None
+        phase='local_reset';eyebrow='本机额度';value='已补充';unit='';minutes=None;note='来源未确认';next_change=None
     if error and snapshot is not None and details.get('code')!='cache_write':
         eyebrow='上次安排 · 预计' if phase=='scheduled' else '上次公告记录'
     if details:
@@ -34,6 +34,7 @@ def reset_view(snapshot,error=False,now=None):
     parts=[(value,unit)]+([(minutes,'分钟')] if minutes is not None else [])
     main=' '.join(number+(' '+label if label else '') for number,label in parts)
     description=title+'；'+eyebrow+' '+main+'；'+schedule_text(snapshot,now)
+    if locally_reset(snapshot):description+='\n仅检测到本机额度补充，不能据此认定公告已落实。'
     description+='\n北京时间 · Codex Resets（第三方）；预计安排不代表账户额度已到账。'
     if item and item.get('text'):description+='\n'+str(item['text'])
     if error:description+='\n'+details['message'] if details.get('message') else '\n更新失败，保留上次记录。' if snapshot is not None else '\n公告暂不可用，请稍后重试。'

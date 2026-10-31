@@ -1,7 +1,7 @@
 """Read public releases and stage a verified installer; never install silently."""
 from dataclasses import dataclass,replace
 from pathlib import Path,PurePosixPath
-import hashlib,json,os,re,urllib.request,urllib.error,urllib.parse,zipfile,time
+import hashlib,json,os,re,sys,urllib.request,urllib.error,urllib.parse,zipfile,time
 
 REPOSITORY='Wunsch2048/codex-bailong-desktop-pet'
 API='https://api.github.com/repos/'+REPOSITORY+'/releases/latest'
@@ -9,6 +9,10 @@ MAX_PACKAGE=2_147_483_647
 class UpdateError(Exception):pass
 class UpdateCancelled(UpdateError):pass
 class NoRelease(UpdateError):pass
+
+def program_updates_supported():
+    """程序安装与历史安装维护只支持 Windows，动画资源独立判断"""
+    return sys.platform=='win32'
 
 def version_tuple(value):
     match=re.fullmatch(r'v?((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))',str(value))
@@ -49,11 +53,17 @@ class Release:
     @property
     def url(self):return release_url(self.tag)
 
-def parse_release(data):
+def parse_release(data,*,allow_program=True):
+    """按平台能力选择公开附件，动画模式不选择程序或完整安装包"""
     if not isinstance(data,dict) or data.get('draft') or data.get('prerelease'):raise NoRelease('暂无公开稳定版本')
     tag=str(data.get('tag_name',''));version='.'.join(map(str,version_tuple(tag)))
     names=(f'bailong-desktop-pet-{version}-windows-x64.zip',f'白龙桌宠-{version}-一键部署包.zip')
-    assets=data.get('assets') or [];asset=next((a for name in names for a in assets if a.get('name')==name and a.get('state')=='uploaded'),None)
+    assets=data.get('assets') or []
+    if not allow_program:
+        animation_name=f'bailong-desktop-pet-{version}-animation.json'
+        assets=[a for a in assets if a.get('name') in (animation_name,'SHA256SUMS.txt')]
+        if not any(a.get('name')==animation_name and a.get('state')=='uploaded' for a in assets):raise NoRelease('该公开版没有动画补丁；当前平台的程序请手动更新')
+    asset=next((a for name in names for a in assets if a.get('name')==name and a.get('state')=='uploaded'),None)
     full_asset=asset
     program_name=f'bailong-desktop-pet-{version}-program.zip';info_name=f'bailong-desktop-pet-{version}-program.json'
     program=next((a for a in assets if a.get('name')==program_name and a.get('state')=='uploaded'),None)
@@ -112,9 +122,10 @@ def ensure_checksum(release,opener=open_url,cancel=lambda:False):
     if not found:raise UpdateError('安装包校验值缺失，暂不能在应用内安装')
     return replace(release,sha256=found)
 
-def release_without_api(opener=open_url,cancel=lambda:False):
-    """Same repository and SHA verification through GitHub's web/download channel."""
+def release_without_api(opener=open_url,cancel=lambda:False,*,allow_program=True):
+    """备用下载通道保持相同的平台筛选、仓库和 SHA 校验"""
     sums=read_small('https://github.com/'+REPOSITORY+'/releases/latest/download/SHA256SUMS.txt',65536,opener,cancel).decode('utf-8-sig')
+    if not allow_program:return patch_without_api(sums,opener,cancel,allow_program=False)
     candidates=[]
     for line in sums.splitlines():
         match=re.fullmatch(r'([0-9a-fA-F]{64})\s+\*?(bailong-desktop-pet-(\d+\.\d+\.\d+)-windows-x64\.zip)',line)
@@ -150,21 +161,24 @@ def release_without_api(opener=open_url,cancel=lambda:False):
         except (UpdateError,OSError,ValueError):pass
     return full
 
-def patch_without_api(sums,opener,cancel):
+def patch_without_api(sums,opener,cancel,*,allow_program=True):
+    """只读取当前平台允许的补丁描述和载荷信息"""
     records={m[2]:m[1].lower() for line in sums.splitlines() if (m:=re.fullmatch(r'([0-9a-fA-F]{64})\s+\*?(.+)',line))}
-    versions={m[1] for name in records if (m:=re.fullmatch(r'bailong-desktop-pet-(\d+\.\d+\.\d+)-(?:program|animation)\.json',name))}
+    kinds='(?:program|animation)' if allow_program else 'animation'
+    versions={m[1] for name in records if (m:=re.fullmatch(r'bailong-desktop-pet-(\d+\.\d+\.\d+)-'+kinds+r'\.json',name))}
+    if not versions and not allow_program:raise NoRelease('该公开版没有动画补丁；当前平台的程序请手动更新')
     if len(versions)!=1:raise UpdateError('备用通道补丁版本不明确')
     version=versions.pop();version_tuple(version);tag='v'+version
     base='https://github.com/'+REPOSITORY+'/releases/download/'+tag+'/'
     assets=[]
-    for suffix in ('program.json','animation.json'):
+    for suffix in (('program.json','animation.json') if allow_program else ('animation.json',)):
         name=f'bailong-desktop-pet-{version}-{suffix}'
         if name not in records:continue
         raw=read_small(base+name,131072,opener,cancel)
         if hashlib.sha256(raw).hexdigest()!=records[name]:raise UpdateError('备用通道补丁描述校验失败')
         assets.append(dict(name=name,size=len(raw),state='uploaded',browser_download_url=base+name,digest='sha256:'+records[name]))
     name=f'bailong-desktop-pet-{version}-program.zip'
-    if name in records:
+    if allow_program and name in records:
         check_cancel(cancel)
         with opener(base+name,{'Range':'bytes=0-0'}) as response:
             match=re.fullmatch(r'bytes 0-\d+/(\d+)',response.headers.get('Content-Range',''))
@@ -172,7 +186,7 @@ def patch_without_api(sums,opener,cancel):
             size=int(match[1]) if match else int(response.headers.get('Content-Length','0'))
         assets.append(dict(name=name,size=size,state='uploaded',browser_download_url=base+name,digest='sha256:'+records[name]))
     assets.append(dict(name='SHA256SUMS.txt',size=len(sums.encode()),state='uploaded',browser_download_url=base+'SHA256SUMS.txt'))
-    return replace(parse_release(dict(tag_name=tag,assets=assets,body='补丁内容请在 GitHub 查看。')),reason='已通过 GitHub 下载通道核验补丁')
+    return replace(parse_release(dict(tag_name=tag,assets=assets,body='补丁内容请在 GitHub 查看。'),allow_program=allow_program),reason='已通过 GitHub 下载通道核验补丁')
 
 def prepare_release(release,current,opener,cancel,app_root,state_dir=None,program_version=None):
     if version_tuple(release.version)>version_tuple(current):
@@ -196,16 +210,18 @@ def prepare_release(release,current,opener,cancel,app_root,state_dir=None,progra
         release=ensure_checksum(release,opener,cancel)
     return release
 
-def check_release(current,opener=open_url,cancel=lambda:False,app_root=None,state_dir=None,program_version=None):
+def check_release(current,opener=open_url,cancel=lambda:False,app_root=None,state_dir=None,program_version=None,*,allow_program=True):
+    """在主通道和备用通道中使用相同的附件能力与实际程序版本"""
     try:
-        release=parse_release(json.loads(read_small(API,2_000_000,opener,cancel)))
+        release=parse_release(json.loads(read_small(API,2_000_000,opener,cancel)),allow_program=allow_program)
         return prepare_release(release,current,opener,cancel,app_root,state_dir,program_version)
     except urllib.error.HTTPError as exc:
         if exc.code==404:raise NoRelease('暂无公开稳定版本') from None
         if exc.code in (403,429):
-            try:return prepare_release(release_without_api(opener,cancel),current,opener,cancel,app_root,state_dir,program_version)
+            try:return prepare_release(release_without_api(opener,cancel,allow_program=allow_program),current,opener,cancel,app_root,state_dir,program_version)
             except UpdateCancelled:raise
-            except (UpdateError,OSError,ValueError,AttributeError,UnicodeError):
+            except UpdateError:raise
+            except (OSError,ValueError,AttributeError,UnicodeError):
                 limited=exc.code==429 or exc.headers and exc.headers.get('X-RateLimit-Remaining')=='0'
                 raise UpdateError('GitHub API 检查次数暂时受限，备用下载通道也未连接成功；可在 GitHub 手动下载或稍后重试' if limited else 'GitHub 拒绝更新请求，备用通道也未连接成功；请检查网络后重试') from None
         raise UpdateError('获取更新信息失败，请稍后重试') from None

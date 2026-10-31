@@ -1,6 +1,7 @@
 """验证 Linux Codex 启动监听的进程识别和独立生命周期"""
 from argparse import Namespace
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,35 @@ from codex_startup import LaunchGate
 
 class WatchTests(unittest.TestCase):
     """桌面会话只触发一次，服务与现有桌宠互不误杀"""
+    def test_persistent_launch_failure_is_attempted_once_per_session(self):
+        """持续错误或超时不会让同一个 Codex 会话反复请求启动"""
+        for failure in (OSError('synthetic failure'), subprocess.TimeoutExpired('systemd-run', 5)):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as folder:
+                stopped = Mock()
+                stopped.is_set.side_effect = [False] * 6 + [True]
+                output = io.StringIO()
+                with patch.object(codex_watch.threading, 'Event', return_value=stopped), \
+                     patch.object(codex_watch.signal, 'signal'), \
+                     patch.object(codex_watch, 'desktop_sessions', return_value={(1, 10.)}), \
+                     patch.object(codex_watch, 'start_pet', side_effect=failure) as start, redirect_stdout(output):
+                    self.assertEqual(codex_watch.watch(Namespace(), Path(folder), Path(folder)), 0)
+                start.assert_called_once()
+                self.assertEqual(stopped.wait.call_count, 6)
+                self.assertIn('本次会话不再自动重试', output.getvalue())
+
+    def test_new_codex_session_can_start_after_failure(self):
+        """未知状态保留尝试记录，确认退出并重新启动后允许再次拉起"""
+        sessions = [{(1, 10.)}, None, {(1, 10.)}, set(), set(), {(2, 20.)}, {(2, 20.)}]
+        with tempfile.TemporaryDirectory() as folder:
+            stopped = Mock()
+            stopped.is_set.side_effect = [False] * len(sessions) + [True]
+            with patch.object(codex_watch.threading, 'Event', return_value=stopped), \
+                 patch.object(codex_watch.signal, 'signal'), \
+                 patch.object(codex_watch, 'desktop_sessions', side_effect=sessions), \
+                 patch.object(codex_watch, 'start_pet', side_effect=[OSError('synthetic failure'), None]) as start, redirect_stdout(io.StringIO()):
+                codex_watch.watch(Namespace(), Path(folder), Path(folder))
+            self.assertEqual(start.call_count, 2)
+
     def test_process_filter_and_unknown(self):
         """CLI、Electron 子进程与其他用户不得触发桌宠"""
         with tempfile.TemporaryDirectory() as directory:

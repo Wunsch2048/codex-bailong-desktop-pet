@@ -89,6 +89,17 @@ def import_step(db,files,stop=lambda:False,seconds=.3,max_bytes=64*1024*1024):
     return dict(pending=pending,errors=errors,bytes_read=read)
 
 
+def capacity_doubled(previous,remaining,plan):
+    """A rounded Pro denominator change, not proof of an official promotion.
+
+    Require a material rise away from a full refill. Confirmation and unchanged
+    deadline are handled by partition; never apply this to a plan change.
+    """
+    return bool(str(plan or '').lower() in ('pro','prolite','proheavy') and
+        remaining-previous>=10 and previous<=80 and remaining<95 and
+        abs(2*(100-remaining)-(100-previous))<=3)
+
+
 def partition(samples):
     """Confirm rises before they affect a cycle; concurrent logs can lag."""
     cycles=[];current=None;last=None
@@ -106,7 +117,9 @@ def partition(samples):
                 elif remaining-last[2]>=10:change='extra'
                 else:change='changed'  # A shifted window without a refill is not a proven bonus.
             elif (boundary and boundary>current['start']+300 and boundary>(last[0] if last else 0)
-                    and remaining>last[2]+1):
+                    and remaining>last[2]+1
+                    and not capacity_doubled(last[2],remaining,current['plan'])
+                    and not (candidate and capacity_doubled(last[2],candidate[2],current['plan']))):
                 # A stale local-reset file can report the first post-restart
                 # observation as a refill. Within the same weekly deadline,
                 # a boundary hint alone must not split an unchanged/falling
@@ -114,7 +127,14 @@ def partition(samples):
                 change=kind or 'extra'
             elif (candidate and 0<stamp-candidate[0]<=1800 and
                     remaining>last[2]+1 and remaining>=candidate[2]-2):
-                if candidate[2]-last[2]>=10:
+                if capacity_doubled(last[2],candidate[2],current['plan']):
+                    # Normalize the older denominator in memory only. Preserve
+                    # the cycle identity, Token interval and raw stored samples.
+                    current['samples']=[tuple([s[0],s[1],100-(100-s[2])/2,*s[3:]]) for s in current['samples']]
+                    current['capacity_factor']=current.get('capacity_factor',1)*2
+                    current['capacity_changes']=current.get('capacity_changes',[])+[candidate[0]]
+                    current['samples'].append(candidate)
+                elif candidate[2]-last[2]>=10:
                     change='extra';boundary=candidate[0]
                 else:
                     # A sustained small rise makes the slope unreliable, but
@@ -148,6 +168,7 @@ def token_span(db,start,end,models=False):
 
 
 def summarize_cycles(db,now=None,complete=True,pending=False):
+    from quota_workload import profile
     now=time.time() if now is None else now
     rows=db.execute('''SELECT stamp,deadline,remaining,source,plan,boundary,reset_kind
         FROM quota_observations WHERE stamp<=? ORDER BY stamp,source''',(now,)).fetchall()
@@ -181,9 +202,21 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
             estimate_high=round(observed*100/max(1,drop-1)) if valid else None,
             observed_tokens=observed,drop=round(max(0,drop),1),sample_count=len(samples),distinct_readings=len({s[2] for s in samples}),
             complete=bool(complete and not pending),fresh=fresh,corrected=bool(c.get('corrected')),rise_pending=rise_pending,
+            capacity_factor=c.get('capacity_factor',1),capacity_changes=c.get('capacity_changes',[]),
             model=model,model_share=share,output_share=output,plan=c['plan'],eligible=eligible,
+            workload=profile(db,first[0],last[0]),
             change=None,baseline=None,comparison_scope='previous',comparison_reason='尚无上一周期记录'))
+    compare_cycles(result)
+    return list(reversed(result))
+
+
+def compare_cycles(result):
+    """Re-evaluate policy even when a closed capacity came from cache."""
+    from quota_workload import mismatch
     for i,item in enumerate(result):
+        item.update(change=None,baseline=None,comparison_block='',comparison_scope='previous',comparison_version=1)
+        item.pop('baseline_count',None);item.pop('baseline_cycle_id',None)
+        item['comparison_reason']='尚无上一周期记录'
         if not item['plan']:
             item['comparison_reason']='套餐记录不足，暂不比较';continue
         if not item['eligible']:
@@ -210,10 +243,12 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
             item['comparison_reason']='上一周期的输入输出比例不同，暂不比较';continue
         if (old['kind']=='extra')!=(item['kind']=='extra') or old['kind']=='changed' or item['kind']=='changed':
             item['comparison_reason']='上一周期的重置类型不同，暂不比较';continue
+        blocked=mismatch(item,old)
+        if blocked:
+            item.update(comparison_reason=blocked,comparison_block=blocked);continue
         base=old['estimated_total']
         item.update(change=round((item['estimated_total']/base-1)*100,1),baseline=base,
             comparison_reason='较上一周期',baseline_count=1,baseline_cycle_id=old['id'])
-    return list(reversed(result))
 
 
 def snapshot(db,cycle,now,complete,progress):
@@ -233,6 +268,8 @@ def snapshot(db,cycle,now,complete,progress):
                 if cycles[i].get('comparison_scope')!='previous':
                     cycles[i].update(change=None,baseline=None,comparison_reason='历史对比口径待刷新')
             except (ValueError,TypeError):pass
+    # Old snapshots retain factual capacity, not pre-policy comparison results.
+    compare_cycles(list(reversed(cycles)))
     partial=not complete or bool(progress['errors'])
     return dict(cycles=cycles,anomaly=anomaly(cycles,now) if not partial and not progress['pending'] else None,
         pending=progress['pending'],partial=partial)
@@ -253,6 +290,8 @@ def anomaly(cycles,now=None,decline_threshold=10,increase_threshold=15):
     if abs(current['output_share']-previous['output_share'])>.1:return None
     if (current['kind']=='extra')!=(previous['kind']=='extra'):return None
     if current['kind']=='changed' or previous['kind']=='changed':return None
+    from quota_workload import mismatch
+    if mismatch(current,previous):return None
     estimate=current['estimated_total'];base=previous['estimated_total']
     if not estimate or not base:return None
     change=round((estimate/base-1)*100,6)
@@ -260,8 +299,8 @@ def anomaly(cycles,now=None,decline_threshold=10,increase_threshold=15):
     if current['estimate_low']<=previous['estimate_high'] and previous['estimate_low']<=current['estimate_high']:return None
     return dict(change=round(change,1),current=estimate,previous=base,through=current['through'],
         reset_at=current['reset_at'],plan=current['plan'],cycle=current['id'],remaining=current['remaining'],
-        text=f"推测总量 {change:+.0f}%",
-        description=f"本轮推测总量比上一周期{'低' if change<0 else '高'} {abs(change):.1f}%。套餐与主模型相同，且两轮已观察至少20%的额度变化。\n基于本机记录推测，其他设备、缓存和任务差异仍会影响结果，并非官方配额变动确认。")
+        comparison_version=1,text=f"推测容量 {change:+.0f}%",
+        description=f"相近使用条件下，本轮推测 Token 容量较上一周期{'少' if change<0 else '多'} {abs(change):.1f}%。两轮均观察至少20个百分点，已检查模型分布、缓存、输入输出及速度和推理档位。\n仍会受任务差异和其他设备使用影响，不是官方额度变动确认。")
 
 
 def visible_anomaly(snapshot,windows,now=None,decline_threshold=10,increase_threshold=15):
@@ -270,6 +309,7 @@ def visible_anomaly(snapshot,windows,now=None,decline_threshold=10,increase_thre
     snapshot=snapshot or {};history=snapshot.get('quota_history') or {};warning=history.get('anomaly')
     if history.get('cycles'):
         warning=anomaly(history['cycles'],now,decline_threshold,increase_threshold)
+    if warning and warning.get('comparison_version')!=1:return None
     if not warning or -decline_threshold<warning.get('change',0)<increase_threshold or any(snapshot.get(k) for k in ('partial','unavailable','refresh_failed')):return None
     if history.get('pending') or history.get('partial'):return None
     week=next((w for w in windows if w.get('name')=='一周'),None)

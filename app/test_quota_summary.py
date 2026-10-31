@@ -48,8 +48,9 @@ class QuotaCardTests(unittest.TestCase):
                 cards.append(card)
             self.assertEqual(cards[0].alert_badge.text(),'-19%')
             self.assertEqual(cards[1].alert_badge.text(),'+15%')
-            self.assertIn('#ffebec',cards[0].alert_badge.styleSheet())
-            self.assertIn('#e6f6eb',cards[1].alert_badge.styleSheet())
+            from theme_registry import palette
+            self.assertIn(palette()['dangerBg'],cards[0].alert_badge.styleSheet())
+            self.assertIn(palette()['successBg'],cards[1].alert_badge.styleSheet())
             self.assertIn('上涨',cards[1].alert_badge.accessibleName())
         finally:
             for card in cards:card.deleteLater()
@@ -131,7 +132,7 @@ class QuotaBubbleTests(unittest.TestCase):
         for windows in ([dict(name='一周',remaining=73)],
                         [dict(name='一周',remaining=73),dict(name='5小时',remaining=29)]):
             self.b.windows=windows;self.b.redraw();drain()
-            self.assertEqual((self.b.width(),self.b.height()),(268,188))
+            self.assertEqual((self.b.width(),self.b.height()),(268,186))
             self.assertEqual(len(self.visible(QuotaSummary).items),len(windows))
             self.assertEqual((self.visible(QuotaSummary).width(),self.visible(QuotaSummary).height()),(121,102))
             self.assertEqual(self.visible(TodayTokens).height(),20)

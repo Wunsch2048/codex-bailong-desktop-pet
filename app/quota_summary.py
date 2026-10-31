@@ -1,4 +1,7 @@
 """Directly labelled quota bars, independent reset times and daily token total."""
+from settings_controls import play_animation
+from theme_registry import color as theme_color
+from theme_runtime import set_theme_style,theme_style_source
 import math,time
 from PySide6.QtCore import Qt,QRectF,QSize,QPoint,Signal,QTimer,QVariantAnimation,QEasingCurve,QAbstractAnimation
 from PySide6.QtGui import QPainter,QPen,QColor,QFontMetrics,QPixmap
@@ -11,18 +14,21 @@ from ui_theme import QUOTA_WEEK,QUOTA_FIVE,QUOTA_LOW
 HEIGHT=102
 
 def quota_color(item):
+    from theme_registry import week_color
+    if item.get('remaining') is not None:
+        return QColor(theme_color(week_color(item['remaining'])))
     if item['name']=='一周':
         remaining=item.get('remaining')
-        if remaining is None:return QColor('#9b93a4')
+        if remaining is None:return QColor(theme_color('#9b93a4'))
         # Colour follows actual quota, never the 0-to-value entry animation.
         stops=((0,'#ac6e85'),(15,'#ac6e85'),(35,'#b18e62'),(65,'#9b86b0'),(100,QUOTA_WEEK))
         for (start,left),(end,right) in zip(stops,stops[1:]):
             if remaining<=end:
                 fraction=max(0.,min(1.,(remaining-start)/(end-start)))
-                a,b=QColor(left),QColor(right)
+                a,b=QColor(theme_color(left)),QColor(theme_color(right))
                 return QColor(*(round(x+(y-x)*fraction) for x,y in zip(a.getRgb()[:3],b.getRgb()[:3])))
-        return QColor(QUOTA_WEEK)
-    return QColor(QUOTA_LOW if item['low'] else QUOTA_WEEK if item['name']=='一周' else QUOTA_FIVE)
+        return QColor(theme_color(QUOTA_WEEK))
+    return QColor(theme_color(QUOTA_LOW if item['low'] else QUOTA_WEEK if item['name']=='一周' else QUOTA_FIVE))
 
 class QuotaSummary(QWidget):
     expand=Signal()
@@ -41,8 +47,7 @@ class QuotaSummary(QWidget):
         self.alert_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         increase=bool(anomaly and anomaly.get('change',0)>0)
         self.alert_badge.setAccessibleName('周额度推测总量'+('上涨' if increase else '下降')+'提醒，查看额度对比')
-        colors=('#e6f6eb','#218358','#d6f1df','#c4e8d1') if increase else ('#ffebec','#ce2c31','#ffdbdc','#ffcdce')
-        self.alert_badge.setStyleSheet('QToolButton{background:'+colors[0]+';color:'+colors[1]+';border:0;border-radius:7px;padding:0;}QToolButton:hover{background:'+colors[2]+';}QToolButton:pressed{background:'+colors[3]+';}')
+        self.refresh_theme_colors()
         self.alert_badge.clicked.connect(self.anomalyRequested.emit)
         self.alert_badge.setVisible(bool(anomaly and self.week_index is not None))
         if anomaly:self.alert_badge.setAccessibleDescription(anomaly['description'])
@@ -57,6 +62,12 @@ class QuotaSummary(QWidget):
             self.targets[key]=target;self.starts[key]=self.cache.get(key,target) if item['progress'] is not None else 0.
             self.values[key]=self.starts[key]
         self._accessible();self.animate(0.)
+    def refresh_theme_colors(self):
+        from theme_registry import palette,mix
+        p=palette();up=bool(self.anomaly and self.anomaly.get('change',0)>0)
+        bg=p['successBg' if up else 'dangerBg'];fg=p['successBadge'] if up else p.get('dangerBadge',p['danger'])
+        hover=mix(bg,p['ink'],.07);pressed=mix(bg,p['ink'],.14)
+        self.alert_badge.setStyleSheet('QToolButton{background:'+bg+';color:'+fg+';border:0;border-radius:7px;padding:0;}QToolButton:hover{background:'+hover+';}QToolButton:pressed{background:'+pressed+';}')
     def sizeHint(self):return QSize(121,HEIGHT+self.alert_height)
     def _accessible(self):
         text='\n'.join(i['description'] for i in self.items)+'\n'+self.caption
@@ -64,14 +75,12 @@ class QuotaSummary(QWidget):
         self.setAccessibleName('账户剩余额度；点击查看额度详情');self.setAccessibleDescription(text)
     def row_rect(self,index):
         shift=self.row_shift(index)
-        return QRectF(3,3+shift,self.width()-6,96) if len(self.items)==1 else QRectF(3,3+index*48+shift,self.width()-6,47)
+        return QRectF(3,3+shift,self.width()-6,96) if len(self.items)==1 else QRectF(3,3+index*50+shift,self.width()-6,48)
     def row_shift(self,index):return 0
     def value_rect(self,index):
-        single=len(self.items)==1;y=(0 if single else index*48)+self.row_shift(index)
-        rect=QRectF(10,26+y,self.width()-20,34) if single else QRectF(58,y+4,self.width()-68,24)
-        if not single and index==self.week_index and self.anomaly:rect=QRectF(28,y+4,self.alert_rect().left()-32,24)
-        return rect
-    def alert_rect(self):return QRectF(self.width()-self.alert_badge.width()-7,(0 if len(self.items)==1 else (self.week_index or 0)*48)+6,self.alert_badge.width(),18)
+        single=len(self.items)==1;y=(0 if single else index*50)+self.row_shift(index)
+        return QRectF(10,26+y,self.width()-20,34) if single else QRectF(10,20+y,48,22)
+    def alert_rect(self):return QRectF(self.width()-self.alert_badge.width()-7,(0 if len(self.items)==1 else (self.week_index or 0)*50-2)+6,self.alert_badge.width(),18)
     def resizeEvent(self,event):
         self.alert_badge.move(self.alert_rect().topLeft().toPoint())
         super().resizeEvent(event)
@@ -100,9 +109,10 @@ class QuotaSummary(QWidget):
         region=self.reveal_region()
         if self.visibleRegion().intersects(region):self.update(region)
     def begin_reveal(self):
-        self.ensure_static();self.animation.stop();self.starts={k:0. for k in self.targets};self.animate(0.)
+        from settings_controls import motion_enabled
+        self.ensure_static();self.animation.stop();self.starts={k:0. for k in self.targets};self.animate(0. if motion_enabled() else 1.)
     def start_reveal(self):
-        if self.animation.state()!=QAbstractAnimation.State.Running and self.isVisible() and any(abs(self.values[k]-v)>.0005 for k,v in self.targets.items()):self.animation.start()
+        if self.animation.state()!=QAbstractAnimation.State.Running and self.isVisible() and any(abs(self.values[k]-v)>.0005 for k,v in self.targets.items()):play_animation(self.animation)
     def showEvent(self,event):
         super().showEvent(event)
         # Refresh synchronously before the first paint after being hidden.
@@ -125,12 +135,12 @@ class QuotaSummary(QWidget):
         self.pressed=False;self.update()
         if clicked:self.expand.emit()
     def _track(self,p,rect,item):
-        color=quota_color(item);track=QColor(color);track.setAlpha(33)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(track);p.drawRoundedRect(rect,rect.height()/2,rect.height()/2)
+        color=quota_color(item);track=QColor(theme_color(color));track.setAlpha(33)
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(track));p.drawRoundedRect(rect,rect.height()/2,rect.height()/2)
         if item['progress'] is None:
-            p.setPen(QPen(QColor('#8e819c'),1.3));p.drawLine(rect.center().toPoint()+QPoint(-3,0),rect.center().toPoint()+QPoint(3,0))
+            p.setPen(QPen(QColor(theme_color('#8e819c')),1.3));p.drawLine(rect.center().toPoint()+QPoint(-3,0),rect.center().toPoint()+QPoint(3,0))
     def track_rect(self,index):
-        return QRectF(10,(65 if len(self.items)==1 else index*48+29)+self.row_shift(index),self.width()-20,8 if len(self.items)==1 else 6)
+        return QRectF(10,(65 if len(self.items)==1 else index*50+42)+self.row_shift(index),self.width()-20,6)
     def reveal_region(self):
         rect=QRectF()
         for i in range(len(self.items)):rect=rect.united(self.track_rect(i))
@@ -140,18 +150,20 @@ class QuotaSummary(QWidget):
         if self._static_key==key:return
         image=QPixmap(max(1,int(self.width()*ratio+.5)),max(1,int(self.height()*ratio+.5)));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
         p=QPainter(image);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor('#f5f2f7'));p.drawRoundedRect(QRectF(self.rect()),10,10)
+        p.setBrush(QColor(theme_color('#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),10,10)
         single=len(self.items)==1
         for index,item in enumerate(self.items):
             rect=self.row_rect(index)
             if self.active==index:
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#e6dcec' if self.pressed else '#ede7f2'));p.drawRoundedRect(rect,7,7)
-            y=(0 if single else index*48)+self.row_shift(index)
-            p.setFont(font(11,True));p.setPen(MUTED)
+                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#ede7f2')));p.drawRoundedRect(rect,7,7)
+            y=(0 if single else index*50)+self.row_shift(index)
+            if not single:
+                self._draw_dual_row(p,index,item,y);continue
+            p.setFont(font(11,True));p.setPen(theme_color(MUTED))
             label='周' if not single and index==self.week_index and self.anomaly else item['label']
             p.drawText(QRectF(10,y+7,self.width()-20,18),Qt.AlignmentFlag.AlignVCenter,label)
-            value=item['display'];color=quota_color(item) if item['low'] else INK
-            p.setPen(color);p.setFont(font(28 if single else 18,True))
+            value=item['display'];color=quota_color(item) if item['remaining'] is not None else MUTED
+            p.setPen(theme_color(color));p.setFont(font(28 if single else 18,True))
             value_rect=self.value_rect(index)
             # Very long custom decimal percentages remain legible and contained.
             if QFontMetrics(p.font()).horizontalAdvance(value)>value_rect.width():p.setFont(font(22 if single else 14,True))
@@ -159,17 +171,39 @@ class QuotaSummary(QWidget):
             self._track(p,self.track_rect(index),item)
             text=item['reset_text']
             if self.active==index and item['reset_at'] and not item['expired']:text=local_time(item['reset_at'])+' 重置'
-            p.setPen(QColor('#98566d') if item['expired'] else MUTED);p.setFont(font(10 if single else 9))
+            p.setPen(theme_color(QColor(theme_color('#98566d')) if item['expired'] else MUTED));p.setFont(font(10 if single else 9))
             text=QFontMetrics(p.font()).elidedText(text,Qt.TextElideMode.ElideRight,self.width()-20)
             p.drawText(QRectF(10,80+y if single else y+36,self.width()-20,15),Qt.AlignmentFlag.AlignVCenter,text)
         p.end();self._static=image;self._static_key=key;self.layer_builds+=1
+    def _draw_dual_row(self,p,index,item,y):
+        # Same 102px card: a heading/badge row, value/countdown row, then track.
+        # The weekly change badge never competes with the remaining percentage.
+        precise=self.active==index and item['reset_at'] and not item['expired']
+        date,clock=local_time(item['reset_at']).split(' ',1) if precise else ('','')
+        p.setFont(font(12,True));p.setPen(theme_color(MUTED))
+        p.drawText(QRectF(10,y+3,self.width()-20,18),Qt.AlignmentFlag.AlignVCenter,date if precise else item['label'])
+        value=item['display'];rect=self.value_rect(index)
+        p.setFont(font(18,True))
+        if QFontMetrics(p.font()).horizontalAdvance(value)>rect.width():p.setFont(font(14,True))
+        p.setPen(theme_color(quota_color(item)) if item['remaining'] is not None else theme_color(MUTED))
+        p.drawText(rect,Qt.AlignmentFlag.AlignVCenter,value)
+        text=clock if precise else item['reset_text'].removesuffix('后重置')
+        p.setFont(font(11));metrics=QFontMetrics(p.font());text=metrics.elidedText(text,Qt.TextElideMode.ElideRight,max(1,self.width()-64))
+        tw=metrics.horizontalAdvance(text);tx=self.width()-10-tw
+        p.setPen(QColor(theme_color('#98566d')) if item['expired'] else theme_color(MUTED))
+        p.drawText(QRectF(tx,y+23,tw,18),Qt.AlignmentFlag.AlignVCenter,text)
+        cx=tx-9;cy=y+32
+        p.setPen(QPen(theme_color(MUTED),1.15,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap));p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawArc(QRectF(cx-4,cy-4,8,8),45*16,285*16)
+        p.drawLine(round(cx+3),round(cy-4),round(cx+3),round(cy-1))
+        self._track(p,self.track_rect(index),item)
     def paintEvent(self,event):
         self.ensure_static();p=QPainter(self);p.drawPixmap(0,0,self._static);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
         for index,item in enumerate(self.items):
             progress=self.values[item['id']]
             if item['progress'] is not None and progress>0:
                 rect=self.track_rect(index);filled=QRectF(rect.x(),rect.y(),rect.width()*progress,rect.height());radius=min(filled.width()/2,filled.height()/2)
-                p.setBrush(quota_color(item));p.drawRoundedRect(filled,radius,radius)
+                p.setBrush(theme_color(quota_color(item)));p.drawRoundedRect(filled,radius,radius)
 
 class TodayTokens(QWidget):
     activated=Signal()
@@ -194,9 +228,19 @@ class TodayTokens(QWidget):
         if clicked:self.activated.emit()
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7'));p.drawRoundedRect(QRectF(self.rect()),6,6)
-        p.setPen(MUTED);p.setFont(font(10));p.drawText(QRectF(8,0,69,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日 Token')
-        p.setFont(font(12,True));p.setPen(INK)
+        p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
+        p.setPen(theme_color(MUTED));p.setFont(font(10));p.drawText(QRectF(8,0,69,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日 Token')
+        p.setFont(font(12,True));p.setPen(theme_color(INK))
         value=self.data['display']+(' 部分' if self.data['partial'] else '')
+        if getattr(self,'compact',False):
+            # Footer half-width: retain today amount and the 24h action, omit duplicate Token label.
+            p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
+            p.setFont(font(10));p.setPen(theme_color(MUTED));p.drawText(QRectF(6,0,22,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日')
+            entry='24h ›';entry_width=QFontMetrics(p.font()).horizontalAdvance(entry);entry_x=self.width()-6-entry_width
+            p.drawText(QRectF(entry_x,0,entry_width,self.height()),Qt.AlignmentFlag.AlignVCenter,entry)
+            p.setFont(font(12,True));p.setPen(theme_color(INK));rect=QRectF(32,0,max(0,entry_x-36),self.height())
+            if QFontMetrics(p.font()).horizontalAdvance(value)>rect.width():p.setFont(font(10,True))
+            value=QFontMetrics(p.font()).elidedText(value,Qt.TextElideMode.ElideRight,round(rect.width()))
+            p.drawText(rect,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,value);return
         p.drawText(QRectF(77,0,self.width()-128,self.height()),Qt.AlignmentFlag.AlignVCenter,value)
-        p.setPen(QColor('#75618d') if self.selected else MUTED);p.setFont(font(10,self.selected));p.drawText(QRectF(self.width()-45,0,37,self.height()),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignRight,'24h ›')
+        p.setPen(theme_color(QColor(theme_color('#75618d')) if self.selected else MUTED));p.setFont(font(10,self.selected));p.drawText(QRectF(self.width()-45,0,37,self.height()),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignRight,'24h ›')

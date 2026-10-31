@@ -1,4 +1,6 @@
 """Fixed native canvas, blended snapshots and queued explicit navigation."""
+from settings_controls import play_animation
+from theme_registry import color as theme_color
 from PySide6.QtCore import QObject,QVariantAnimation,QEasingCurve,QRect,QRectF,QPoint,Qt,QEvent,QTimer
 from PySide6.QtGui import QPainter,QPainterPath,QColor,QPen,QPixmap,QRegion
 from PySide6.QtWidgets import QWidget,QApplication
@@ -80,7 +82,7 @@ class NativeLanding(QWidget):
         try:self.native_published=publish(self,self.image);self.native_error=''
         except OSError as error:self.native_published=False;self.native_error=str(error)
     def present(self,image,rect):
-        self.image=image;self.paints=0;self.prepare(rect);self.repaint()
+        self.image=image;self.paints=0;self.prepare(rect)
     def paintEvent(self,event):
         p=QPainter(self);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent)
         if self.image is not None:p.drawPixmap(0,0,self.image)
@@ -117,7 +119,7 @@ class PanelTransition(QObject):
     @property
     def running(self):return self.active
     def _hold_icon(self,hold):
-        for name in ('status_indicator','refresh_button'):
+        for name in ('status_indicator','refresh_button','island'):
             icon=getattr(self.bubble,name,None)
             if icon:
                 if hold:icon.freeze_motion()
@@ -152,7 +154,7 @@ class PanelTransition(QObject):
         # render may flush native updates even without an event-loop turn.
         b.content.hide()
         if b.report and b.report.requested and not b.report._animating:b.report.follow.begin()
-    def commit(self):
+    def commit(self,preserve_reveals=False):
         # Redrawing a disabled status view may already have started its close.
         # Do not overwrite that target with a second navigation animation.
         if self.closing:return
@@ -194,7 +196,7 @@ class PanelTransition(QObject):
                     from settings_controls import motion_enabled
                     if not motion_enabled():
                         self.cover.blend=1.;self._end_preparation();self.finish();return
-                    self.animation.start();self._end_preparation();b.content.repaint();self.cover.repaint();return
+                    play_animation(self.animation);self._end_preparation();b.content.repaint();self.cover.repaint();return
             b.setFixedSize(target.size());b.move(target.topLeft());b.content.setVisible(b.isVisible());self.cover.hide()
             self.cover.image=None;self.cover.next_image=None;self.cover.blend=0.
             if b.report:b.report.follow.finish(target)
@@ -211,7 +213,7 @@ class PanelTransition(QObject):
         shared_status=(self.old_surface is not None and self.old_surface.page==b.panel_page=='status' and
                        self.old_surface.expanded!=bool(b.expanded) and self.old_surface.shared_bounds and not b.is_compact())
         for widget in widgets:
-            if not self.shrinking and not shared_status and widget.isVisibleTo(b.content) and hasattr(widget,'begin_reveal'):widget.begin_reveal()
+            if not preserve_reveals and not self.shrinking and not shared_status and widget.isVisibleTo(b.content) and hasattr(widget,'begin_reveal'):widget.begin_reveal()
         ratio=b.devicePixelRatioF();size=b.content.size()
         # Render directly over the final paper once. Rendering text against a
         # transparent raster and then compositing it changes Qt font AA.
@@ -241,7 +243,7 @@ class PanelTransition(QObject):
             self.preparing=False;b.setUpdatesEnabled(enabled);self._end_preparation()
         self.cover.repaint()
         if native_canvas:self.landing.prepare(target)
-        self.animation.start()
+        play_animation(self.animation)
     def dismiss(self):
         b=self.bubble
         if self.running or not b.isVisible():return
@@ -255,7 +257,7 @@ class PanelTransition(QObject):
         if b.windowHandle():b.windowHandle().setFlag(Qt.WindowType.WindowTransparentForInput,True)
         if b.report:b.report.dismiss()
         self._end_preparation()
-        self.animation.setDuration(DISMISS_MS);self.animation.setEasingCurve(QEasingCurve.Type.Linear);self.cover.repaint();self.animation.start()
+        self.animation.setDuration(DISMISS_MS);self.animation.setEasingCurve(QEasingCurve.Type.Linear);self.cover.repaint();play_animation(self.animation)
     def advance(self,value):
         if self.target_rect is None:return
         self.raw_progress=float(value)
@@ -283,7 +285,7 @@ class PanelTransition(QObject):
         radius=(22 if self.start_island else 14)+((22 if self.bubble.is_island() else 14)-(22 if self.start_island else 14))*blend
         path=QPainterPath();path.addRoundedRect(rect,radius,radius);p.setClipPath(path)
         normal=(blend if self.start_island else 1-blend) if self.start_island or self.bubble.is_island() else 1.
-        p.setOpacity(normal);p.fillRect(rect,QColor('#fcfafc'))
+        p.setOpacity(normal);p.fillRect(rect,QColor(theme_color('#fcfafc')))
         for image,island,opacity in ((self.before,self.start_island,1-blend),(self.cover.image,self.bubble.is_island(),blend)):
             p.setOpacity(opacity);size=image.deviceIndependentSize()
             if f>1. and image is self.cover.image:
@@ -292,7 +294,7 @@ class PanelTransition(QObject):
                 p.drawPixmap(rect,image,QRectF(image.rect()));continue
             x=rect.center().x()-size.width()/2;y=rect.center().y()-size.height()/2 if island else rect.bottom()-size.height()
             p.drawPixmap(round(x),round(y),image)
-        p.setClipping(False);p.setOpacity(normal);p.setPen(QPen(QColor('#e0d9e6'),1));p.setBrush(Qt.BrushStyle.NoBrush);p.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),radius,radius)
+        p.setClipping(False);p.setOpacity(normal);p.setPen(QPen(QColor(theme_color('#e0d9e6')),1));p.setBrush(Qt.BrushStyle.NoBrush);p.drawRoundedRect(rect.adjusted(.5,.5,-.5,-.5),radius,radius)
     def finish(self):
         b=self.bubble;closing=self.closing;same_size_fade=self.same_size_fade;self.closing=False
         guarded=bool(not closing and (self.shrinking or QApplication.platformName()=='windows') and b.isVisible() and self.morph and self.morph.end.frame is not None)
@@ -325,10 +327,10 @@ class PanelTransition(QObject):
             b.content.repaint()
             if QApplication.platformName()=='windows':present_barrier()
             self.cover.hide();self.cover.image=None
-        b.repaint()
         if native_opacity is not None:
-            b.content.repaint();b.repaint();present_barrier()
+            b.repaint();present_barrier()
             b.setWindowOpacity(native_opacity);b.repaint();present_barrier()
+        else:b.repaint()
         if b.report:b.report.follow.finish(self.target_rect)
         self.active=False;self.before=None;self.old_surface=None;self.morph=None;self.same_size_fade=False;self.start_page_state=None;self.cover.image=None;self.cover.next_image=None;self.cover.blend=0.;self.start_rect=self.target_rect=None;self.canvas_rect=None
         if guarded:self.landing_timer.start()
@@ -360,6 +362,15 @@ class PanelTransition(QObject):
         if callback and self.bubble.isVisible():QTimer.singleShot(0,self.bubble,callback)
     def complete(self):
         if self.running:self.animation.setCurrentTime(self.animation.duration())
+    def translate(self,delta):
+        """An attached drag moves the whole prepared canvas, never relayouts."""
+        if not self.running or delta.isNull():return
+        for name in ('start_rect','target_rect','canvas_rect'):
+            rect=getattr(self,name)
+            if rect is not None:rect.translate(delta)
+        if self.morph:self.morph.translate(delta)
+        self.bubble.move(self.bubble.pos()+delta)
+        if self.landing.isVisible():self.landing.move(self.landing.pos()+delta)
     def thaw(self):
         for widget,enabled in self.frozen:widget.setUpdatesEnabled(enabled)
         self.frozen=[];self.bubble.layout.setEnabled(True)

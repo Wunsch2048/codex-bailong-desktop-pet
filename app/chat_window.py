@@ -1,4 +1,5 @@
 """User initiated, OpenAI-compatible SSE chat, separate from Codex monitoring."""
+from theme_runtime import set_theme_style,theme_style_source
 import copy
 import json
 import time
@@ -15,6 +16,7 @@ from inline_confirmation import InlineConfirmation
 from chat_config import (CHAT_DEFAULT,load_chat_config,save_chat_config,load_provider_key,
     provider_key_present,clear_provider_key,delete_chat_provider)
 from chat_protocol import ProviderValidationError,normalize_provider,endpoint_for
+from ui_theme import hide_scrollbars
 
 def load_json(path,default):
     try:return json.loads(Path(path).read_text(encoding='utf-8'))
@@ -48,7 +50,7 @@ class ProviderDialog(QDialog):
     def __init__(self,root,parent=None,embedded=False):
         super().__init__(parent,Qt.WindowType.Widget if embedded else Qt.WindowType.Dialog);self.root=Path(root);self.path=self.root/'chat.json'
         if embedded:
-            self.setWindowFlags(Qt.WindowType.Widget);self.setObjectName('provider_settings');self.setStyleSheet('QWidget#provider_settings{background:#f5f2f7;}')
+            self.setWindowFlags(Qt.WindowType.Widget);self.setObjectName('provider_settings');set_theme_style(self,'QWidget#provider_settings{background:#f5f2f7;}')
         self.load_error=''
         try:self.config=load_chat_config(self.root)
         except OSError as error:self.config=copy.deepcopy(CHAT_DEFAULT);self.load_error=str(error)
@@ -73,10 +75,10 @@ class ProviderDialog(QDialog):
         self.fields['base_url'].textChanged.connect(self.update_endpoint)
         self.fields['key'].textChanged.connect(self.update_key_status)
         self.timeout=QSpinBox();self.timeout.setRange(5,600);form.addRow('超时（秒）',self.timeout)
-        self.prompt=QPlainTextEdit();self.prompt.setPlainText(self.config.get('system_prompt',CHAT_DEFAULT['system_prompt']));form.addRow('角色系统提示词',self.prompt)
+        self.prompt=hide_scrollbars(QPlainTextEdit());self.prompt.setPlainText(self.config.get('system_prompt',CHAT_DEFAULT['system_prompt']));form.addRow('角色系统提示词',self.prompt)
         self.count=QSpinBox();self.count.setRange(2,200);self.count.setValue(self.config.get('history_messages',40));form.addRow('历史消息上限',self.count)
         self.chars=QSpinBox();self.chars.setRange(1000,200000);self.chars.setSingleStep(1000);self.chars.setValue(self.config.get('history_chars',24000));form.addRow('历史字符上限',self.chars)
-        note=QLabel('仅支持 Chat Completions；不支持 Responses 或 Anthropic 原生接口。\n仅主动发送时请求服务，Codex 会话不会自动发送。\n密钥使用当前 Windows 用户的 DPAPI 加密保存；本地免密服务可留空。');note.setWordWrap(True);note.setStyleSheet('font-size:11px;color:#706879;');layout.addWidget(note)
+        note=QLabel('仅支持 Chat Completions；不支持 Responses 或 Anthropic 原生接口。\n仅主动发送时请求服务，Codex 会话不会自动发送。\n密钥使用当前 Windows 用户的 DPAPI 加密保存；本地免密服务可留空。');note.setWordWrap(True);set_theme_style(note,'font-size:11px;color:#706879;');layout.addWidget(note)
         row=QHBoxLayout();save=QPushButton('保存并设为当前服务');save.setProperty('role','primary');save.clicked.connect(self.save);row.addWidget(save)
         clear=QPushButton('清除此服务密钥');clear.setProperty('role','danger');clear.clicked.connect(self.clear_key);row.addWidget(clear);layout.addLayout(row)
         self.mutation_buttons.extend((save,clear))
@@ -199,9 +201,9 @@ class ChatWindow(QWidget):
         manage.setMenu(menu);row.addWidget(manage)
         layout.addLayout(row);self.sessions.currentIndexChanged.connect(self.switch)
         self.confirmation=InlineConfirmation();layout.addWidget(self.confirmation)
-        self.transcript=QPlainTextEdit();self.transcript.setReadOnly(True);layout.addWidget(self.transcript,1)
+        self.transcript=hide_scrollbars(QPlainTextEdit());self.transcript.setReadOnly(True);layout.addWidget(self.transcript,1)
         self.status=QLabel('这里是与白龙的对话；Codex 进度可切换到状态页查看。');self.status.setTextFormat(Qt.TextFormat.PlainText);self.status.setWordWrap(True);layout.addWidget(self.status)
-        self.input=ChatInput();self.input.setMaximumHeight(110);self.input.setPlaceholderText('Enter 发送，Shift+Enter 换行');self.input.send.connect(self.send);layout.addWidget(self.input)
+        self.input=hide_scrollbars(ChatInput());self.input.setMaximumHeight(110);self.input.setPlaceholderText('Enter 发送，Shift+Enter 换行');self.input.send.connect(self.send);layout.addWidget(self.input)
         row=QHBoxLayout();self.send_button=QPushButton('发送');self.send_button.setProperty('role','primary');self.send_button.clicked.connect(self.send);row.addWidget(self.send_button)
         self.stop_button=QPushButton('停止');self.stop_button.clicked.connect(self.stop);row.addWidget(self.stop_button)
         self.retry_button=QPushButton('重试上条');self.retry_button.clicked.connect(self.retry);row.addWidget(self.retry_button)
@@ -277,7 +279,7 @@ class ChatWindow(QWidget):
         if self.embedded:
             if not self.provider_dialog:
                 self.provider_dialog=ProviderDialog(self.root,self,embedded=True)
-                self.provider_page=QScrollArea();self.provider_page.setWidgetResizable(True);self.provider_page.setWidget(self.provider_dialog)
+                self.provider_page=hide_scrollbars(QScrollArea());self.provider_page.setWidgetResizable(True);self.provider_page.setWidget(self.provider_dialog)
                 self.pages.addWidget(self.provider_page)
                 self.provider_dialog.finished.connect(self.provider_finished)
             self.pages.setCurrentWidget(self.provider_page);self.provider_dialog.show();return

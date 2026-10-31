@@ -6,6 +6,8 @@ from token_calendar import counter
 UNKNOWN='未识别模型'
 
 def migrate(db):
+    from quota_workload import migrate as workload_migrate
+    workload_migrate(db)
     if db.execute('PRAGMA user_version').fetchone()[0]>=2:return
     existing={r[1] for r in db.execute('PRAGMA table_info(usage)')}
     for name,kind in [('session','TEXT DEFAULT ""'),('model',f'TEXT DEFAULT "{UNKNOWN}"'),('input_tokens','INTEGER'),('output_tokens','INTEGER'),('known','INTEGER DEFAULT 0')]:
@@ -38,6 +40,8 @@ def scan_file(index,db,path,stop):
     row=db.execute('SELECT offset,highwater,session,model,turn,input_water,output_water FROM files WHERE path=?',(key,)).fetchone()
     offset,previous,sid,model,turn,pi,po=row or (0,0,path.stem,UNKNOWN,'',0,0)
     if size<offset:offset,previous,sid,model,turn,pi,po=0,0,path.stem,UNKNOWN,'',0,0;index.format_known.pop(key,None)
+    import quota_workload as workload
+    condition=workload.resume(db,key,offset,pi)
     # The saved offset survives a restart; the in-memory format cache does not.
     # A newly appended tail may contain only progress/completion events that
     # the token scanner deliberately skips. Validate the header independently
@@ -72,7 +76,9 @@ def scan_file(index,db,path,stop):
             if kind=='session_meta':
                 if isinstance(p.get('id'),str):sid=p['id'][:128]
                 model=model_name(p.get('model')) or model
-            elif kind=='turn_context':model=model_name(p.get('model')) or model
+            elif kind=='turn_context':
+                model=model_name(p.get('model')) or model
+                workload.context(condition,p)
             elif kind=='event_msg' and typ in ('task_started','turn_started'):turn=str(p.get('turn_id') or obj.get('timestamp',''))[:128]
             stamp=stamp_of(obj)
             if stamp is None:continue
@@ -100,12 +106,14 @@ def scan_file(index,db,path,stop):
                     total=a+b
                 model=model_name(p.get('model')) or model_name(info.get('model')) or model
             except (TypeError,AttributeError):continue
+            workload.event_context(condition,model,p,info)
             delta=max(0,total-previous);previous=max(previous,total)
             di=max(0,a-pi) if a is not None else None;do=max(0,b-po) if b is not None else None
             if a is not None:pi=max(pi,a)
             if b is not None:po=max(po,b)
-            if not delta:continue
             known=di is not None and do is not None and di+do==delta
+            cached=workload.observe(condition,usage,di,known)
+            if not delta:continue
             identity=json.dumps([obj.get('timestamp'),total,usage.get('input_tokens'),usage.get('output_tokens')],separators=(',',':'))
             fingerprint=hashlib.sha256(identity.encode()).hexdigest()
             db.execute('''INSERT INTO usage (fingerprint,stamp,tokens,session,model,input_tokens,output_tokens,known) VALUES (?,?,?,?,?,?,?,?)
@@ -115,7 +123,9 @@ def scan_file(index,db,path,stop):
                 output_tokens=CASE WHEN usage.known=0 AND usage.tokens=excluded.tokens THEN excluded.output_tokens ELSE usage.output_tokens END,
                 known=CASE WHEN usage.tokens=excluded.tokens THEN MAX(usage.known,excluded.known) ELSE usage.known END''',
                 (fingerprint,stamp,delta,sid,model,di if known else None,do if known else None,int(known),UNKNOWN))
+            workload.store(db,fingerprint,model,delta,cached,condition)
     db.execute('INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?,?)',(key,offset,previous,sid,model,turn,pi,po))
+    workload.save(db,key,offset,condition)
     index.format_known[key]=recognized
     return recognized
 

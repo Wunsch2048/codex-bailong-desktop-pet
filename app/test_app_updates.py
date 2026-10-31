@@ -117,6 +117,10 @@ class StagingTests(unittest.TestCase):
         prune_completed(self.cache,'0.7.3');self.assertFalse(paths['receipt'].parent.exists())
 
 class ControllerTests(unittest.TestCase):
+    def setUp(self):
+        """Windows 程序更新场景显式提供平台能力，不依赖执行测试的系统"""
+        support=patch('app_updates.program_updates_supported',return_value=True)
+        support.start();self.addCleanup(support.stop)
     def wait(self,condition):
         deadline=time.monotonic()+3
         while not condition():APP.processEvents();time.sleep(.003);self.assertLess(time.monotonic(),deadline)

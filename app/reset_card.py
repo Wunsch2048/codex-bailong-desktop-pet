@@ -1,4 +1,5 @@
 """One countdown visual for the small reset deck and expanded details."""
+from theme_registry import color as theme_color
 import math
 import time
 from PySide6.QtCore import Qt,QRectF,QPointF,QTimer,QUrl,Signal
@@ -91,16 +92,16 @@ class ResetCard(QWidget):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self.dense and (self.hovered or self.pressed or self.focus_visible):
             p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(SELECTED if self.pressed else PANEL));p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),7,7)
+            p.setBrush(QColor(theme_color(SELECTED if self.pressed else PANEL)));p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),7,7)
         v=self.view;left=5 if self.dense else 0;available=max(1,self.width()-left-(4 if self.dense else 0))
-        p.setFont(ui_font(10 if self.dense else 11,True));p.setPen(QColor(MUTED))
+        p.setFont(ui_font(10 if self.dense else 11,True));p.setPen(QColor(theme_color(MUTED)))
         reserved=22 if self.refresh_button else 0
         title='预计最晚还有' if self.dense and v['phase']=='scheduled' and v['eyebrow']=='预计还有' else v['eyebrow']
         eyebrow=QFontMetrics(p.font()).elidedText(title,Qt.TextElideMode.ElideRight,int(available-reserved))
         p.drawText(QRectF(left,0,available-reserved,19),Qt.AlignmentFlag.AlignVCenter,eyebrow)
-        p.setPen(QColor(DANGER if v['phase'] in ('pending','unavailable') else INK))
+        p.setPen(QColor(theme_color(DANGER if v['phase'] in ('pending','unavailable') else INK)))
         for text,face,point in self.text_runs():p.setFont(face);p.drawText(point,text)
-        p.setFont(ui_font(10 if self.dense else 11,True));p.setPen(QColor(MUTED))
+        p.setFont(ui_font(10 if self.dense else 11,True));p.setPen(QColor(theme_color(MUTED)))
         detail_note,note_rect=self.note_layout()
         if not self.dense and v['phase']=='scheduled':detail_note+=' 北京时间'
         note=QFontMetrics(p.font()).elidedText(detail_note,Qt.TextElideMode.ElideRight,int(note_rect.width()))

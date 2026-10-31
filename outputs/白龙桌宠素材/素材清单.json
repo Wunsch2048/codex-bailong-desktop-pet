@@ -318,6 +318,99 @@
       "originalPlaybackFile": "差分26-逆鳞信任-新版/差分26-逆鳞信任-透明.webp",
       "originalDurationMs": 4042,
       "qualityRevision": 3
+    },
+    {
+      "id": "idle03",
+      "name": "翻绘本",
+      "file": "透明WebM/idle03.webm",
+      "durationMs": 6792,
+      "loop": false,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/idle03.webp",
+      "qualityRevision": 6,
+      "sourceFacing": "right",
+      "originalPlaybackFile": "透明WebM/idle03.webm",
+      "originalDurationMs": 6042
+    },
+    {
+      "id": "idle04",
+      "name": "抱枕休息",
+      "file": "透明WebM/idle04.webm",
+      "durationMs": 6792,
+      "loop": false,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/idle04.webp",
+      "qualityRevision": 6,
+      "sourceFacing": "right",
+      "originalPlaybackFile": "透明WebM/idle04.webm",
+      "originalDurationMs": 6042
+    },
+    {
+      "id": "idle05",
+      "name": "玩掌机",
+      "file": "透明WebM/idle05.webm",
+      "durationMs": 7792,
+      "loop": false,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/idle05.webp",
+      "qualityRevision": 6,
+      "sourceFacing": "right",
+      "originalPlaybackFile": "透明WebM/idle05.webm",
+      "originalDurationMs": 7042
+    },
+    {
+      "id": "idle06",
+      "name": "贴尾巴",
+      "file": "透明WebM/idle06.webm",
+      "durationMs": 7792,
+      "loop": false,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/idle06.webp",
+      "qualityRevision": 6,
+      "sourceFacing": "right",
+      "originalPlaybackFile": "透明WebM/idle06.webm",
+      "originalDurationMs": 7042
+    },
+    {
+      "id": "move02left",
+      "number": "02",
+      "name": "挥羽毛",
+      "file": "透明WebM/move02left.webm",
+      "durationMs": 9792,
+      "moveStartMs": 1917,
+      "moveStopMs": 5250,
+      "sourceFacing": "right",
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/move02left.webp",
+      "qualityRevision": 6,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move02left.webm",
+      "originalDurationMs": 9042
     }
   ],
   "dragAnimation": {
@@ -369,7 +462,7 @@
     "qualityRevision": 2,
     "previousPlaybackFile": "quality-v1/quota.webp"
   },
-  "qualityRevision": 3,
+  "qualityRevision": 7,
   "qualityBaseline": "动作质量修复/原始动作逻辑与质量基准.txt",
   "workAnimations": [
     {
@@ -521,5 +614,221 @@
       "qualityRevision": 3
     }
   ],
-  "upstreamAnimationVersion": "0.4.1"
+  "upstreamAnimationVersion": "0.5.1",
+  "moveAnimations": [
+    {
+      "id": "move01left",
+      "number": "01",
+      "name": "向左走路",
+      "file": "透明WebM/move01left.webm",
+      "durationMs": 14125,
+      "moveStartMs": 1500,
+      "moveStopMs": 12208,
+      "sourceFacing": "right",
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-user-20261030/move01left.webp",
+      "qualityRevision": 8,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move01left.webm",
+      "originalDurationMs": 5042,
+      "locomotion": {
+        "start": 96,
+        "end": 292,
+        "entryEnd": 95,
+        "sourceFrames": 339,
+        "moveStart": 36,
+        "fps": 24,
+        "forwardOnly": true,
+        "interruptOnStop": true
+      },
+      "travelDirection": "left",
+      "movementKind": "walk",
+      "userApprovedSource": {
+        "name": "未命名项目.mp4",
+        "sha256": "5af83f299cf8b8920985ffbc337e6529919ba53e6217f2221033f813c8a3b5e8",
+        "frames": 339,
+        "fps": 24,
+        "noGaitEdit": true,
+        "canonicalFacing": "right",
+        "leftMirroredAtRuntime": true
+      }
+    },
+    {
+      "id": "move01right",
+      "number": "01",
+      "name": "向右走路",
+      "file": "透明WebM/move01right.webm",
+      "durationMs": 14125,
+      "moveStartMs": 1500,
+      "moveStopMs": 12208,
+      "sourceFacing": "right",
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-user-20261030/move01right.webp",
+      "qualityRevision": 8,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move01right.webm",
+      "originalDurationMs": 5042,
+      "locomotion": {
+        "start": 96,
+        "end": 292,
+        "entryEnd": 95,
+        "sourceFrames": 339,
+        "moveStart": 36,
+        "fps": 24,
+        "forwardOnly": true,
+        "interruptOnStop": true
+      },
+      "travelDirection": "right",
+      "movementKind": "walk",
+      "userApprovedSource": {
+        "name": "未命名项目.mp4",
+        "sha256": "5af83f299cf8b8920985ffbc337e6529919ba53e6217f2221033f813c8a3b5e8",
+        "frames": 339,
+        "fps": 24,
+        "noGaitEdit": true,
+        "canonicalFacing": "right",
+        "leftMirroredAtRuntime": true
+      }
+    },
+    {
+      "id": "move03left",
+      "number": "03",
+      "name": "向左飞行",
+      "file": "透明WebM/move03left.webm",
+      "durationMs": 9867,
+      "moveStartMs": 3125,
+      "moveStopMs": 7750,
+      "sourceFacing": "right",
+      "movementAngleRange": [
+        45,
+        80
+      ],
+      "movementSpeed": 0.65,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v7/move03left.webp",
+      "qualityRevision": 7,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move03left.webm",
+      "originalDurationMs": 9100,
+      "locomotion": {
+        "start": 124,
+        "end": 166,
+        "joinDifference": 0.04056551679968834,
+        "velocityDifference": 0.0024364597629755735,
+        "sourceBoundary": 167,
+        "moveStart": 102,
+        "sourceFrames": 296,
+        "fps": 30,
+        "forwardOnly": true,
+        "seamFile": "quality-v7/move03left-seam.webp",
+        "seamFrames": 7,
+        "seamSha256": "283a1efbad2dab9da838384db4be6354da31d1d72f309361162b15f55786f1ff",
+        "exactSeamEndpoints": true
+      },
+      "travelDirection": "left",
+      "movementKind": "flight",
+      "headRepair": {
+        "recipe": "registered-cap-camera-v1",
+        "originalPlaybackFile": "quality-v6/move03left.webp",
+        "originalPreserved": true,
+        "generatedTopOnly": true
+      }
+    },
+    {
+      "id": "move03right",
+      "number": "03",
+      "name": "向右飞行",
+      "file": "透明WebM/move03right.webm",
+      "durationMs": 9867,
+      "moveStartMs": 3300,
+      "moveStopMs": 7750,
+      "sourceFacing": "right",
+      "movementAngleRange": [
+        45,
+        80
+      ],
+      "movementSpeed": 0.65,
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/move03right.webp",
+      "qualityRevision": 6,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move03right.webm",
+      "originalDurationMs": 9100,
+      "locomotion": {
+        "start": 127,
+        "end": 194,
+        "joinDifference": 0.043883103877305984,
+        "velocityDifference": 0.018100401386618614,
+        "sourceBoundary": 195,
+        "moveStart": 107,
+        "sourceFrames": 296,
+        "fps": 30,
+        "forwardOnly": true,
+        "seamFile": "quality-v6/move03right-seam.webp",
+        "seamFrames": 7,
+        "seamSha256": "e56a646d9693545f9f1667df2d13b8ff51e4a8cdeca739ff3f0a4f8dd83c0d2e",
+        "exactSeamEndpoints": true
+      },
+      "travelDirection": "right",
+      "movementKind": "flight"
+    },
+    {
+      "id": "move02",
+      "number": "02",
+      "name": "小跑",
+      "file": "透明WebM/move02.webm",
+      "durationMs": 7750,
+      "moveStartMs": 4750,
+      "moveStopMs": 7500,
+      "sourceFacing": "right",
+      "renderScale": 1.0,
+      "renderOffset": [
+        0.0,
+        0.0
+      ],
+      "renderAnchor": "bottom-center",
+      "playbackFile": "quality-v6/move02.webp",
+      "qualityRevision": 6,
+      "loop": false,
+      "originalPlaybackFile": "透明WebM/move02.webm",
+      "originalDurationMs": 11000,
+      "locomotion": {
+        "start": 33,
+        "end": 77,
+        "joinDifference": 0.04796367883682251,
+        "velocityDifference": 0.02129770629107952,
+        "sourceBoundary": 78,
+        "moveStart": 24,
+        "sourceFrames": 186,
+        "fps": 24,
+        "forwardOnly": true,
+        "seamFile": "quality-v6/move02-seam.webp",
+        "seamFrames": 7,
+        "seamSha256": "76e2c50c9ce66723577987120d9baf196001918eed0068b1c33dff37ae619760",
+        "exactSeamEndpoints": true
+      },
+      "travelDirection": "both",
+      "movementKind": "run"
+    }
+  ]
 }

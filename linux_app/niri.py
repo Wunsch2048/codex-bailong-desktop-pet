@@ -54,11 +54,14 @@ class NiriWindows(QObject):
         self.stream.connectToServer(os.environ['NIRI_SOCKET'])
 
     def reveal_bubble(self):
-        """主气泡恢复绘制后撤销跟随画布，拖动中不提前交接"""
-        if not getattr(self.pet, '_niri_drag', False):
-            self.opacity.setOpacity(1)
-            self.pet.bubble.repaint()
-            self.surfaces.finish_pet_drag()
+        """拖动计时器只交接空闲面板，导航中的显示权归形变画布"""
+        transition = self.pet.bubble.size_transition
+        if (getattr(self.pet, '_niri_drag', False) or transition.running or transition.preparing
+                or getattr(transition, '_linux_stage', None)):
+            return
+        self.opacity.setOpacity(1)
+        self.pet.bubble.repaint()
+        self.surfaces.finish_pet_drag()
 
     def character(self):
         """仅定位本进程已登记的角色窗口"""
@@ -196,8 +199,10 @@ class NiriWindows(QObject):
                 return False
             if event.type() == QEvent.Type.Hide:
                 self.pet._niri_drag = False
+                self.reveal.stop()
                 self.pet.cancel_pointer()
                 self.surfaces.finish_pet_drag()
+                self.opacity.setOpacity(1)
         return False
 
     def disconnected(self):
@@ -297,6 +302,7 @@ def install(stack):
     position = EnhancedPet.position_bubble
     cancel = DesktopPet.cancel_pointer
     original_pos = DesktopPet.pos
+    original_screen = DesktopPet.screen
     original_move = DesktopPet.move
     original_frame = DesktopPet.frameGeometry
     original_walk = DesktopPet.start_walk
@@ -318,6 +324,12 @@ def install(stack):
             return original_frame(pet)
         return QRect(actual_pos(pet), pet.size())
 
+    def actual_screen(pet):
+        """贴边和走动使用角色所在的实际输出，初始化仍交给 Qt"""
+        controller = getattr(pet, '_niri_windows', None)
+        screen = controller.actual_screen() if controller else None
+        return screen if screen is not None else original_screen(pet)
+
     def move_window(pet, *args):
         """仅 Linux 角色的程序化移动经 niri 提交，初始化仍交给 Qt"""
         controller = getattr(pet, '_niri_windows', None)
@@ -333,12 +345,12 @@ def install(stack):
             return
         original_walk(pet)
 
-    def stop_walk(pet, land=False):
+    def stop_walk(pet, land=False, preserve_route=False):
         """拖动或设置中断清掉排队位移，正常到达时保留最后一步"""
         controller = getattr(pet, '_niri_windows', None)
         if controller is not None and not land:
             controller.cancel_move()
-        original_stop(pet, land)
+        original_stop(pet, land, preserve_route=preserve_route)
 
 
     def apply_settings(pet, values, save=True):
@@ -374,6 +386,7 @@ def install(stack):
                 pet.click_timer.stop()
                 pet.last_click = None
                 pet.drag_samples.clear()
+                pet.begin_drag_panel()
                 pet._niri_drag = True
                 pet._niri_windows.save_timer.stop()
                 pet._niri_left = False
@@ -383,10 +396,10 @@ def install(stack):
                 pet.gate.state = 'idle'
                 pet.bubble_timer.stop()
                 if not pet.settings.get('panel_detached'):
-                    pet.bubble.size_transition.cancel()
                     pet._niri_windows.reveal.stop()
-                    pet._niri_windows.surfaces.begin_pet_drag()
-                    pet._niri_windows.opacity.setOpacity(0)
+                    if not pet.bubble.size_transition.running:
+                        pet._niri_windows.surfaces.begin_pet_drag()
+                        pet._niri_windows.opacity.setOpacity(0)
                 pet.play(pet.manifest.get('dragAnimation') or pet.idles[0], 'drag')
                 pet.gate.state = 'drag'
                 event.accept()
@@ -408,6 +421,7 @@ def install(stack):
 
     stack.enter_context(replace(DesktopPet, 'apply_settings', apply_settings))
     stack.enter_context(replace(DesktopPet, 'pos', actual_pos))
+    stack.enter_context(replace(DesktopPet, 'screen', actual_screen))
     stack.enter_context(replace(DesktopPet, 'x', lambda pet: actual_pos(pet).x()))
     stack.enter_context(replace(DesktopPet, 'y', lambda pet: actual_pos(pet).y()))
     stack.enter_context(replace(DesktopPet, 'frameGeometry', frame_geometry))

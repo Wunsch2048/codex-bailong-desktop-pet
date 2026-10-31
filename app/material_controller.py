@@ -1,4 +1,5 @@
 """Explicit background material operations and embedded settings controls."""
+from theme_runtime import set_theme_style,theme_style_source
 import threading,time
 from PySide6.QtCore import QObject,QThread,QTimer,Signal
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QPushButton,QProgressBar,QFileDialog,QMessageBox,QSizePolicy
@@ -39,7 +40,7 @@ class MaterialController(QObject):
         self.publish(phase='verifying' if self.store.known_available(tier) else 'downloading',message='正在准备素材…',downloaded=0,total=0)
         job=self.job=MaterialJob(self.store,tier,self);job.result.connect(self._result);job.failed.connect(lambda text:self.publish(phase='error',message=text));job.progress.connect(self._progress);job.finished.connect(self._finished);self.changed.emit(self.snapshot());job.start();return True
     def _progress(self,n,total,phase):
-        if not self.closing:self.publish(phase=phase,downloaded=n,total=total,message='正在下载动画资源…' if phase=='downloading' else '正在迁移并校验动画…' if phase=='moving' else '正在校验素材…')
+        if not self.closing:self.publish(phase=phase,downloaded=n,total=total,message='正在下载动画资源…' if phase=='downloading' else '正在复用已有动画…' if phase=='reusing' else '正在迁移并校验动画…' if phase=='moving' else '正在校验素材…')
     def _result(self,tier,root):
         if self.closing or self.job.cancel.is_set():return
         self.publish(phase='pending',message='素材已就绪，等待当前动作自然结束后切换…');self.ready.emit(tier,root)
@@ -151,7 +152,7 @@ class MaterialPanel(QWidget):
         self.message=QLabel();self.message.setWordWrap(True);layout.addWidget(self.message)
         self.remove_button=QPushButton('移除动画资源，仅保留卡片');self.remove_button.setProperty('role','danger');layout.addWidget(self.remove_button)
         self.remove_button.clicked.connect(controller.removeRequested.emit)
-        note=QLabel('动画按需下载，升级可复用；移除后可重新下载。');note.setWordWrap(True);note.setStyleSheet('font-size:11px;font-weight:500;color:#706879;');layout.addWidget(note)
+        note=QLabel('动画按需下载，升级可复用；移除后可重新下载。');note.setWordWrap(True);set_theme_style(note,'font-size:11px;font-weight:500;color:#706879;');layout.addWidget(note)
         location=QHBoxLayout();self.storage_path=QLabel();self.storage_path.setWordWrap(True);self.storage_path.setMinimumWidth(0);self.storage_path.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);self.storage_path.setAccessibleName('动画资源存储位置');location.addWidget(self.storage_path,1)
         self.storage_button=QPushButton('更改位置');self.storage_button.clicked.connect(self.choose_location);location.addWidget(self.storage_button);layout.addLayout(location)
         self.choice.setCurrentIndex(max(0,self.choice.findData(controller.store.current)))

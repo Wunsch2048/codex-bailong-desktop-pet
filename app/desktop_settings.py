@@ -1,4 +1,5 @@
 """Non-modal settings, live controls and character diagnostics."""
+from theme_runtime import set_theme_style,theme_style_source
 import copy
 import threading
 from PySide6.QtCore import Qt,QThread,Signal
@@ -9,12 +10,13 @@ from desktop_core import DEFAULTS,VERSION
 from desktop_services import autostart_enabled,set_autostart,import_character,validate_character,all_items
 from settings_draft import SettingsDraft
 from connection_widgets import CapabilityPanel
-from ui_theme import MUTED,PRIMARY,BORDER,PANEL,SURFACE,SELECTED,INK,ACCENT,editor_stylesheet
+from ui_theme import MUTED,PRIMARY,BORDER,PANEL,SURFACE,SELECTED,INK,ACCENT,editor_stylesheet,hide_scrollbars
 from typography import FONT_CSS
 from settings_controls import SwitchRow,SlidingSegments
 from choice_controls import ChoiceCombo as QComboBox
 from number_controls import DecimalField as QDoubleSpinBox
 from card_motion import AnimatedDisclosure
+from theme_controls import ThemeChoices
 
 class ConnectionJob(QThread):
     report=Signal(object)
@@ -54,11 +56,15 @@ class PathsJob(QThread):
 class SettingsDialog(QDialog):
     def __init__(self,pet,embedded=False,lazy=False):
         super().__init__(pet,Qt.WindowType.Widget if embedded else Qt.WindowType.Dialog);self.pet=pet;self.embedded=embedded;self.fields={};self.job=None;self.connection_job=None
-        self.field_tabs={};self.field_titles={};self.factors={};self._writing_widgets=True;self.draft=None;self.path_job=None
+        self.field_tabs={};self.field_titles={};self.factors={};self._writing_widgets=True;self.draft=None;self.path_job=None;self._saving=False
         if embedded:self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle('白龙桌宠设置');self.resize(590,680)
-        self.setStyleSheet(editor_stylesheet(FONT_CSS)+
+        set_theme_style(self,editor_stylesheet(FONT_CSS)+
             f'QPushButton{{border:0;border-radius:7px;padding:6px 10px;}}'
+            # The inherited hover used PANEL, identical to the settings page.
+            # Keep a visible filled action on hover across all lazy-built tabs.
+            f'QPushButton:hover{{background:{SELECTED};}}'
+            f'QPushButton:pressed,QPushButton:checked:hover{{background:{BORDER};}}'
             f'QTabWidget::pane{{border:0;background:{PANEL};}}QTabBar::tab{{background:{SELECTED};color:{MUTED};border:0;border-radius:6px;padding:7px 10px;margin:2px;}}'
             f'QTabBar::tab:selected{{background:{SURFACE};color:{INK};}}'
             f'QScrollBar:vertical{{background:{SELECTED};width:12px;margin:0;border:0;border-radius:6px;}}'
@@ -79,7 +85,7 @@ class SettingsDialog(QDialog):
         row=QHBoxLayout()
         self.defaults_button=QPushButton('本页恢复默认');self.defaults_button.clicked.connect(self.defaults);row.addWidget(self.defaults_button)
         self.discard_button=QPushButton('放弃修改');self.discard_button.clicked.connect(self.reload);row.addWidget(self.discard_button)
-        self.apply_button=QPushButton('应用');self.apply_button.clicked.connect(self.apply);row.addWidget(self.apply_button)
+        self.apply_button=QPushButton('保存');self.apply_button.clicked.connect(self.apply);row.addWidget(self.apply_button)
         button=QPushButton('返回' if embedded else '关闭');button.clicked.connect(self.dismiss);row.addWidget(button)
         for control in self.findChildren(QPushButton):control.setAutoDefault(False)
         self.apply_button.setProperty('role','primary');self.apply_button.setAutoDefault(True);self.apply_button.setDefault(True)
@@ -101,6 +107,22 @@ class SettingsDialog(QDialog):
     def build_page_0(self):
         pet=self.pet
         appearance=self.tab('面板与显示')
+        motion=SlidingSegments([('性能','performance'),('质量','quality')])
+        appearance.addRow('界面动画',motion);self.fields['ui_animation_mode']=motion
+        self.field_tabs['ui_animation_mode']=0;self.field_titles['ui_animation_mode']='界面动画'
+        motion.currentIndexChanged.connect(lambda:self.edited('ui_animation_mode'))
+        self.section(appearance,'颜色主题',None)
+        themes=ThemeChoices();appearance.addRow(themes);self.fields['theme']=themes
+        self.field_tabs['theme']=0;self.field_titles['theme']='颜色主题'
+        themes.currentIndexChanged.connect(lambda:self.edited('theme'))
+        custom=QWidget();custom_form=QFormLayout(custom);custom_form.setContentsMargins(0,0,0,0)
+        for key,title in (('theme_accent','强调色'),('theme_surface','背景色'),('theme_ink','文字色')):
+            field=QLineEdit();field.setMaxLength(7);field.setPlaceholderText('#RRGGBB');field.setAccessibleName(title)
+            custom_form.addRow(title,field);self.fields[key]=field;self.field_tabs[key]=0;self.field_titles[key]=title
+            field.textChanged.connect(lambda text,key=key:self.edited(key))
+        self.theme_custom=custom;appearance.addRow(custom)
+        custom.hide()
+        themes.currentIndexChanged.connect(lambda:self.theme_custom.setVisible(themes.currentData()=='custom'))
         self.section(appearance,'显示内容',None)
         self.check(appearance,'panel_detached','面板与人物分别移动')
         for key,title in [('character_visible','显示人物'),('on_top','始终置顶'),('mouse_through','鼠标穿透（可从托盘恢复）'),('bubble','显示面板'),('quota_visible','显示额度和重置时间')]:
@@ -109,7 +131,7 @@ class SettingsDialog(QDialog):
         appearance.addRow('全屏时让位',self.fullscreen_mode);self.fields['fullscreen_yield_mode']=self.fullscreen_mode;self.field_tabs['fullscreen_yield_mode']=0;self.field_titles['fullscreen_yield_mode']='全屏时让位'
         self.fullscreen_mode.currentIndexChanged.connect(lambda:self.edited('fullscreen_yield_mode'))
         note=QLabel('只在桌宠所在屏幕被窗口真正全屏占用时生效。游戏和视频模式隐藏人物和面板，仅保留托盘额度环；不会因完成提醒重新置顶。浏览器、办公和系统窗口不会按游戏处理。')
-        note.setWordWrap(True);note.setStyleSheet(f'font-size:11px;color:{MUTED};');appearance.addRow(note)
+        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');appearance.addRow(note)
         self.section(appearance,'卡片与快捷入口','自动模式闲置后收为胶囊；手动选择胶囊或极简后不会因新状态自动展开。')
         self.mode=SlidingSegments([('自动','auto'),('胶囊','mini'),('极简','minimal')])
         appearance.addRow('卡片显示模式',self.mode);self.fields['bubble_mode']=self.mode;self.field_tabs['bubble_mode']=0;self.field_titles['bubble_mode']='卡片显示模式'
@@ -131,18 +153,21 @@ class SettingsDialog(QDialog):
         self.number(behavior,'scale','角色大小（倍）',.4,2.5,.1)
         self.check(behavior,'no_move','锁定人物位置（禁止拖动和自主走动）')
         self.check(behavior,'wandering','允许自主走动（不影响手动拖动）')
-        self.check(behavior,'wander_horizontal_only','自主走动仅水平')
-        self.number(behavior,'move_range','自主走动范围',.1,1,.1,factor=100,suffix='%')
+        self.roaming_button=QPushButton('走动设置  ›');self.roaming_button.setObjectName('open_roaming_settings');behavior.addRow(self.roaming_button)
+        set_theme_style(self.roaming_button,'QPushButton#open_roaming_settings{background:#e8dff0;color:#75618d;border:0;border-radius:7px;padding:6px 9px;}QPushButton#open_roaming_settings:hover{background:#ded2e7;}QPushButton#open_roaming_settings:pressed{background:#d6c5ed;}QPushButton#open_roaming_settings:disabled{background:#efebf2;color:#706879;}')
         self.check(behavior,'drag_physics','松手后惯性滑行与反弹')
+        self.check(behavior,'edge_docking','拖动贴边探头')
         self.section(behavior,'动作与声音','自动动作静音；只在你主动点击或手动播放时使用音效。')
         self.check(behavior,'random_actions','自动随机动作')
         self.check(behavior,'sound','主动点击人物或手动动作时播放音效')
         self.advanced_button=QPushButton('展开高级动作参数');self.advanced_button.setCheckable(True);behavior.addRow(self.advanced_button)
         advanced=QWidget();advanced_form=QFormLayout(advanced);advanced_form.setContentsMargins(0,0,0,0)
-        for key,title,lo,hi,step in [('playback_speed','播放速度（倍）',.25,3,.25),('action_gap','动作结束后等待（秒）',0,60,1),('random_interval','自主动作间隔（秒）',3,600,1),('move_speed','自主走动基础速度（像素/秒）',10,300,5)]:self.number(advanced_form,key,title,lo,hi,step)
+        for key,title,lo,hi,step in [('playback_speed','播放速度（倍）',.25,3,.25),('action_gap','动作结束后等待（秒）',0,60,1),('random_interval','自主动作间隔（秒）',3,600,1)]:self.number(advanced_form,key,title,lo,hi,step)
         self.advanced_card=AnimatedDisclosure(advanced);behavior.addRow(self.advanced_card)
         self.advanced_button.toggled.connect(self.advanced_card.set_expanded)
         self.advanced_button.toggled.connect(lambda checked:self.advanced_button.setText('收起高级动作参数' if checked else '展开高级动作参数'))
+        from roaming_editor import RoamingEditor
+        self.roaming_editor=RoamingEditor(self,self);self.roaming_button.clicked.connect(self.roaming_editor.open)
 
     def build_page_2(self):
         pet=self.pet
@@ -157,13 +182,13 @@ class SettingsDialog(QDialog):
         self.codex_startup=SwitchRow('随 Windows Codex 桌面端启动');connection.addRow(self.codex_startup)
         self.field_tabs['codex_startup']=self._building_index;self.field_titles['codex_startup']='随 Codex 启动'
         self.codex_startup.toggled.connect(lambda:self.edited('codex_startup'))
-        note=QLabel('登录时运行轻量监听；识别 Codex 桌面端，不依赖 Codex++。手动退出桌宠后，本次 Codex 使用期间不再拉起。可另行开启关闭联动。');note.setWordWrap(True);note.setStyleSheet(f'font-size:11px;color:{MUTED};');connection.addRow(note)
+        note=QLabel('登录时运行轻量监听；识别 Codex 桌面端，不依赖 Codex++。手动退出桌宠后，本次 Codex 使用期间不再拉起。可另行开启关闭联动。');note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');connection.addRow(note)
         self.check(connection,'codex_exit','Codex 桌面端关闭后退出桌宠（确认退出后约6秒）')
         self.section(connection,'状态与人物响应','面板持续更新，人物在安全边界切换；不会逐条打断动作。')
         self.check(connection,'commentary','显示 Codex 工作过程与回复摘要')
         self.check(connection,'status_actions','人物响应 Codex 状态')
         self.number(connection,'status_action_interval','单次状态动作最小间隔（秒）',8,120,1)
-        note=QLabel('思考/阅读和处理任务在状态稳定1.5秒后进入，保持中段循环，状态改变后自然收尾。其他动作完整播放并按间隔检查。完成消息立即提醒，庆祝等待安全边界。');note.setWordWrap(True);note.setStyleSheet('font-size:11px;color:#706879;');connection.addRow(note)
+        note=QLabel('思考/阅读和处理任务在状态稳定1.5秒后进入，保持中段循环，状态改变后自然收尾。其他动作完整播放并按间隔检查。完成消息立即提醒，庆祝等待安全边界。');note.setWordWrap(True);set_theme_style(note,'font-size:11px;color:#706879;');connection.addRow(note)
 
         self.section(connection,'Codex 连接健康','各项独立检测；失败不会当作已读、零额度或零用量。')
         self.connection_button=QPushButton('检测连接与额度');self.connection_button.setProperty('role','primary');self.connection_button.clicked.connect(self.check_connection);connection.addRow(self.connection_button)
@@ -192,13 +217,13 @@ class SettingsDialog(QDialog):
         for key,title,hint in [('wsl_user','Linux 用户','留空使用默认用户'),('wsl_home','Linux 数据目录','留空识别 CODEX_HOME'),('wsl_cli','Linux CLI 路径','留空自动识别 codex')]:
             field=QLineEdit(saved.get(key,''));field.setPlaceholderText(hint);field.setAccessibleName(title);self.wsl_fields[key]=field;wsl_form.addRow(title,field)
         paths.addRow(self.wsl_body)
-        self.active_path=QLabel('当前生效目录：'+str(data_home()));self.active_path.setWordWrap(True);self.active_path.setStyleSheet(f'font-size:11px;color:{MUTED};');paths.addRow(self.active_path)
-        note=QLabel('保存后重启桌宠生效。WSL 验证会启动所选发行版；使用 Linux 登录，Windows 数据独立保留。');note.setWordWrap(True);note.setStyleSheet(f'font-size:11px;color:{MUTED};');paths.addRow(note)
+        self.active_path=QLabel('当前生效目录：'+str(data_home()));self.active_path.setWordWrap(True);set_theme_style(self.active_path,f'font-size:11px;color:{MUTED};');paths.addRow(self.active_path)
+        note=QLabel('保存后重启桌宠生效。WSL 验证会启动所选发行版；使用 Linux 登录，Windows 数据独立保留。');note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');paths.addRow(note)
         row=QWidget();layout=QHBoxLayout(row);layout.setContentsMargins(0,0,0,0)
         self.save_paths_button=QPushButton('验证并保存路径');self.save_paths_button.clicked.connect(self.validate_paths);layout.addWidget(self.save_paths_button)
         reset=QPushButton('改为自动识别');reset.clicked.connect(self.clear_paths);layout.addWidget(reset);paths.addRow(row)
         self.path_status=QLabel();self.path_status.setWordWrap(True);paths.addRow(self.path_status)
-        self.connection_text=QPlainTextEdit();self.connection_text.setReadOnly(True);self.connection_text.setMaximumHeight(140);self.connection_text.setAccessibleName('最近一次连接检测报告')
+        self.connection_text=hide_scrollbars(QPlainTextEdit());self.connection_text.setReadOnly(True);self.connection_text.setMaximumHeight(140);self.connection_text.setAccessibleName('最近一次连接检测报告')
         self.connection_text.setPlainText('点击“检测连接与额度”生成只读报告；不会发送对话或消耗 Token。');paths.addRow(self.connection_text)
         self.paths_card=AnimatedDisclosure(path_body);connection.addRow(self.paths_card);self.path_toggle.toggled.connect(self.paths_card.set_expanded)
         self.path_source.currentIndexChanged.connect(self.path_source_changed);self.path_source_changed()
@@ -229,28 +254,33 @@ class SettingsDialog(QDialog):
         self.check(chat,'self_talk','启用自动台词')
         self.check(chat,'talk_quiet','Codex 工作时不自言自语')
         self.number(chat,'talk_min','台词最短间隔（秒）',5,3600,5);self.number(chat,'talk_max','台词最长间隔（秒）',5,7200,5)
-        self.lines=QPlainTextEdit();self.lines.setMaximumHeight(100);self.lines.setPlaceholderText('每行一句，自动台词不会播放声音');chat.addRow('自定义台词',self.lines)
+        self.lines=hide_scrollbars(QPlainTextEdit());self.lines.setMaximumHeight(100);self.lines.setPlaceholderText('每行一句，自动台词不会播放声音');chat.addRow('自定义台词',self.lines)
         self.field_tabs['talk_lines']=self._building_index;self.field_titles['talk_lines']='自定义台词';self.lines.textChanged.connect(lambda:self.edited('talk_lines'))
 
     def build_page_5(self):
+        """按平台显示更新与安装维护能力，用户数据操作保持可用"""
+        from app_updates import program_updates_supported
         pet=self.pet
+        program_supported=program_updates_supported()
         maintenance=self.tab('更新与维护')
-        self.section(maintenance,'软件更新','检查 GitHub 公开稳定版；下载和安装由你主动发起。')
-        self.check(maintenance,'update_checks','自动检查更新（不自动下载）')
+        self.section(maintenance,'软件更新' if program_supported else '动画更新','检查 GitHub 公开稳定版；下载和安装由你主动发起。' if program_supported else '只检查兼容的动画补丁；程序需手动更新。')
+        if program_supported:self.check(maintenance,'update_checks','自动检查更新（不自动下载）')
         if hasattr(pet,'updates'):
             from update_widgets import UpdatePanel
             self.update_panel=UpdatePanel(pet.updates);maintenance.addRow(self.update_panel)
         self.section(maintenance,'诊断与数据','维护操作立即执行；不属于设置草稿。')
-        if hasattr(pet,'open_install_manager'):
+        if program_supported and hasattr(pet,'open_install_manager'):
             button=QPushButton('程序位置与安装管理');button.clicked.connect(pet.open_install_manager);maintenance.addRow(button)
-        for title,slot in [('打开配置与聊天记录目录',pet.open_data),('导出诊断报告（不含对话和密钥）',pet.export_diagnostics),('备份设置（不含密钥与对话）',pet.backup_settings),('恢复设置备份',pet.restore_settings),('清理历史版本与备份（先预览）',pet.cleanup_installations)]:
+        actions=[('打开配置与聊天记录目录',pet.open_data),('导出诊断报告（不含对话和密钥）',pet.export_diagnostics),('备份设置（不含密钥与对话）',pet.backup_settings),('恢复设置备份',pet.restore_settings)]
+        if program_supported:actions.append(('清理历史版本与备份（先预览）',pet.cleanup_installations))
+        for title,slot in actions:
             button=QPushButton(title);button.clicked.connect(slot);maintenance.addRow(button)
         maintenance.addRow(QLabel('当前版本 '+VERSION))
 
     def section(self,form,title,note):
-        name=QLabel(title);name.setStyleSheet(f'font-size:13px;font-weight:500;color:{PRIMARY};background:transparent;padding:2px;margin-top:10px;');form.addRow(name)
+        name=QLabel(title);set_theme_style(name,f'font-size:13px;font-weight:500;color:{PRIMARY};background:transparent;padding:2px;margin-top:10px;');form.addRow(name)
         if note:
-            label=QLabel(note);label.setWordWrap(True);label.setStyleSheet(f'font-size:11px;color:{MUTED};margin-bottom:3px;');form.addRow(label)
+            label=QLabel(note);label.setWordWrap(True);set_theme_style(label,f'font-size:11px;color:{MUTED};margin-bottom:3px;');form.addRow(label)
     def choose_path(self,key):
         if key=='home':value=QFileDialog.getExistingDirectory(self,'选择 Codex 数据目录',self.path_fields[key].text())
         else:value,_=QFileDialog.getOpenFileName(self,'选择 Codex CLI（不是桌面主程序）',self.path_fields[key].text(),'程序 (*.exe);;所有文件 (*)')
@@ -301,12 +331,11 @@ class SettingsDialog(QDialog):
         if title in self._page_forms:return self._page_forms[title]
         widget=QWidget();form=QFormLayout(widget);form.setVerticalSpacing(5);form.setHorizontalSpacing(12);form.setContentsMargins(9,3,9,10)
         if self.embedded:
-            widget.setObjectName('settings_category');widget.setStyleSheet('QWidget#settings_category{background:#f5f2f7;}')
+            widget.setObjectName('settings_category');set_theme_style(widget,'QWidget#settings_category{background:#f5f2f7;}')
             form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            area=QScrollArea();area.setWidgetResizable(True)
-            area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-            # Reserve the gutter so opening a disclosure cannot rewrap its body.
-            area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn);area.setWidget(widget)
+            area=hide_scrollbars(QScrollArea());area.setWidgetResizable(True)
+            # A permanently hidden bar also keeps disclosure viewport width stable.
+            area.setWidget(widget)
             bar=area.verticalScrollBar();bar.setSingleStep(32)
             bar.rangeChanged.connect(lambda low,high,b=bar:b.setEnabled(high>low))
             index=self.tabs.addTab(area,{'面板与显示':'面板','人物与动作':'人物','Codex 联动':'Codex','角色与素材':'素材','闲聊与台词':'闲聊','更新与维护':'维护'}.get(title,title))
@@ -316,7 +345,7 @@ class SettingsDialog(QDialog):
         return form
     def dismiss(self):
         if self.embedded:self.pet.bubble.return_to_status()
-        else:self.hide()
+        else:self.end_theme_preview();self.hide()
     def keyPressEvent(self,event):
         if self.embedded and event.key()==Qt.Key.Key_Escape:self.dismiss();event.accept();return
         super().keyPressEvent(event)
@@ -330,8 +359,9 @@ class SettingsDialog(QDialog):
     def fill(self,settings):
         self._writing_widgets=True
         for key,widget in self.fields.items():
-            if isinstance(widget,QCheckBox):widget.setChecked(settings.get(key,DEFAULTS[key]))
-            elif isinstance(widget,(QComboBox,SlidingSegments)):widget.setCurrentIndex(widget.findData(settings.get(key,DEFAULTS[key])))
+            if key=='wander_zone':widget.setValue(settings.get(key,DEFAULTS[key]))
+            elif isinstance(widget,QCheckBox):widget.setChecked(settings.get(key,DEFAULTS[key]))
+            elif isinstance(widget,(QComboBox,SlidingSegments,ThemeChoices)):widget.setCurrentIndex(widget.findData(settings.get(key,DEFAULTS[key])))
             elif isinstance(widget,QLineEdit):widget.setText(settings.get(key,DEFAULTS[key]))
             else:widget.setValue(settings.get(key,DEFAULTS[key])*self.factors.get(key,1))
         if hasattr(self,'lines'):
@@ -340,6 +370,9 @@ class SettingsDialog(QDialog):
             if current!=settings.get('talk_lines',DEFAULTS['talk_lines']):self.lines.setPlainText(lines)
         if hasattr(self,'startup'):self.startup.setChecked(bool(settings.get('startup',False)))
         if hasattr(self,'codex_startup'):self.codex_startup.setChecked(bool(settings.get('codex_startup',False)))
+        self.theme_custom.setVisible(settings.get('theme','bailong')=='custom')
+        self.fields['theme'].setCustomColors(settings)
+        if hasattr(self,'roaming_editor'):self.roaming_editor.refresh()
         self._writing_widgets=False
     def values_from_pet(self,read_startup=False):
         values={key:copy.deepcopy(self.pet.settings.get(key,DEFAULTS[key])) for key in DEFAULTS}
@@ -350,24 +383,52 @@ class SettingsDialog(QDialog):
             except OSError:self.status.setText('开机启动状态读取失败；其他设置仍可修改。')
         return values
     def reload(self):
+        if hasattr(self.pet,'preview_theme'):self.pet.preview_theme(None)
         self.status.clear();values=self.values_from_pet(read_startup=True);values.setdefault('startup',False)
         self.draft=SettingsDraft(values);self.fill(self.draft.values);self.refresh_library();self.update_draft_state()
     def sync_from_pet(self,changes=None,read_startup=False):
         if self.draft is None:return
         self.draft.rebase(self.values_from_pet(read_startup));self.fill(self.draft.values);self.update_draft_state()
+        if self.pet.bubble.panel_page=='settings' and not self._saving:self.preview_theme_draft()
+
+    def preview_theme_draft(self):
+        from theme_registry import THEME_KEYS,valid_hex
+        self.fields['theme'].setCustomColors(self.draft.values)
+        if not any(k in self.draft.dirty for k in THEME_KEYS):
+            if getattr(self.pet,'_theme_preview',None) is not None:self.pet.preview_theme(None)
+            return
+        if self.draft.values['theme']=='custom' and not all(valid_hex(self.draft.values[k]) for k in THEME_KEYS[1:]):return
+        try:self.pet.preview_theme(self.draft.values)
+        except ValueError as error:self.status.setText(str(error))
+
+    def end_theme_preview(self):
+        if self._saving:return
+        from theme_registry import THEME_KEYS
+        if self.draft is not None:
+            for key in THEME_KEYS:
+                value=copy.deepcopy(self.pet.settings[key]);self.draft.set(key,value);self.draft.baseline[key]=copy.deepcopy(value)
+            self.fill(self.draft.values);self.update_draft_state()
+        if hasattr(self.pet,'preview_theme'):self.pet.preview_theme(None,within_transition=self.pet.bubble.size_transition.preparing)
     def edited(self,key):
         if self._writing_widgets or self.draft is None:return
         if key=='startup':value=self.startup.isChecked()
         elif key=='codex_startup':value=self.codex_startup.isChecked()
         elif key=='talk_lines':value=[line.strip() for line in self.lines.toPlainText().splitlines() if line.strip()]
+        elif key=='wander_zone':value=self.fields[key].value()
         else:
-            widget=self.fields[key];value=widget.isChecked() if isinstance(widget,QCheckBox) else widget.currentData() if isinstance(widget,(QComboBox,SlidingSegments)) else widget.text() if isinstance(widget,QLineEdit) else widget.value()/self.factors.get(key,1)
+            widget=self.fields[key];value=widget.isChecked() if isinstance(widget,QCheckBox) else widget.currentData() if isinstance(widget,(QComboBox,SlidingSegments,ThemeChoices)) else widget.text() if isinstance(widget,QLineEdit) else widget.value()/self.factors.get(key,1)
         self.draft.set(key,value);self.status.clear();self.update_draft_state()
+        from theme_registry import THEME_KEYS
+        if key in THEME_KEYS:self.preview_theme_draft()
     def update_draft_state(self,*args):
         if self.draft is None:return
         self.website.setEnabled(self.shortcut.currentData()=='website')
         count=len(self.draft.dirty);self.apply_button.setEnabled(bool(count));self.discard_button.setEnabled(bool(count))
-        text=f'{count} 项未保存，Ctrl+S 应用' if count else '设置已保存'
+        if hasattr(self,'roaming_editor'):
+            self.roaming_editor.save.setEnabled(bool(count));self.roaming_editor.discard.setEnabled(bool(count))
+        from theme_registry import THEME_KEYS
+        theme_only=bool(self.draft.dirty) and self.draft.dirty.issubset(THEME_KEYS)
+        text='主题预览，Ctrl+S 保存' if theme_only else f'{count} 项未保存，Ctrl+S 保存' if count else '设置已保存'
         if self.draft.conflicts:
             names='、'.join(self.field_titles[k] for k in sorted(self.draft.conflicts))
             text+='\n外部也修改了：'+names+'。应用将采用此处草稿；放弃修改将采用当前值。'
@@ -377,7 +438,9 @@ class SettingsDialog(QDialog):
             locked=self.fields['no_move'].isChecked()
             walking=self.fields['wandering'].isChecked() and not locked
             for key in ('wandering','drag_physics'):self.fields[key].setEnabled(not locked)
-            for key in ('wander_horizontal_only','move_speed','move_range'):self.fields[key].setEnabled(walking)
+            if 'edge_docking' in self.fields:self.fields['edge_docking'].setEnabled(not locked and not getattr(self.pet,'_materials_missing',False) and self.pet.settings.get('character_visible',True))
+            for key in ('wander_horizontal_only','move_speed','move_range','wander_mode','wander_side','wander_zone'):self.fields[key].setEnabled(walking)
+            self.roaming_button.setEnabled(walking)
         if 'status_actions' in self.fields:self.fields['status_action_interval'].setEnabled(self.fields['status_actions'].isChecked())
         if 'self_talk' in self.fields:
             talking=self.fields['self_talk'].isChecked()
@@ -386,16 +449,18 @@ class SettingsDialog(QDialog):
     def defaults(self):
         for key,tab in self.field_tabs.items():
             if tab==self.tabs.currentIndex() and key in DEFAULTS:self.draft.set(key,DEFAULTS[key])
-        self.fill(self.draft.values);self.update_draft_state();self.status.setText('已载入本页默认值，应用后生效；不影响启动登记、角色资源及聊天服务。')
+        self.fill(self.draft.values);self.update_draft_state();self.preview_theme_draft();self.status.setText('已载入本页默认值，保存后保留。')
     def apply(self):
         values=self.draft.changes();startup=values.pop('startup',None);codex_startup=values.pop('codex_startup',None);messages=[]
         if values:
             try:
+                self._saving=True
                 self.pet.apply_settings(values)
                 for key in values:
                     self.draft.values[key]=copy.deepcopy(self.pet.settings[key]);self.draft.baseline[key]=copy.deepcopy(self.pet.settings[key]);self.draft.conflicts.discard(key)
                 messages.append('桌宠设置已保存。')
             except (OSError,ValueError) as error:messages.append('桌宠设置保存失败：'+str(error))
+            finally:self._saving=False
         if startup is not None:
             try:set_autostart(startup);self.draft.rebase({'startup':startup});messages.append('开机启动已保存。')
             except OSError as error:messages.append('开机启动保存失败：'+str(error)+'；可单独重试。')
@@ -451,4 +516,4 @@ class SettingsDialog(QDialog):
         try:atomic_json(path,report);note='\n\n报告已保存：'+str(path)
         except OSError:note='\n\n报告文件保存失败；检测结果仍可查看。'
         self.connection_text.setPlainText(report.get('summary','检查完成')+note)
-    def closeEvent(self,event):self.hide();event.ignore()
+    def closeEvent(self,event):self.end_theme_preview();self.hide();event.ignore()

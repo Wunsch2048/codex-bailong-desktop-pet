@@ -88,7 +88,8 @@ def cli_command(executable,*args):
     return [executable,*args]
 
 def child_environment():
-    env=dict(os.environ)
+    from process_launch import external_environment
+    env=external_environment()
     if is_wsl_source():env.pop('CODEX_HOME',None)
     else:env['CODEX_HOME']=str(data_home())
     return env
@@ -169,7 +170,7 @@ def check_connection(query_quota=True,cancel=None):
         report['session_log_found']=False;report['capabilities'].update(tasks=sample('unavailable','logs_unreadable'),completion=sample('unavailable','logs_unreadable'))
     if query_quota and report['cli_found']:
         try:
-            report['quota_windows']=quota_windows(read_quota(timeout=10,cancel=cancel,attempts=1,log_path=False),allow_empty=True);report['quota_read']=True
+            report['quota_windows']=quota_windows(read_quota(timeout=10,cancel=cancel,attempts=1,log_path=False,manual=True),allow_empty=True);report['quota_read']=True
             known=any(isinstance(w.get('remaining'),(int,float)) for w in report['quota_windows'])
             report['capabilities']['quota']=sample('available' if known else 'degraded','ok' if known else 'quota_unknown' if report['quota_windows'] else 'no_windows',time.time())
         except Exception as error:

@@ -1,4 +1,5 @@
 """Single-arc refresh action; repaint only its small vector while visible."""
+from theme_registry import color as theme_color
 import math
 import time
 from PySide6.QtCore import Qt,QPointF,QRectF,QTimer
@@ -37,6 +38,8 @@ class RefreshButton(QToolButton):
         self.setEnabled(True);self._sync();self.update()
 
     def pose(self):
+        from settings_controls import motion_enabled
+        if not motion_enabled():return (0.,1.,0.,1.) if self.result is not None else (0.,1.,1.,0.)
         now=self._motion_now()
         if self.busy:
             t=max(0.,now-self.started)
@@ -56,13 +59,16 @@ class RefreshButton(QToolButton):
     def _sync(self):
         if self.finished_at is not None and self._motion_now()-self.finished_at>=BRAKE_SECONDS+FEEDBACK_SECONDS+RESTORE_SECONDS:
             self.finished_at=None;self.result=None
-        running=self.isVisible() and not self._motion_holds and (self.busy or self.finished_at is not None)
+        from settings_controls import motion_enabled
+        running=motion_enabled() and self.isVisible() and not self._motion_holds and (self.busy or self.finished_at is not None)
         if running and not self.timer.isActive():self.timer.start()
         elif not running:self.timer.stop()
 
     def _tick(self):
         self._sync()
         if self.updatesEnabled():self.update()
+
+    def motion_policy_changed(self):self._sync();self.update()
 
     def freeze_motion(self,reason='surface'):
         if not self._motion_holds:self._hidden_at=self.clock()
@@ -88,24 +94,23 @@ class RefreshButton(QToolButton):
         size=min(18,self.iconSize().width(),self.width()-6,self.height()-6)
         p.translate(self.width()/2,self.height()/2)
         if self.isDown():p.scale(.92,.92)
-        p.scale(size/18,size/18)
+        p.scale(size/16,size/16)
         angle,scale,arrow_alpha,result_alpha=self.pose()
         p.setBrush(Qt.BrushStyle.NoBrush)
-        p.setPen(QPen(QColor('#927aaf'),1.65,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
+        p.setPen(QPen(QColor(theme_color('#75618d')),1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
         if arrow_alpha>.001:
-            p.save();p.setOpacity(arrow_alpha);p.rotate(angle);p.scale(scale,scale);p.translate(-9,-9)
-            path=QPainterPath(QPointF(15,9))
-            path.cubicTo(15,12.3,12.3,15,9,15);path.cubicTo(5.7,15,3,12.3,3,9)
-            path.cubicTo(3,5.7,5.7,3,9,3);path.cubicTo(11.2,3,13.2,4.1,14.4,5.9)
+            p.save();p.setOpacity(arrow_alpha);p.rotate(angle);p.scale(scale,scale);p.translate(-8,-8)
+            path=QPainterPath(QPointF(13,4))
+            path.cubicTo(8,-.5,1.3,3.6,2.5,9.4);path.cubicTo(3.8,15.6,12.2,16,14,11)
             p.drawPath(path)
-            head=QPainterPath(QPointF(14.4,2.5));head.lineTo(14.4,6);head.lineTo(10.9,6);p.drawPath(head)
+            head=QPainterPath(QPointF(13,1));head.lineTo(13,5);head.lineTo(9,5);p.drawPath(head)
             p.restore()
         if result_alpha>.001:
-            p.setOpacity(result_alpha);p.translate(-9,-9)
+            p.setOpacity(result_alpha);p.translate(-8,-8)
             if self.result is True:
-                path=QPainterPath(QPointF(4,9));path.lineTo(7.4,12.3);path.lineTo(14,5.7);p.drawPath(path)
+                path=QPainterPath(QPointF(3,8));path.lineTo(6.4,11.3);path.lineTo(13,4.7);p.drawPath(path)
             else:
-                color=QColor('#9b7b4c' if self.result=='partial' else '#915e74')
+                color=QColor(theme_color('#9b7b4c' if self.result=='partial' else '#915e74'))
                 p.setPen(QPen(color,1.65,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
-                p.drawLine(QPointF(9,4),QPointF(9,10))
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(color);p.drawEllipse(QRectF(8.1,12.5,1.8,1.8))
+                p.drawLine(QPointF(8,3),QPointF(8,9))
+                p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(color));p.drawEllipse(QRectF(7.1,11.5,1.8,1.8))

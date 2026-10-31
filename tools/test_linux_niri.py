@@ -27,6 +27,18 @@ class LayoutTests(unittest.TestCase):
 
 class DragTests(unittest.TestCase):
     """全局坐标突变不得进入原来的位移累计路径"""
+    def test_docking_and_roaming_read_the_confirmed_output(self):
+        """Qt 屏幕信号尚未切换时，贴边判断使用布局所属输出"""
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from desktop import DesktopPet
+        from linux_app.niri import install
+        screen = object()
+        pet = SimpleNamespace(_niri_windows=SimpleNamespace(actual_screen=lambda: screen))
+        with ExitStack() as stack:
+            install(stack)
+            self.assertIs(DesktopPet.screen(pet), screen)
+
     def test_missing_drag_layout_retains_last_global_origin(self):
         """跨屏原生拖动缺少布局坐标时不能退回零点，松手后使用新坐标"""
         from contextlib import ExitStack
@@ -103,8 +115,8 @@ class DragTests(unittest.TestCase):
         pet = SimpleNamespace(_niri_windows=SimpleNamespace(surfaces=SimpleNamespace(begin_pet_drag=Mock()), opacity=SimpleNamespace(setOpacity=Mock()), reveal=SimpleNamespace(stop=Mock()), save_timer=SimpleNamespace(stop=Mock())), settings={}, _pointer_pressed=True, _niri_press=QPoint(10, 10),
                               windowHandle=lambda: handle, click_timer=SimpleNamespace(stop=Mock()),
                               last_click=1, drag_samples=[1], generation=0, gate=SimpleNamespace(state='idle'),
-                              bubble_timer=SimpleNamespace(stop=Mock()), bubble=SimpleNamespace(hide=Mock(), size_transition=SimpleNamespace(cancel=Mock())),
-                              play=Mock(), manifest={'dragAnimation': 'drag'}, idles=['idle'])
+                              bubble_timer=SimpleNamespace(stop=Mock()), bubble=SimpleNamespace(hide=Mock(), size_transition=SimpleNamespace(running=False)),
+                              begin_drag_panel=Mock(), play=Mock(), manifest={'dragAnimation': 'drag'}, idles=['idle'])
         original = DesktopPet.mouseMoveEvent
         with ExitStack() as stack:
             install(stack)
@@ -116,7 +128,7 @@ class DragTests(unittest.TestCase):
             self.assertTrue(pet._niri_drag)
             pet._niri_windows.save_timer.stop.assert_called_once_with()
             pet.play.assert_called_once_with('drag', 'drag')
-            pet.bubble.size_transition.cancel.assert_called_once()
+            pet.begin_drag_panel.assert_called_once_with()
             pet._niri_windows.surfaces.begin_pet_drag.assert_called_once()
             pet.settings['no_move'] = True
             DesktopPet.mouseMoveEvent(pet, event)

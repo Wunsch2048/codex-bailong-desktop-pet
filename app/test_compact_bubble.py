@@ -40,12 +40,12 @@ class BubbleTests(unittest.TestCase):
         self.bubble.reset_snapshot={'scheduled':None};self.bubble.redraw();settle()
         self.assertEqual(len([d for d in self.bubble.findChildren(QuotaSummary) if d.isVisible()]),1)
         self.assertEqual(len([d for d in self.bubble.findChildren(TokenChartCard) if d.isVisible()]),1)
-        self.assertEqual((self.bubble.width(),self.bubble.height()),(268,188))
+        self.assertEqual((self.bubble.width(),self.bubble.height()),(268,186))
     def test_two_quotas_keep_exact_values_and_distinct_reset_times(self):
         now=time.time();self.bubble.windows=[dict(name='5小时',remaining=0,resetsAt=now+3600),dict(name='一周',remaining=100,resetsAt=None)]
         self.bubble.redraw();settle();cards=[d for d in self.bubble.findChildren(QuotaSummary) if d.isVisible()]
         self.assertEqual(len(cards),1);self.assertEqual([w['remaining'] for w in cards[0].items],[0,100]);self.assertIn('重置时间未知',cards[0].accessibleDescription())
-        self.assertIn('北京时间',cards[0].accessibleDescription());self.assertEqual(self.bubble.height(),188)
+        self.assertIn('北京时间',cards[0].accessibleDescription());self.assertEqual(self.bubble.height(),186)
     def test_expanded_view_preserves_full_message_and_stale_explanation(self):
         text='长状态消息，包含完整工作进度和执行结果。'*10
         self.bubble.status=text;self.bubble.quota_caption='接口暂不可用 · 下方为上次记录';self.bubble.reset_feed_error=True
@@ -97,7 +97,7 @@ class BubbleTests(unittest.TestCase):
         item=dict(id='notice',announced=100,scheduled=190,reset_type='regular')
         self.bubble.reset_snapshot={'pending':item};self.bubble.redraw();settle()
         self.assertEqual(self.bubble.dashboard_page,'reset')
-        self.bubble.reset_snapshot=dict(self.bubble.reset_snapshot,local_reset={'schedule':schedule_key(item),'observed':200})
+        self.bubble.reset_snapshot=dict(self.bubble.reset_snapshot,local_reset={'schedule':schedule_key(item),'observed':200,'window':'一周','kind':'extra','scope':'account_only'})
         self.bubble.redraw();settle();self.assertEqual(self.bubble.dashboard_page,'tokens')
         self.visible_button('card_reset').click();settle();self.assertEqual(self.bubble.dashboard_page,'reset')
         self.bubble.redraw();settle();self.assertEqual(self.bubble.dashboard_page,'reset')
@@ -118,13 +118,13 @@ class BubbleTests(unittest.TestCase):
         self.bubble.select_token_range('day');self.bubble.message('状态更新');self.bubble.redraw()
         self.visible_button('card_reset').click();self.visible_button('card_tokens').click()
         chart=next(d for d in self.bubble.findChildren(TokenChartCard) if d.isVisible())
-        self.assertEqual(chart.period,'day');self.assertEqual(self.bubble.height(),188)
+        self.assertEqual(chart.period,'day');self.assertEqual(self.bubble.height(),186)
     def test_dense_reset_preserves_full_announcement_in_tooltip_and_expanded_details(self):
         text='这是完整公告，预计会陆续完成，不应在缩小卡片时丢失。'*4
         item=dict(id='dense',announced=time.time(),scheduled=None,reset_type='regular',text=text)
         self.bubble.reset_snapshot={'pending':item};self.bubble.redraw();settle()
         announcement=next(w for w in self.bubble.findChildren(Announcement) if w.isVisible())
-        self.assertIn(text,announcement.toolTip());self.assertEqual(self.bubble.height(),188)
+        self.assertIn(text,announcement.toolTip());self.assertEqual(self.bubble.height(),186)
         self.bubble.toggle_details();settle();self.bubble.details_tabs.setCurrentIndex(2)
         self.assertIn(text,[w.text() for w in self.bubble.findChildren(QLabel) if w.isVisible()])
     def test_all_shortcut_buttons_fit_inside_compact_bubble_on_both_cards(self):
@@ -135,6 +135,6 @@ class BubbleTests(unittest.TestCase):
                 point=button.mapTo(self.bubble,QPoint(0,0))
                 self.assertGreaterEqual(point.x(),0);self.assertGreaterEqual(point.y(),0)
                 self.assertLessEqual(point.x()+button.width(),self.bubble.width());self.assertLessEqual(point.y()+button.height(),self.bubble.height())
-            self.assertEqual(self.bubble.height(),188)
+            self.assertEqual(self.bubble.height(),186)
 
 if __name__=='__main__':unittest.main()

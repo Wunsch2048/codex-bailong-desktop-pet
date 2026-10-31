@@ -68,7 +68,7 @@ def prepare_state(state):
         if not getattr(sys, 'frozen', False) and (legacy / 'settings.json').exists():
             values = json.loads((legacy / 'settings.json').read_text())
         else:
-            values = dict(schema=2, character_visible=True, bubble=True, wandering=False,
+            values = dict(schema=2, character_visible=True, bubble=True, wandering=True,
                           random_actions=True, commentary=True, sound=False)
         atomic_json(settings, values)
     store = MaterialStore(ROOT, state)
@@ -107,12 +107,6 @@ def create_pet(stack, args):
     if pet._tray_shell_enabled:
         pet.tray.show()
     pet.apply_settings(dict(sound=False), save=False)
-    # 旧入口曾强制关闭这两项，仅迁移一次，后续尊重用户保存的开关
-    if not pet.settings.get('linux_behaviors_ready'):
-        pet.apply_settings(dict(random_actions=True, commentary=True, linux_behaviors_ready=True), save=True)
-    # 仅迁移曾被 Linux 入口强制关闭的自由走动，之后尊重用户暂停设置
-    if not pet.settings.get('linux_wandering_ready'):
-        pet.apply_settings(dict(wandering=True, linux_wandering_ready=True), save=True)
     pet.setWindowTitle('白龙桌宠 Linux')
     pet.bubble.setWindowTitle('白龙桌宠 Linux 状态')
     if args.desktop == 'kde':

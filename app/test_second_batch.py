@@ -104,7 +104,7 @@ class VisualInteractionTests(unittest.TestCase):
         b=self.pet.bubble;b.set_mode('auto');journeys.settle(self.pet);targets=[]
         for name in ('bubble_refresh_all','bubble_report','bubble_compact','bubble_details'):
             button=next(w for w in b.findChildren(QToolButton) if w.objectName()==name and w.isVisible())
-            self.assertEqual(button.width(),28);self.assertEqual(button.height(),28);self.assertFalse(button.text());self.assertTrue(button.accessibleName())
+            self.assertEqual(button.width(),26);self.assertEqual(button.height(),26);self.assertFalse(button.text());self.assertTrue(button.accessibleName())
             rect=QRect(button.mapToGlobal(QPoint()),button.size());self.assertTrue(QRect(b.mapToGlobal(QPoint()),b.size()).contains(rect));targets.append(rect)
             self.assertEqual(button.focusPolicy(),Qt.FocusPolicy.NoFocus)
         for i,a in enumerate(targets):
@@ -132,7 +132,7 @@ class VisualInteractionTests(unittest.TestCase):
         with patch('codex_connection.save_paths') as save:s.paths_done(dict(home='old-value',cli=''));save.assert_not_called()
         self.assertIn('未保存',s.path_status.text())
     def test_model_filter_explains_denominator_and_clear_preserves_plot(self):
-        self.pet.open_report();r=self.pet.bubble.report;r.set_snapshot(report_sample());r.animation.setCurrentTime(r.animation.duration());APP.processEvents();r.set_page('models');APP.processEvents()
+        self.pet.open_report();r=self.pet.bubble.report;r.set_snapshot(report_sample());journeys.settle(self.pet);r.animation.setCurrentTime(r.animation.duration());APP.processEvents();self.assertTrue(r.isVisible());r.set_page('models');APP.processEvents()
         plot=r.plot;series=r._series();model=series['models'][0]['model'];r.select_model(model)
         self.assertIn(model,r.filter_label.text());self.assertTrue(r.clear_filter.isVisible())
         self.assertEqual(r.model_rows[0].total,series['total']);self.assertTrue(r.model_rows[0].isChecked())

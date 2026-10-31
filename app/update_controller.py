@@ -1,5 +1,6 @@
 """One background update operation, explicit installation, and silent periodic checks."""
 import threading,time
+import app_updates
 from PySide6.QtCore import QObject,QThread,QTimer,Signal
 from app_updates import check_release,stage_installer,version_tuple,prune_completed,UpdateError,UpdateCancelled,NoRelease,ensure_checksum
 
@@ -8,10 +9,13 @@ class UpdateJob(QThread):
     def __init__(self,current,cache,release=None,parent=None,program_version=None):
         super().__init__(parent);self.current=current;self.cache=cache;self.release=release;self.cancel=threading.Event();self.program_version=program_version or current
     def run(self):
+        """后台检查与暂存按当前平台筛选，程序包不能经动画路径安装"""
         try:
             if self.release is None:
-                prune_completed(self.cache,self.current);value=check_release(self.current,cancel=self.cancel.is_set,state_dir=self.cache.parent,program_version=self.program_version)
+                prune_completed(self.cache,self.current);value=check_release(self.current,cancel=self.cancel.is_set,state_dir=self.cache.parent,program_version=self.program_version,allow_program=app_updates.program_updates_supported())
             else:
+                if self.release.kind!='animation' and not app_updates.program_updates_supported():raise UpdateError('当前平台不支持 Windows 程序更新，请手动更新程序')
+                if self.release.kind=='animation' and version_tuple(self.program_version)<version_tuple(self.release.minimum_program_version):raise UpdateError('请先手动更新程序，再安装此动画补丁')
                 last=[0.,None]
                 def progress(n,total,phase):
                     now=time.monotonic()
@@ -45,7 +49,7 @@ class UpdateController(QObject):
         from animation_updates import effective_version
         super().__init__(parent);self.program_version=current;self.current=effective_version(current,cache.parent);self.cache=cache;self.allow_auto=allow_auto;self.release=None;self.job=None;self.closing=False;self.enabled=False;self.install_requested=False
         current=self.current
-        self.state=dict(phase='idle',message='点击检查 GitHub 公开稳定版',current=current,latest='',notes='',downloaded=0,total=0,checked=0)
+        self.state=dict(phase='idle',message='点击检查 GitHub 公开稳定版' if app_updates.program_updates_supported() else '点击检查可用的动画补丁',program_supported=app_updates.program_updates_supported(),current=current,latest='',notes='',downloaded=0,total=0,checked=0)
         self.timer=QTimer(self);self.timer.setInterval(6*3600*1000);self.timer.timeout.connect(self._automatic)
         self.initial=QTimer(self);self.initial.setSingleShot(True);self.initial.setInterval(15000);self.initial.timeout.connect(self._automatic)
         self.cleanup_timer=QTimer(self);self.cleanup_timer.setSingleShot(True);self.cleanup_timer.setInterval(60000);self.cleanup_timer.timeout.connect(self.cleanup)
@@ -70,15 +74,22 @@ class UpdateController(QObject):
         self.publish(phase='checking',message='正在检查公开稳定版…')
         self._bind(UpdateJob(self.current,self.cache,parent=self,program_version=self.program_version));return True
     def download_install(self):
+        """只为当前平台可安装的附件启动下载，自动检查开关不代替平台限制"""
         if self.closing or self.job is not None or self.state['phase']=='pending' or self.release is None or version_tuple(self.release.version)<=version_tuple(self.current):return False
+        if self.release.kind!='animation' and not app_updates.program_updates_supported():
+            self.install_failed('当前平台不支持 Windows 程序更新，请手动更新程序');return False
         self.install_requested=True;self.publish(phase='downloading',message='正在准备下载…',total=self.release.size)
-        self._bind(UpdateJob(self.current,self.cache,self.release,parent=self));return True
+        self._bind(UpdateJob(self.current,self.cache,self.release,parent=self,program_version=self.program_version));return True
     def cancel(self):
         self.install_requested=False
         if self.job:
             self.job.cancel.set();self.publish(message='正在暂停，已下载的内容会保留…')
     def _result(self,value):
+        """检查结果和下载结果都须符合平台能力，才能显示或触发安装"""
         if self.closing:return
+        release=value if self.job.release is None else self.release
+        if release.kind!='animation' and not app_updates.program_updates_supported():
+            self.install_failed('当前平台不支持 Windows 程序更新，请手动更新程序');return
         if self.job.release is None:
             if self.state.get('latest')!=value.version:self.state['downloaded']=0
             self.release=value;cmp=(version_tuple(value.version)>version_tuple(self.current))-(version_tuple(value.version)<version_tuple(self.current))

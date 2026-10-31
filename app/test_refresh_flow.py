@@ -82,6 +82,7 @@ class PipelineTests(unittest.TestCase):
         EnhancedPet.refresh_all(pet);EnhancedPet.refresh_all(pet)
         for starter in (pet.refresh_quota,pet.refresh_tokens,pet.refresh_reset_feed):
             starter.assert_called_once()
+        pet.refresh_quota.assert_called_once_with(manual=True)
         EnhancedPet.refresh_report(pet)
         self.assertEqual(pet.refresh_tokens.call_count,2)
         pet.refresh_flow.result('token',2,True)

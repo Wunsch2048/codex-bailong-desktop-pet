@@ -82,6 +82,48 @@ def sample():
              for day,value in [(12,1200),(13,30000),(14,12000),(15,56000),(16,78000),(17,30000)] for m in ('gpt-6.1-sol','gpt-6-sol')]))
 
 class ReportUiTests(unittest.TestCase):
+    def test_daily_cost_scope_and_unknown_do_not_reuse_stale_day(self):
+        data=sample();row=dict(id='archived',name='归档项目',path='D:/p',cost=2.,parts=[1.,.2,.8],tokens=1000,pending_tokens=0,models=[],sessions=1,archived=True)
+        data['projects']=dict(yesterday=data['report']['day'],ranges={'yesterday':[row],'all':[row]})
+        self.r.set_snapshot(data);self.r.open();self.complete()
+        self.assertGreater(self.r.daily_cost.width(),200);self.assertEqual(self.r.daily_cost.amount,2.)
+        self.assertEqual(self.r.surface.height(),473);self.assertEqual(self.r.scroll.verticalScrollBar().maximum(),0)
+        self.r.open_yesterday_cost();self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
+        self.assertEqual(self.r.period,'yesterday');self.assertEqual(self.r.project_view.archive,'all');self.assertEqual(self.r.project_view.list.count(),2)
+        self.r.set_page('overview');self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration())
+        data['projects']['yesterday']='2026-10-16';self.r.daily_cost.set_data(data['report'],data['projects'])
+        self.assertIsNone(self.r.daily_cost.amount)
+
+    def test_explanations_use_local_fixed_canvas_and_return_without_navigation(self):
+        from project_cost_ui import ExplanationOverlay
+        self.r.open();self.complete()
+        info=next(b for b in self.r.scroll.widget().findChildren(QToolButton) if b.text()=='估算说明')
+        info.click();APP.processEvents();self.assertFalse(info.isChecked())
+        overlay=next(w for w in self.r.scroll.viewport().findChildren(ExplanationOverlay) if w.isVisible())
+        self.assertIsNotNone(overlay);self.assertEqual(overlay.geometry(),self.r.scroll.viewport().rect())
+        # A locally positioned explanation must paint an opaque theme surface,
+        # otherwise the cost list remains readable through its paragraphs.
+        from theme_registry import color
+        image=overlay.grab().toImage()
+        self.assertEqual(image.pixelColor(image.width()-2,image.height()-2).name(),color('#fcfafc'))
+        overlay.back.click();APP.processEvents();self.assertEqual(self.r.page,'overview');self.assertFalse(info.isChecked())
+        info.click();APP.processEvents();self.assertFalse(info.isChecked())
+        overlay=next(w for w in self.r.scroll.viewport().findChildren(ExplanationOverlay) if w.isVisible())
+        overlay.back.click();APP.processEvents();self.assertFalse(info.isChecked())
+        self.r.set_page('cycle');self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
+        self.r.cycle_view.rules_button.click();APP.processEvents()
+        overlay=self.r.cycle_view.explanation
+        self.assertEqual(overlay.geometry(),self.r.scroll.viewport().rect());self.assertFalse(self.r.cycle_view.rules_button.isChecked())
+        overlay.back.click();APP.processEvents();self.assertEqual(self.r.page,'cycle')
+
+    def test_page_direction_follows_tab_order_without_moving_navigation(self):
+        self.r.open();self.complete();nav=self.r.nav_panel;position=nav.pos()
+        with patch('settings_controls.motion_enabled',return_value=True):
+            for page,direction in [('projects',1),('models',-1),('cycle',1),('overview',-1)]:
+                self.r.set_page(page);self.assertEqual(self.r.page_fade.direction,direction)
+                self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
+        self.assertIs(self.r.nav_panel,nav);self.assertEqual(nav.pos(),position)
+
     def test_capsule_and_minimal_hosts_keep_a_readable_report_width(self):
         for mode in ('mini','minimal'):
             self.b.set_mode(mode);self.b.size_transition.complete();APP.processEvents()
@@ -132,8 +174,42 @@ class ReportUiTests(unittest.TestCase):
         self.r.dismiss();self.complete()
         changed=copy.deepcopy(self.r.snapshot);changed['report']['daily_models'][0]['total']+=12345
         self.r.set_snapshot(changed);self.r.open();self.complete()
+        self.assertEqual(self.r.page,'overview')
+        self.assertEqual(self.r.page_buttons['overview'].text(),'日报')
+        self.r.set_page('models')
         self.assertIs(self.r.plot,plot)
         self.assertEqual(self.r.plot.series['total'],sum(row['total'] for row in changed['report']['daily_models']))
+    def test_new_open_defaults_to_daily_but_explicit_quota_entry_keeps_its_target(self):
+        self.r.open(page='cycle');self.complete();self.assertEqual(self.r.page,'cycle')
+        self.r.dismiss();self.complete();self.r.open();self.complete()
+        self.assertEqual(self.r.page,'overview')
+        self.assertEqual(self.r.page_buttons['overview'].text(),'日报')
+    def test_project_detail_is_only_retained_within_current_visit(self):
+        row=dict(id='one',name='项目',path='D:/one',tokens=1000,cost=.1,parts=[.08,.01,.01],pending_tokens=0,sessions=1,models=[],archived=False)
+        data=sample();data['projects']=dict(ranges={'all':[row]})
+        self.r.set_snapshot(data);self.r.open();self.complete();self.r.set_page('projects');APP.processEvents()
+        view=self.r.project_view;view.select(row);APP.processEvents()
+        self.assertEqual(view.selected,'one')
+        # Ordinary data updates and temporary child hides must not navigate.
+        self.r.set_snapshot(dict(data,checked=123));self.assertEqual(view.selected,'one')
+        view.hide();view.show();self.assertEqual(view.selected,'one')
+        self.r.set_page('models');self.r.set_page('projects');APP.processEvents()
+        self.assertIs(self.r.project_view,view);self.assertIsNone(view.selected)
+        self.assertIs(view.stack.currentWidget(),view.list)
+        view.select(row);APP.processEvents();self.r.dismiss();self.complete()
+        self.r.open(page='projects');self.complete();self.assertIsNone(self.r.project_view.selected)
+        self.assertIs(self.r.project_view.stack.currentWidget(),self.r.project_view.list)
+
+    def test_filter_scope_keeps_token_and_search_aligned_with_time_control(self):
+        self.r.open();self.complete();self.r.set_page('models');APP.processEvents()
+        row=self.r.scope_row;total=self.r.scope_model_total;period=self.r.period_control
+        self.assertTrue(total.isVisible());self.assertEqual(total.mapTo(row,total.rect().center()).y(),period.mapTo(row,period.rect().center()).y())
+        self.r.set_page('projects');APP.processEvents();search=self.r.scope_project_search
+        self.assertTrue(search.isVisible());self.assertEqual(search.mapTo(row,search.rect().center()).y(),period.mapTo(row,period.rect().center()).y())
+        self.assertLessEqual(search.mapTo(row,search.rect().bottomRight()).x(),period.mapTo(row,period.rect().topLeft()).x())
+        self.assertIs(self.r.project_view.search,search.edit);self.assertEqual(self.r.project_view.list.verticalScrollBar().width(),6)
+        self.assertFalse(search.button.grab().isNull())
+        self.r.set_page('models');self.r.set_page('projects');APP.processEvents();self.assertIs(self.r.project_view.search,search.edit)
     def test_page_motion_keeps_an_opaque_background_without_text_crossfade(self):
         from PySide6.QtGui import QPixmap,QPainter,QColor
         from PySide6.QtCore import QRect
@@ -189,14 +265,17 @@ class ReportUiTests(unittest.TestCase):
         self.r.set_page('models');APP.processEvents()
         nav=self.r.period_control.parentWidget()
         for widget in [*self.r.page_buttons.values(),self.r.period_control]:
-            self.assertTrue(nav.rect().contains(widget.geometry()),widget.objectName())
+            # Time controls now live on the scope row below the tab row.
+            host=self.r.nav_panel
+            from PySide6.QtCore import QRect
+            self.assertTrue(host.rect().contains(QRect(widget.mapTo(host,widget.rect().topLeft()),widget.size())),widget.objectName())
         self.assertEqual(len([b for b in self.r.findChildren(QToolButton) if b.objectName().startswith('report_range_') and not b.isHidden()]),3)
         model=self.r.findChildren(ModelRow)[-1];model.click();self.assertEqual(self.r.selected_model,model.item['model'])
         self.r.set_period('7d');self.assertEqual(len(self.r.plot.series['bins']),7);self.r.set_period('30d');self.assertEqual(len(self.r.plot.series['bins']),30)
     def test_cycle_page_shows_local_usage_and_gated_estimate(self):
         self.r.open();self.complete()
         self.r.set_page('cycle');APP.processEvents()
-        self.assertEqual(self.r.page_buttons['cycle'].text(),'额度对比')
+        self.assertEqual(self.r.page_buttons['cycle'].text(),'额度')
         self.assertEqual(self.r.layout.itemAt(0).widget().findChildren(QLabel)[0].text(),'数据面板')
         self.assertEqual(self.r.day_label.text(),'')
         self.assertTrue(self.r.period_control.isHidden())
@@ -217,7 +296,7 @@ class ReportUiTests(unittest.TestCase):
         self.r.set_snapshot(data)
         self.assertEqual(self.r.cycle_view.estimate.text(),'—')
         self.assertIn('受限',self.r.cycle_view.quality.text())
-    def test_overview_fully_fits_and_model_scroll_is_only_for_overflow(self):
+    def test_overview_fits_and_model_overflow_remains_scrollable_without_bar(self):
         self.r.open();self.complete();APP.processEvents()
         area=self.r.scroll
         self.assertEqual(area.verticalScrollBar().maximum(),0)
@@ -231,7 +310,8 @@ class ReportUiTests(unittest.TestCase):
         data['report']['daily_models']=[dict(day='2026-10-17',model='model-'+str(i),total=1000,input=800,output=200,known=True) for i in range(12)]
         self.r.set_snapshot(data);QTest.qWait(20)
         self.assertGreater(self.r.scroll.verticalScrollBar().maximum(),0)
-        self.assertTrue(self.r.scroll.verticalScrollBar().isVisible())
+        self.assertFalse(self.r.scroll.verticalScrollBar().isVisible())
+        bar=self.r.scroll.verticalScrollBar();bar.setValue(bar.maximum());self.assertGreater(bar.value(),0)
         self.r.set_page('overview');APP.processEvents()
         self.assertEqual(self.r.scroll.verticalScrollBar().maximum(),0)
         self.assertFalse(self.r.scroll.verticalScrollBar().isVisible())
@@ -273,6 +353,8 @@ class ReportUiTests(unittest.TestCase):
         self.r.set_snapshot(data);self.r.open();self.complete();plot=self.r.plot
         plot.grab();chart=plot.chart_rect();fm=plot._axis_metrics
         self.assertIn('17.27M',plot._axis_labels)
+        self.assertEqual(chart.left(),3)  # Daily line plot intentionally has no Y labels.
+        plot.mode='bars';plot.series={'bins':[{'total':17270000,'values':{}}]};plot._measure_axes();chart=plot.chart_rect();fm=plot._axis_metrics
         for text in plot._axis_labels:
             self.assertGreaterEqual(chart.left()-6-fm.horizontalAdvance(text),1)
         self.assertGreaterEqual(chart.top()-fm.height()/2,1)

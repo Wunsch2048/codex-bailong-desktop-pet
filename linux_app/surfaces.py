@@ -138,8 +138,23 @@ class Surfaces(QObject):
         """工作区切换和位移分别等待确认，避免重复累计相对增量"""
         if self.pet.closing:
             return
+        transition = self.pet.bubble.size_transition
+        stage = getattr(transition, '_linux_stage', None)
+        parent = getattr(transition.landing, '_linux_popup_parent', None)
+        if parent is not None and stage in ('preparing', 'playing', 'landing'):
+            point = parent.pos()
+            delta = point - transition._linux_parent_origin
+            transition._linux_parent_origin = QPoint(point)
+            # 手动拖动已有共享收纳控制器平移画布；其余移动也必须在交接前更新同一目标
+            if not getattr(getattr(self.pet, 'drag_panel', None), 'active', False) and not delta.isNull():
+                if transition.running:
+                    transition.translate(delta)
+                else:
+                    transition.bubble.move(transition.bubble.pos() + delta)
+                    transition.landing.move(transition.landing.pos() + delta)
         for widget, entry in tuple(self.entries.items()):
-            if widget is self.dragging or not widget.isVisible():
+            if (widget is self.dragging or not widget.isVisible()
+                    or getattr(widget, '_linux_popup_parent', None) is not None):
                 continue
             window = self.window(widget)
             current = self.actual(widget)
@@ -279,10 +294,18 @@ def install(stack):
     present = HintBubble.present
 
     def present_hint(widget, title, subtitle, anchor, screen, *, card_top=None, topmost=True, owner=None):
-        """顶栏提示从 Qt 虚拟坐标换到卡片的合成器坐标，保留原绘制及窗口层级"""
+        """穿透提示作为附着 popup 定位，按钮间切换无需等待浮动窗口移动确认"""
         manager = bridge(owner) if owner is not None else None
         if manager:
             manager.bind(widget)
+            if widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents):
+                if getattr(widget, '_linux_popup_parent', None) is not owner:
+                    # popup 的父表面在创建时确定，日报开关导致换宿主时需重新映射
+                    widget.hide()
+                    widget.destroy()
+                    widget._linux_popup_parent = owner
+                if widget.windowType() != Qt.WindowType.ToolTip:
+                    widget.setWindowFlags((widget.windowFlags() & ~Qt.WindowType.WindowType_Mask) | Qt.WindowType.ToolTip)
             bubble = manager.pet.bubble
             delta = bubble.pos() - QWidget.mapToGlobal(bubble, QPoint())
             anchor = anchor.translated(delta)
@@ -293,6 +316,7 @@ def install(stack):
 
     stack.enter_context(replace(HintBubble, 'present', present_hint))
 
+    begin = PanelTransition.begin
     commit = PanelTransition.commit
     finish = PanelTransition.finish
     cancel = PanelTransition.cancel
@@ -365,13 +389,27 @@ def install(stack):
         painter.fillRect(widget.rect(), Qt.GlobalColor.transparent)
         painter.drawPixmap(0, 0, transition.before)
 
-    def commit_transition(transition):
+    def begin_transition(transition):
+        """拖动交接中从控件内容取起始帧，避开主窗口用于隐藏的透明度"""
+        bubble = transition.bubble
+        manager = bridge(bubble)
+        frame = None
+        if manager and bubble.isVisible() and manager.controller.opacity.opacity() == 0:
+            from surface_morph import complete_frame
+            frame = complete_frame(bubble)
+        begin(transition)
+        if frame is not None:
+            transition.before = frame
+            transition.old_surface.frame = frame
+            transition.cover.image = frame
+
+    def commit_transition(transition, preserve_reveals=False):
         """先构建原形变，再定位空画布，避免两张胶囊分别移动"""
         manager = bridge(transition.bubble)
         if not manager:
-            return commit(transition)
+            return commit(transition, preserve_reveals=preserve_reveals)
         transition._linux_stage = 'building'
-        commit(transition)
+        commit(transition, preserve_reveals=preserve_reveals)
         if not (transition.running and transition.canvas_morph and not transition.closing):
             transition._linux_stage = None
             return
@@ -381,6 +419,7 @@ def install(stack):
         transition.cover.repaint()
         pet = manager.pet
         parent = pet if pet.isVisible() and pet.screen() == transition.bubble.screen() else None
+        transition._linux_parent_origin = QPoint(pet.pos()) if parent is not None else None
         transition.landing._linux_popup_parent = parent
         transition.landing.prepare(transition.canvas_rect)
         transition.landing_timer.start(0 if parent is not None else 700)
@@ -422,7 +461,10 @@ def install(stack):
                 transition.landing_timer.start(100)
                 return
             transition._linux_stage = 'playing'
-            transition._linux_handoff_opacity = manager.controller.opacity.opacity()
+            manager.controller.reveal.stop()
+            manager.finish_pet_drag()
+            # 接过拖动或启动的交接后，落地应显示面板，不能恢复上一阶段隐藏时的透明度
+            transition._linux_handoff_opacity = 1.
             manager.controller.opacity.setOpacity(0)
             transition.landing.image = transition.before
             transition.landing.repaint()
@@ -440,6 +482,9 @@ def install(stack):
             if not getattr(manager.pet, '_niri_drag', False):
                 manager.controller.opacity.setOpacity(opacity)
         release_landing(transition)
+        if manager and getattr(manager.pet, '_niri_drag', False) and not transition.running:
+            manager.begin_pet_drag()
+            manager.controller.opacity.setOpacity(0)
 
     def cancel_transition(transition):
         """关闭或快速导航时同步结束交接，不遗留透明控件及额外窗口"""
@@ -451,6 +496,7 @@ def install(stack):
     stack.enter_context(replace(NativeLanding, 'present', present_card_surface))
     stack.enter_context(replace(NativeLanding, 'paintEvent', paint_card_surface))
     stack.enter_context(replace(TransitionCover, 'paintEvent', paint_source_cover))
+    stack.enter_context(replace(PanelTransition, 'begin', begin_transition))
     stack.enter_context(replace(PanelTransition, 'advance', advance_transition))
     stack.enter_context(replace(PanelTransition, 'commit', commit_transition))
     stack.enter_context(replace(PanelTransition, 'finish', finish_transition))

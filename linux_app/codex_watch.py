@@ -75,8 +75,7 @@ def watch(args, root, state):
                         start_pet(args, root)
                         print('检测到 Codex 桌面新会话，已请求启动桌宠', flush=True)
                     except (OSError, subprocess.TimeoutExpired) as error:
-                        print('Codex 启动联动失败：' + str(error), flush=True)
-                        gate.sessions.clear()
+                        print('Codex 启动联动失败：' + str(error) + '；本次会话不再自动重试，可重新启用随 Codex 启动或重启 Codex', flush=True)
                 stopped.wait(2)
         finally:
             for sig, handler in previous.items():

@@ -29,6 +29,9 @@ def _part_color(part, island):
     base, mint, warm = _DARK if island else _LIGHT
     satin=_clamp(getattr(part,'satin',0.))
     new_base,new_mint,rose=_SATIN_DARK if island else _SATIN_LIGHT
+    from theme_registry import status_rgb
+    base,mint,warm=status_rgb(island)
+    new_base,new_mint,rose=base,mint,warm
     base=tuple(a+(b-a)*satin for a,b in zip(base,new_base))
     mint=tuple(a+(b-a)*satin for a,b in zip(mint,new_mint))
     green = _clamp(getattr(part, 'mint', 0.))
@@ -66,7 +69,7 @@ def _satin_brush(part,color):
     amount=_clamp(getattr(part,'satin',0.))
     if amount<=.00001:return color
     gradient=QRadialGradient(QPointF(part.x-part.radius*.52,part.y-part.radius*.62),part.radius*2.2)
-    for position,delta in ((0.,.22),(.44,.015),(1.,-.13)):
+    for position,delta in ((0.,.10),(.44,0.),(1.,-.13)):
         delta*=amount
         channels=[round(c+(255-c)*delta if delta>0 else c*(1+delta)) for c in (color.red(),color.green(),color.blue())]
         shaded=QColor(*channels);shaded.setAlpha(color.alpha());gradient.setColorAt(position,shaded)

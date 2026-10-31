@@ -1,4 +1,6 @@
 """Categorised expanded details; live data, explanations and sources stay separate."""
+from theme_registry import color as theme_color
+from theme_runtime import set_theme_style,theme_style_source
 from PySide6.QtCore import Qt,QRectF,QPointF,QEvent
 from PySide6.QtGui import QPainter,QColor,QPen
 from PySide6.QtWidgets import QWidget,QLabel,QVBoxLayout,QHBoxLayout,QTabWidget,QScrollArea,QFrame,QStackedWidget,QApplication
@@ -6,6 +8,7 @@ from compact_bubble import font,FONT_CSS,source_button,Announcement
 from reset_watch import pending_reset,schedule_text,account_reset_text
 from ring_widgets import draw_metric_icon
 from quota_summary_data import quota_items,today_tokens
+from ui_theme import hide_scrollbars
 
 
 class MetricIcon(QWidget):
@@ -13,7 +16,7 @@ class MetricIcon(QWidget):
         super().__init__(parent);self.kind=kind;self.setFixedSize(24,24)
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor('#e9e0f1'));p.drawEllipse(QRectF(1,1,22,22))
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e9e0f1')));p.drawEllipse(QRectF(1,1,22,22))
         draw_metric_icon(p,QPointF(12,12),self.kind,14)
 
 
@@ -27,17 +30,17 @@ class DetailCard(QWidget):
         size=max(11,min(size,11) if muted and not warning else size)
         label=QLabel(str(text));label.setTextFormat(Qt.TextFormat.PlainText);label.setWordWrap(True)
         color='#915e74' if warning else '#706879' if muted else '#393343'
-        label.setStyleSheet(FONT_CSS+f'font-size:{size}px;font-weight:{600 if size>14 else 500};color:{color};background:transparent;')
+        set_theme_style(label,FONT_CSS+f'font-size:{size}px;font-weight:{600 if size>14 else 500};color:{color};background:transparent;')
         self.body.addWidget(label);return label
     def add_metric(self,name,value,icon):
         row=QHBoxLayout();row.setSpacing(7);row.addWidget(MetricIcon(icon))
-        title=QLabel(name);title.setStyleSheet(FONT_CSS+'font-size:12px;color:#706879;');row.addWidget(title,1)
-        number=QLabel(value);number.setStyleSheet(FONT_CSS+'font-size:20px;font-weight:600;color:#514360;');row.addWidget(number)
+        title=QLabel(name);set_theme_style(title,FONT_CSS+'font-size:12px;color:#706879;');row.addWidget(title,1)
+        number=QLabel(value);set_theme_style(number,FONT_CSS+'font-size:20px;font-weight:600;color:#514360;');row.addWidget(number)
         self.body.addLayout(row)
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor('#fbf4f7' if self.warning else '#f5f1f7'))
-        p.setPen(QPen(QColor('#e9dce5' if self.warning else '#e9e0f0'),1))
+        p.setBrush(QColor(theme_color('#fbf4f7' if self.warning else '#f5f1f7')))
+        p.setPen(QPen(QColor(theme_color('#e9dce5' if self.warning else '#e9e0f0')),1))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(.5,.5,-.5,-.5),9,9)
 
 
@@ -45,7 +48,7 @@ class DetailsTabs(QTabWidget):
     def __init__(self,bubble,parent=None):
         super().__init__(parent);self.setObjectName('detail_tabs');self.setFixedHeight(244)
         self.setFont(font(12,True));self.areas={};self.keys=['quota','tokens','reset','legend']
-        self.setStyleSheet('QTabWidget::pane{border:1px solid #e7deed;border-radius:10px;background:#fcfafc;top:-1px;}'
+        set_theme_style(self,'QTabWidget::pane{border:1px solid #e7deed;border-radius:10px;background:#fcfafc;top:-1px;}'
             'QTabBar::tab{'+FONT_CSS+'font-size:12px;color:#706879;background:transparent;border:0;padding:7px 15px;margin-bottom:3px;}'
             'QTabBar::tab:selected{color:#514360;background:#eae2f2;border-radius:7px;}'
             'QTabBar::tab:hover{background:#f2edf6;border-radius:7px;}'
@@ -88,7 +91,7 @@ class DetailsTabs(QTabWidget):
             row=QHBoxLayout();row.setSpacing(8);row.addWidget(MetricIcon(icon),0,Qt.AlignmentFlag.AlignTop)
             labels=QVBoxLayout();labels.setSpacing(2)
             for value,size,color in [(title,11,'#514360'),(note,11,'#706879')]:
-                text=QLabel(value);text.setWordWrap(True);text.setStyleSheet(FONT_CSS+f'font-size:{size}px;color:{color};');labels.addWidget(text)
+                text=QLabel(value);text.setWordWrap(True);set_theme_style(text,FONT_CSS+f'font-size:{size}px;color:{color};');labels.addWidget(text)
             row.addLayout(labels,1);card.body.addLayout(row)
         card=self.card(legend,'面板与人物')
         card.text('点击胶囊回到正常卡片；详情按钮打开大卡片。自动模式闲置后收起，手动胶囊与极简模式保持你的选择。',muted=True)
@@ -135,9 +138,8 @@ class DetailsTabs(QTabWidget):
         if self._page_fade:self._page_fade.clear()
         super().hideEvent(event)
     def page(self,key,title):
-        area=QScrollArea();area.setObjectName('detail_'+key);area.setWidgetResizable(True);area.setFrameShape(QFrame.Shape.NoFrame)
-        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        content=QWidget();content.setStyleSheet('background:transparent;');layout=QVBoxLayout(content)
+        area=hide_scrollbars(QScrollArea());area.setObjectName('detail_'+key);area.setWidgetResizable(True);area.setFrameShape(QFrame.Shape.NoFrame)
+        content=QWidget();set_theme_style(content,'background:transparent;');layout=QVBoxLayout(content)
         layout.setContentsMargins(7,8,7,8);layout.setSpacing(8);area.setWidget(content)
         self.areas[key]=area;self.addTab(area,title);return layout
     def card(self,layout,title,warning=False):

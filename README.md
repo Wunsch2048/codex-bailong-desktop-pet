@@ -2,56 +2,61 @@
 
 ![文章海报](docs/media/cover.png)
 
-一只陪你使用 Codex 的白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，源码已合并上游 Windows **v1.2.1**，本 fork 提供 **Linux/niri、KDE 预览版 v1.2.1-linux-preview.4**。
+一只陪你使用 Codex 的 Windows 白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，当前公开版本 **v1.3.0**。
 
-**[Linux 下载](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.2.1-linux-preview.4)** · [Windows 上游下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) · [快速部署](docs/快速部署说明.txt) · [全部新增功能](docs/新增功能说明.txt) · [开发说明](docs/DEVELOPMENT.md) · [迭代历史](docs/迭代历史.txt)
+**[首次安装：在线安装器 1.3.0](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-setup.exe)** | [程序更新包](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) | [快速部署](docs/快速部署说明.txt) | [全部新增功能](docs/新增功能说明.txt) | [开发说明](docs/DEVELOPMENT.md) | [迭代历史](docs/迭代历史.txt)
+
+在线安装器直接下载并校验最新累计程序，不必先安装旧基础版。程序不含人物动画，可在设置中按需下载轻量或高清资源；升级保留设置、统计和素材偏好。
+
+## 安全反馈进展
+
+部分用户反馈 Microsoft Defender 将公开 1.2.1 的程序检测为 `Trojan:Win32/Bearfoos.A!ml`。对应样本已于 2026 年 10 月 30 日提交微软复核，最近留存状态为已提交、待判定；这不等于微软已确认误报。卡巴斯基反馈同样仍在跟进。
+
+安装与启动流程已作改进，但旧样本的复核不自动适用于新文件，本次不宣称所有告警已经解除。遇到告警请保留检测详情；不以关闭安全防护或添加排除项作为安装要求。进展见 [#19](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/19) 和 [#1](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/1)。
+
+## 社区版本
+
+| 平台 | 入口与维护者 | 当前说明的支持范围 |
+| --- | --- | --- |
+| Linux / Niri / KDE | [helantianshen 的社区仓库](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 预览版；KDE Plasma X11 / XWayland 源码支持，限制见作者说明 |
+| macOS / Apple Silicon | [Kki1ds 的社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet) / [下载页面](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases) | Apple Silicon 的 DMG 社区版；未公证，无应用内更新，最新版本、支持范围与限制以作者仓库说明为准 |
+
+社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
 
 ## Linux / niri / KDE
 
-本分支在 Linux/niri 适配基础上增加 **KDE Plasma X11 / XWayland 源码运行支持**。不同桌面使用独立入口，共享原界面和数据逻辑：
+本 PR 的源码正在适配上游 **v1.3.0**，尚未发布对应 Linux 安装包，最终 niri/KDE 实机验收仍待完成。已公开的社区预览包仍为 **v1.2.1-linux-preview.4**，使用旧版程序与素材；其验证记录不能代替当前源码的验收。
 
 | 环境 | 源码入口 | 窗口后端 |
 | --- | --- | --- |
-| Windows | `python app/enhanced.py` | 原 Windows 入口 |
 | niri | `.venv/bin/python run_niri.py` | 原生 Wayland + niri IPC |
 | KDE Plasma | `.venv/bin/python run_kde.py` | X11 / XWayland |
 
-原 `run_linux.py` 保留为自动识别桌面的兼容入口。准备依赖、素材和查看验证边界见 [KDE 运行说明](docs/KDE.md)及 [Linux 启动说明](docs/LINUX.md)。当前预览包包含 niri 与 KDE 后端。Linux 适配仍位于独立入口，`app/` 与 Windows 构建脚本沿用上游实现。
+`run_linux.py` 自动选择后端，也可显式指定。Linux 使用独立 XDG 用户目录和只读 Codex 查询隔离；依赖、素材及运行步骤见 [Linux 说明](docs/LINUX.md)、[KDE 说明](docs/KDE.md)和[包体说明](docs/LINUX_PACKAGE.md)。当前适配不代表支持所有 Linux 桌面或发行版。
 
-本 fork 的 Linux 预览版面向 **CachyOS/Arch x86_64 + niri 原生 Wayland**，不宣称兼容所有 Linux 发行版。Windows 入口、组件样式及原动画素材保持不变。
+已发布预览包下载：[AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.AppImage)、[便携 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.tar.zst)、[SHA-256](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/SHA256SUMS.txt)。支持范围和未适配功能见[该版说明](docs/releases/v1.2.1-linux-preview.4.md)。这些是社区预发布包，上游 Windows 稳定版更新入口不适用于 Linux。
 
-| 下载格式 | 启动方式 |
-| --- | --- |
-| [AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.AppImage) | 赋予执行权限后运行 |
-| [便携包 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.tar.zst) | 解压后运行目录内的 `AppRun` |
-| [SHA256 校验值](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/SHA256SUMS.txt) | 在下载目录执行 `sha256sum -c SHA256SUMS.txt`，需要对应文件都已下载 |
+Linux 程序仍通过手动替换 AppImage 或便携目录更新，用户设置和统计保存在 `${XDG_DATA_HOME:-~/.local/share}/codex-bailong/BailongEnhanced`。切换程序前退出旧实例；声音、聊天密钥安全保存、原生 KDE Wayland及全屏让位等限制见各桌面说明。
 
-两种包均包含 Python 3.12、Qt 及轻量人物素材，每个约 680 MiB，不需要安装 Python 包。宿主需要 bubblewrap（`bwrap`）和本机 Codex；仅 niri 后端需要 niri，KDE 后端需要 X11/XWayland。
+## Windows 当前版本与历史更新
 
-```sh
-chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
-./Bailong-1.2.1-linux-preview.4-x86_64.AppImage
-```
+### v1.3.0 程序与动画联合更新
 
-当前包会先检查 `BAILONG_CODEX` 和 PATH，也可通过 `--codex-cli /绝对路径/codex` 指定。首次配置 niri 时，按[使用说明](docs/LINUX_PACKAGE.md)将包内窗口规则复制到稳定配置路径并 include；规则包含本机 niri 的 `background-effect` 扩展，其他构建需验证兼容性。KDE 不使用这些规则。
+- 正常卡片实时速率、分会话悬停、用量与回合均速柱线图；历史悬停新增回合中位速率，缺样虚线和有效回合数区分未知与零。
+- 项目成本、会话迁移归属、昨日成本及明细页；修复旧索引膨胀并自动分批整理，保留统计和回退副本。
+- 八套主题、统一卡片与图表、贴边收纳、拖动收起及四种自主走动方式。
+- 轻量与高清资源均覆盖35个动作；一份完整动画包支持新下载和已校验文件的增量复用。
+- 新用户可直接取得最新程序；升级保留自定义按钮、胶囊形态、主题、统计与素材偏好。
 
-默认设置和统计索引保存在 `~/.local/share/codex-bailong/BailongEnhanced`（支持 `XDG_DATA_HOME`）。源码版、便携版和 AppImage 共用该位置，切换前退出旧实例；更新程序不覆盖位置与偏好。额度查询只读访问 Codex 配置，包内不包含账户、会话、个人设置或凭据。
+[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.3.0) | [版本文档](docs/releases/v1.3.0.md)
 
-已接入真实额度、Token、任务 IPC 和重置公告；已适配 niri 拖动、自由走动、显示器与位置记忆、分离气泡、设置/聊天面板定位、Token 日报、展开收起和人物缩放。本机验证覆盖脱离源码启动、真实数据、跨格式位置恢复及正常退出。
+这是累计程序更新，无需逐个安装历史补丁。已有用户先更新配套程序，再按需更新动画；仅卡片用户不需要动画。资源包最低程序版本为1.3.0。
 
-**当前边界**：当前预览版已恢复随机动作和 Codex 回复摘要，首次升级开启一次，之后保留用户开关；声音仍由入口关闭。声音播放、聊天密钥保存、甩出惯性及 Windows 更新安装流程尚未适配，部分界面入口仍保留，请勿将其视为 Linux 可用功能。分离面板等复杂交互已进行初步人工验收，不等于全套跨屏、高 DPI 或长期稳定性验收；置顶及系统通知仍需跨桌面验收。niri/KDE 人物输入区域已采用 `alpha >= 12`，“开机启动”和“随 Codex 启动”已接入独立 systemd 用户服务，使用步骤见 [Linux 说明](docs/LINUX.md#登录图形桌面后自启动)。两个启动开关相互独立。不要使用 Windows 更新包更新 Linux 版。
+![实时速率与分会话悬停](docs/media/update-1.3.0/02-live-rate.png)
 
-**本版新增**：已接入上游 v1.2.1 界面，补齐 niri 拖动期间气泡跟随、设置页边缘避让，并修复托盘首次展开菜单不完整。已接入“随 Codex 关闭”和会话跳转。退出沿用连续三次确认规则；会话链接交由已注册的 `codex://` 协议处理器打开，需 `xdg-utils`。点击任务名不提前清除未读提醒，详见 [Linux 说明](docs/LINUX.md#随-codex-关闭与会话跳转)。完整的已实现功能、限制和未适配项目见 [本版发布说明](docs/releases/v1.2.1-linux-preview.4.md)。
+配图使用合成示例数据，不含真实账号或会话记录。回合均速包含思考、工具与等待，不能单凭曲线判断服务端限速。
 
-源码已同步上游 **v1.2.1** 的卡片过渡、悬停提示、额度变化阈值与额度对比、显示缩放恢复等改进。Linux 补接托盘额度环和 niri 提示窗口定位；托盘文字由桌面原生提示显示，外观随桌面主题。Windows 的 WSL 来源、程序迁移和更新安装流程不适用于 Linux。上述改动已进入当前预览包，具体范围见 [本次适配说明](docs/LINUX.md)。
-
-开发启动：创建独立 Python 3.12 虚拟环境并安装 `requirements-linux.txt`，然后执行 `.venv/bin/python run_linux.py`。素材准备及 PyCharm 配置见 [Linux 启动说明](docs/LINUX.md)，打包方法见[使用与构建说明](docs/LINUX_PACKAGE.md)，本次发布范围见[Linux 预览版说明](docs/releases/v1.2.1-linux-preview.4.md)。
-
-## 上游 Windows 更新记录
-
-以下安装器与补丁仅适用于 Windows。Linux 的下载版本及适配范围见上方说明。macOS 预览版见 [Kki1ds 社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet)。
-
-### v1.2.1 程序补丁
+### v1.2.1 程序补丁（历史）
 
 - 改善远控或屏幕缩放恢复后的角色清晰度，避免放大后仍使用低分辨率动画帧。
 - 顶栏按钮和托盘额度使用自定义悬停气泡，延迟显示、不抢焦点，数据面板不会遮挡按钮提示。
@@ -61,7 +66,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 
 [下载累计程序补丁 1.2.1](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.2.1) | [完整更新说明](docs/releases/v1.2.1.md)
 
-已有用户可在软件内更新，只需最新一份累计程序补丁，不重传动画。首次安装继续使用顶部有效的 1.1.0 安装器，安装后更新程序。
+以上是历史版安装方式。当前安装与升级请使用页面顶部的最新入口。
 
 ![卡片展开与收回](docs/media/card-transition-1.2.1.gif)
 
@@ -76,7 +81,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 
 [下载累计程序补丁 1.2.0](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.2.0) | [完整更新说明](docs/releases/v1.2.0.md)
 
-已有用户可直接在软件内更新；首次安装继续使用页面顶部的 1.1.0 安装器，安装后更新。不重复下载动画素材。
+以上是历史版本说明，当前安装请使用页面顶部的最新入口。
 
 ![卡片切换演示](docs/media/card-transition-1.2.0.gif)
 
@@ -90,7 +95,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 
 [查看 v1.1.1 发布说明](docs/releases/v1.1.1.md)
 
-### v1.1.0 程序补丁
+### v1.1.0 程序补丁（历史）
 
 - 首次安装可选程序目录，已有程序和已下载动画可分别迁移，升级与启动入口沿用新位置。
 - 修复重启后日志恢复误报“记录受限”、画质配置结构异常导致启动失败，以及孤立额度回升导致整轮暂停估算。
@@ -123,10 +128,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 - 提供完整 Windows 安装包、应用内程序更新包、仅卡片安装包和独立轻量动画资源。
 
 完整变化与安装方式见 [v1.0.0 更新说明](docs/releases/v1.0.0.md)。主仓库提供 Windows x64 版本；Linux 社区版和 macOS 移植信息见上方入口。
-
 ## 桌面上可以做什么
-
-下表介绍上游 Windows 完整功能；Linux 的已适配范围和限制见 [Linux / niri / KDE](#linux--niri--kde)。
 
 | 功能 | 实际表现 |
 | --- | --- |
@@ -136,10 +138,10 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 | 胶囊与卡片 | 闲置自动缩小，也可保持小胶囊；点击展开正常卡片，详情、聊天和设置集成在面板内 |
 | 仅卡片安装 | 可不下载人物动画；之后可单独下载轻量或高清素材，也可移除动画保留卡片 |
 | 额度与重置 | 真实账户提供的 5 小时和周剩余额度、重置倒计时；胶囊显示一个开口弧额度圆 |
-| Token 统计 | 全部、30 天、7 天柱状图；点击今日 Token 查看 24 小时曲线 |
+| Token 统计 | 全部、30 天、7 天柱线图；今日 Token 可查看24小时，悬停查看用量、回合均速与样本 |
 | 独立日报 | 累计与昨日指标分组、昨日小时曲线、按模型筛选；27 本书的等量比较使用累计 Token 与真实文本计数估算 |
 | 额外重置公告 | 接入 Codex Resets 公告；网站公告与账户实际重置分别显示 |
-| 龙娘互动 | 25 段动作，含新增五段工作和五段互动；工作动作持续跟随稳定的 Codex 状态并自然收尾，自动动作静音 |
+| 龙娘互动 | 35 段动作，两档资源都包含当前动作集；工作动作持续跟随稳定的 Codex 状态并自然收尾，自动动作静音 |
 | 全屏让位 | 可选视频让位，或同屏游戏/视频全屏时只留托盘；后者不会因完成提醒抢回显示，离开全屏恢复原偏好 |
 | 应用内更新 | 设置 → 维护 → 软件更新；自动只检查，手动下载安装，支持暂停续传与SHA-256校验 |
 | 日常使用 | 登录自启、托盘找回、连接诊断、自定义角色、集成闲聊、一键安装升级与回退 |
@@ -154,7 +156,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 
 ## 安装与首次连接
 
-1. 从 [v1.1.0 发布页](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.1.0) 下载 `windows-x64.zip` 程序安装器，完整解压后运行其中的“一键部署.exe”；安装后在软件内更新到最新版本。
+1. 下载页面顶部的在线安装器，运行后直接下载并校验当前最新程序。需要离线安装时，可从 [v1.3.0 发布页](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.3.0) 下载 `windows-x64.zip`，解压后运行其中的一键部署程序；其中不含人物动画。
 2. 安装器为当前 Windows 用户安装、校验并启动，无需 Python 或管理员权限。
 3. 在本机安装并登录 Codex，发送一次消息。桌宠会自动发现本机数据，通常不需要重启 Codex。
 4. 若没有数据，在“设置 → Codex → 检测连接与额度”检查各项能力；支持手动指定连接路径。
@@ -171,7 +173,7 @@ chmod +x Bailong-1.2.1-linux-preview.4-x86_64.AppImage
 - 会话状态、已读及压缩识别依赖 Codex 本机文件和实时通道；Codex 更新可能影响兼容性。
 - Firefox + B 站有真实全屏播放验证；其他浏览器和播放器依赖系统可访问性与窗口识别，尚未逐一实测。普通网页 F11 不应触发让位。
 - 原视频让位模式保留未读完成提醒优先；同屏游戏/视频隐藏模式只留托盘，完成提醒不会抢回人物或面板。手动关闭置顶后，提醒不会自动打开置顶。
-- 已有桌面移动和原动作播放；新的自然交替行走、飞行动画尚未作为完成品装入。
+- 已接入走路、小跑、飞行与贴边动作；人物按动作匹配位移，长距离重复中段后接收尾。动画效果仍受原素材与显示环境影响。
 - 本地统计读取本机数据；额度、公告、闲聊分别访问相应服务。安装包不携带开发者的登录、API 密钥、会话记录或 Token 数据库。
 
 ## 开发、报告与反馈

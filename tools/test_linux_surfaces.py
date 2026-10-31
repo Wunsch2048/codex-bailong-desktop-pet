@@ -11,13 +11,15 @@ class SurfaceTests(unittest.TestCase):
     def manager(self):
         """构造明确的双屏布局及单个已登记面板"""
         widget = Mock()
+        widget._linux_popup_parent = None
         widget.isVisible.return_value = True
         widget.size.return_value = QSize(268, 188)
         point = QPoint(2200, 400)
         entry = dict(point=point, waiting=None, workspace=None, sent_at=0.)
         window = dict(id=7, workspace_id=2)
         c = SimpleNamespace(windows={}, workspaces={1:'left',2:'right'}, action=Mock(), character=lambda: dict(workspace_id=2))
-        m = SimpleNamespace(pet=SimpleNamespace(closing=False, settings={}), controller=c, entries={widget:entry},
+        transition = SimpleNamespace(landing=SimpleNamespace())
+        m = SimpleNamespace(pet=SimpleNamespace(closing=False, settings={}, bubble=SimpleNamespace(size_transition=transition)), controller=c, entries={widget:entry},
                             dragging=None, window=lambda w:window, actual=lambda w:QPoint(2100,400), timer=Mock())
         return m, widget, entry, window
 
@@ -54,6 +56,13 @@ class SurfaceTests(unittest.TestCase):
         with patch('linux_app.surfaces.QApplication.screenAt', return_value=SimpleNamespace(name=lambda:'right')):
             Surfaces.sync(m)
         m.controller.action.assert_called_once_with('MoveWindowToWorkspace',window_id=7,reference={'Id':2},focus=False)
+
+    def test_parented_popup_never_receives_floating_window_moves(self):
+        """原生 popup 由父表面定位，即使旧顶层窗口记录尚未移除也不能补发位移"""
+        m, widget, _, _ = self.manager()
+        widget._linux_popup_parent = object()
+        Surfaces.sync(m)
+        m.controller.action.assert_not_called()
 
 
 if __name__ == '__main__':

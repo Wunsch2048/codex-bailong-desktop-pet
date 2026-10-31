@@ -69,8 +69,8 @@ class _NumberField:
             self.minus.move(self.width()-61,(self.height()-26)//2)
             self.plus.move(self.width()-31,(self.height()-26)//2)
     def wheelEvent(self,event):
-        if self.hasFocus():super().wheelEvent(event)
-        else:event.ignore()
+        # Scrolling the settings page must never edit a numeric preference.
+        event.ignore()
 
 
 class DecimalField(_NumberField,QDoubleSpinBox):pass

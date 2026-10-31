@@ -18,8 +18,7 @@ class ContinuousWork:
         if not enabled or reactions.present is False or reactions.completion:
             self.current=None;self.candidate=None;self.next_check=0.;return None
         def eligible(e):
-            return (e and e['state'] in ACTIVE and reactions.fresh(e,now) and
-                    (e['state']=='thinking' or now-e['received']<=90))
+            return e and e['state'] in ACTIVE and reactions.fresh(e,now)
         cached=reactions.sessions.get(self.current.session) if self.current else None
         can_reuse=not self.current or (eligible(cached) and cached.get('turn')==self.current.turn)
         # Throttle ordinary labels, never reuse an active result after a
@@ -30,7 +29,10 @@ class ContinuousWork:
         if not eligible(held) or self.owner and held.get('turn')!=self.owner.turn:held=None
         event=held or next((e for e in reversed(reactions.sessions.values()) if eligible(e)),None)
         if event is None:self.candidate=None;self.current=None;return None
-        selected=classify(event,reactions.action_ids)
+        # A lease proves ongoing work, not that a 90-second-old command is
+        # still executing. Use a generic work pose without inventing new text.
+        semantic=dict(event,state='thinking',activity='',text='',display='') if event['state']!='thinking' and now-event['received']>90 else event
+        selected=classify(semantic,reactions.action_ids)
         result=Reaction(selected.kind,selected.action_id,str(event['session']),str(event['turn'])) if selected else None
         key=(result.session,result.turn,result.action_id) if result else None
         if key!=self.candidate:self.candidate=key;self.since=now

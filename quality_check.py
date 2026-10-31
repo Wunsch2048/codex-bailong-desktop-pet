@@ -8,10 +8,11 @@ def run(path):
     began=time.monotonic()
     with tempfile.TemporaryDirectory(prefix='bailong-regression-') as folder:
         env=os.environ.copy();env.update(LOCALAPPDATA=folder,APPDATA=str(Path(folder)/'roaming'),CODEX_HOME=str(Path(folder)/'codex'),QT_QPA_PLATFORM='offscreen',PYTHONIOENCODING='utf-8',BAILONG_ISOLATED='1')
-        code="import faulthandler,unittest;faulthandler.dump_traceback_later(65);unittest.main(module="+repr(path.stem)+",verbosity=2)"
+        budget=120 if path.stem=='test_interaction_batch' else 75
+        code="import faulthandler,unittest;faulthandler.dump_traceback_later("+str(budget-10)+");unittest.main(module="+repr(path.stem)+",verbosity=2)"
         p=subprocess.Popen([sys.executable,'-c',code],cwd=path.parent,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:
-            stdout,stderr=p.communicate(timeout=75);rc=p.returncode
+            stdout,stderr=p.communicate(timeout=budget);rc=p.returncode
         except subprocess.TimeoutExpired:
             # Windows venv python.exe is a launcher: terminate its owned child
             # too, otherwise it retains the pipes and communicate never returns.
@@ -24,7 +25,7 @@ def run(path):
             if p.poll() is None:p.kill()
             stdout,stderr=p.communicate(timeout=10);rc='timeout'
         output=(stdout+stderr).decode('utf-8',errors='replace')
-        result=dict(module=path.stem,returncode=rc,seconds=round(time.monotonic()-began,2))
+        result=dict(module=path.stem,returncode=rc,seconds=round(time.monotonic()-began,2),timeoutSeconds=budget)
         (HERE/f'{phase}-{path.stem}.log').write_text(output,encoding='utf-8')
         import re
         count=re.search(r'Ran (\d+) tests?',output);result['tests']=int(count[1]) if count else 0

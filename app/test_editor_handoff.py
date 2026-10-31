@@ -8,7 +8,10 @@ from test_project_cost_motion import ink_count
 
 class EditorHandoffTests(unittest.TestCase):
     import test_edge_dock as fixture
-    setUp=fixture.DockTests.setUp
+    def setUp(self):
+        self.fixture.DockTests.setUp(self)
+        # Compare layout pixels at one glyph phase, not two clock instants.
+        self.p.bubble.status_indicator.clock=lambda:0.
     tearDown=fixture.DockTests.tearDown
     def target(self):
         transition=self.p.bubble.size_transition

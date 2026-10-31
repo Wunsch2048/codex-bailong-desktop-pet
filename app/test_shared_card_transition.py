@@ -60,10 +60,11 @@ class SharedCardTransitionTests(unittest.TestCase):
                 self.assertGreater(dark,20,(direction,value,'status row background hid its text'))
             t.animation.resume();t.complete();APP.processEvents()
     def test_common_sections_have_one_path_in_both_directions(self):
-        required={'heading','conversations','quota','statistics','today_tokens',*(f'action_{i}' for i in range(4))}
+        required={'heading','conversations','quota','statistics','today_tokens','action_0','action_1','action_3'}
         for _ in range(2):
             t=self.transition();m=t.morph
             self.assertTrue(required<=set(m.shared_parts))
+            self.assertEqual([part.key for part in m.exclusive_parts if part.key.startswith('action_')],['action_2'])
             for index,image in enumerate(m.body_frames):
                 for part in m.shared_parts.values():
                     self.assertEqual(image.toImage().pixelColor(part.pixel_rects[index].center()).alpha(),0)
@@ -80,6 +81,31 @@ class SharedCardTransitionTests(unittest.TestCase):
             for at in (.1,.25,.4,.55,.7,.85,.95,1):
                 image.fill(Qt.GlobalColor.transparent);p=QPainter(image);m.paint(p,at,canvas);p.end()
         self.assertEqual(before,{k:p.buffer_builds for k,p in m.shared_parts.items()})
+    def test_expanded_rows_and_compact_range_use_their_actual_semantic_regions(self):
+        self.b.roster.observe(dict(session='two-line',state='working',active=1,title='状态行',display='检查布局'))
+        self.b.redraw();APP.processEvents();self.b.size_transition.complete()
+        t=self.transition();m=t.morph;target=m.end
+        title=target.shared_bounds['conversation_title_two-line'];detail=target.shared_bounds['conversation_detail_two-line']
+        self.assertGreater(detail.top(),title.top())
+        self.assertEqual(title.left(),detail.left())
+        unique={part.key for part in m.exclusive_parts}
+        self.assertIn('conversation_badge_two-line',unique);self.assertIn('statistics_range_choice',unique)
+        self.assertNotIn('statistics_range_all',target.shared_bounds)
+        self.assertEqual(m.shared_parts['action_3'].rects[1].size(),self.b._header_actions[-1].size())
+    def test_small_screen_shared_parts_obey_the_status_scroll_viewport(self):
+        from PySide6.QtWidgets import QScrollArea
+        from PySide6.QtCore import QPoint,QPointF
+        self.b.expanded_height=lambda:320
+        self.b.roster.observe(dict(session='small-a',state='working',active=1,title='小屏一',display='检查布局'))
+        self.b.roster.observe(dict(session='small-b',state='working',active=1,title='小屏二',display='检查布局'))
+        self.b.redraw();APP.processEvents();self.b.size_transition.complete()
+        t=self.transition();m=t.morph;scroll=self.b.findChild(QScrollArea,'expanded_status_scroll')
+        self.assertIsNotNone(scroll)
+        viewport=scroll.viewport();visible=QRectF(QPointF(viewport.mapTo(self.b.content,QPoint())),viewport.size())
+        for key in ('conversations','quota','statistics','today_tokens','live_rate'):
+            self.assertEqual(m.end.visible_bounds[key],visible)
+            self.assertEqual(m.shared_parts[key].clips[1],visible.translated(m.end.rect.topLeft()))
+        self.assertEqual(scroll.verticalScrollBar().value(),0)
     def test_expand_preserves_quota_and_chart_progress(self):
         calls=[];original=QuotaSummary.begin_reveal
         def begin(widget):calls.append(widget);return original(widget)
@@ -87,6 +113,13 @@ class SharedCardTransitionTests(unittest.TestCase):
         self.assertFalse(calls)
         self.assertAlmostEqual(next(iter(self.b.quota_summary_card.values.values())),.73)
         self.assertEqual(self.b.deck.content.plot.reveal.progress,1.)
+    def test_quota_corner_matches_both_live_styles_and_interpolates(self):
+        for expected in ((10,11),(11,10)):
+            transition=self.transition();part=transition.morph.shared_parts['quota']
+            self.assertEqual(part.corners,expected)
+            self.assertEqual(part.corner_at(0),expected[0]);self.assertEqual(part.corner_at(1),expected[1])
+            self.assertEqual(part.corner_at(.5),10.5)
+            transition.complete();APP.processEvents()
     @patch("compact_bubble.time.time",return_value=1800000001.)
     def test_pure_size_toggles_reuse_details_but_new_quota_invalidates_them(self,clock):
         self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();first=self.b.details_tabs

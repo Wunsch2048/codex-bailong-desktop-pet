@@ -309,7 +309,7 @@ class DesktopPet(EnhancedPet):
     def autonomous_boundary(self,now):
         if not self.isVisible() or self.dragging or self.throwing or self.walking or (getattr(self,'edge_dock',None) and self.edge_dock.active):return False
         if now<max(self.next_chain,self.buffer_until,self.status_hold):return False
-        if self.settings.get('status_actions',True) and self.reactions.busy(now):return False
+        if self.settings.get('status_actions',True) and (self.reactions.busy(now) or self.bubble.status_indicator.is_busy()):return False
         if self.roaming.queue:self.start_walk();return self.walking
         self.next_chain=now+self.settings['random_interval']+self.settings['action_gap']
         choices=['idle'];weights=[30]
@@ -437,6 +437,7 @@ class DesktopPet(EnhancedPet):
 
     def start_walk(self):
         if self._materials_missing or not self.settings.get('character_visible',True):return
+        if self.settings.get('status_actions',True) and (self.reactions.busy(time.monotonic()) or self.bubble.status_indicator.is_busy()):return
         if getattr(self,'edge_dock',None) and self.edge_dock.active:return
         if self.settings_dialog and self.settings_dialog.isVisible():return
         if self.bubble.underMouse() or self.underMouse() or self.bubble.size_transition.running or self.bubble.size_transition.preparing:return
@@ -614,6 +615,8 @@ class DesktopPet(EnhancedPet):
             elif event.get('kind')=='monitor_error':
                 self.reactions.observe(dict(state='offline',text='监听异常',active=0),time.monotonic())
             super().on_activity(event)
+            if event.get('kind')=='status' and self.settings.get('status_actions',True) and self.bubble.status_indicator.is_busy() and self.walking and not (self.dragging or self.throwing):
+                self.stop_walk(land=True)
     def complete_animation(self,event):
         if self.reactions.queue_completion(event,time.monotonic()):self.pending_completion=event
     def update_connection_health(self,values):
@@ -923,6 +926,7 @@ class DesktopPet(EnhancedPet):
                     if active:panel.raise_();panel.activateWindow()
     def show_panel(self,panel):
         if not panel.isWindow():
+            if not self.bubble.enabled:self.set_option('bubble',True)
             self.stop_walk();self.throwing=False;self._desktop_hidden=False;self.apply_surface_visibility()
             # First activation can synchronously polish the native editor and
             # take a full frame. Do it before the snapshot animation starts so
@@ -1262,6 +1266,11 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError) as error:QMessageBox.warning(self.settings_dialog,'恢复失败',str(error))
     def record_state(self):
         path=STATE_DIR/'runtime.json';value=super().runtime_state()
+        now=time.monotonic()
+        value['activity_projection']=dict(display_busy=self.bubble.status_indicator.is_busy(),animation_busy=self.reactions.busy(now),
+            known_animation_sessions=len(self.reactions.sessions),
+            recent_active_leases=sum(active and now-stamp<=35 for turn,active,stamp in self.reactions.leases.values()),
+            recent_idle_leases=sum(not active and now-stamp<=35 for turn,active,stamp in self.reactions.leases.values()))
         value['status_icon_timing']=self.bubble.status_indicator.timing_snapshot()
         value['material_status_cached']=True
         from decode_runtime import STATS

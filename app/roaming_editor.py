@@ -106,16 +106,17 @@ class RouteDiagram(QWidget):
 class RoamingEditor(QWidget):
     def __init__(self,settings,parent):
         super().__init__(parent);self.settings=settings;self.setObjectName('roamingEditor');self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True)
-        set_theme_style(self,'QWidget#roamingEditor{background:#f5f2f7;}QLabel{'+FONT_CSS+'font-size:12px;color:#706879;}QToolButton{'+FONT_CSS+'font-size:12px;color:#75618d;border:0;background:transparent;text-align:left;}')
+        set_theme_style(self,'QWidget#roamingEditor{background:#f5f2f7;}QLabel{'+FONT_CSS+'font-size:12px;color:#706879;}QToolButton{'+FONT_CSS+'font-size:12px;color:#75618d;border:0;border-radius:6px;background:#e8dff0;padding:4px 8px;text-align:left;}QToolButton:hover{background:#ded2e7;}')
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus);outer=QVBoxLayout(self);outer.setContentsMargins(5,3,5,4);outer.setSpacing(7)
-        back=QToolButton();back.setText('‹ 走动设置');back.setFixedHeight(26);back.clicked.connect(self.hide);outer.addWidget(back)
+        back=QToolButton();back.setText('‹ 走动设置');back.setFixedHeight(26);back.clicked.connect(self.close_page);outer.addWidget(back)
         scroll=hide_scrollbars(QScrollArea());scroll.setWidgetResizable(True);set_theme_style(scroll,'QScrollArea{border:0;background:transparent;}')
         scroll.viewport().setObjectName('roamingViewport');scroll.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True);set_theme_style(scroll.viewport(),'QWidget#roamingViewport{background:#f5f2f7;}')
         body=QWidget();body.setObjectName('roamingBody');body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True);set_theme_style(body,'QWidget#roamingBody{background:#f5f2f7;}')
         row=QVBoxLayout(body);row.setContentsMargins(2,0,2,0);row.setSpacing(7)
         self.mode=SlidingSegments([(LABELS[k],k) for k in ('edge','side','zone','window')]);row.addWidget(self.mode)
         diagram_row=QHBoxLayout();self.diagram=RouteDiagram();diagram_row.addWidget(self.diagram,1)
-        self.reset_zone=QToolButton();self.reset_zone.setText('↺');self.reset_zone.setFixedSize(26,26);self.reset_zone.setAccessibleName('重置活动区');self.reset_zone.setToolTip('重置');self.reset_zone.setCursor(Qt.CursorShape.PointingHandCursor)
+        from settings_presentation import SettingsResetButton
+        self.reset_zone=SettingsResetButton();self.reset_zone.setFixedSize(26,26);self.reset_zone.setAccessibleName('重置活动区');self.reset_zone.setToolTip('重置');self.reset_zone.setCursor(Qt.CursorShape.PointingHandCursor)
         set_theme_style(self.reset_zone,'QToolButton{font-size:18px;color:#75618d;background:#e8dff0;border:0;border-radius:13px;}QToolButton:hover{background:#ded2e7;}QToolButton:pressed{background:#d6c5ed;}')
         self.reset_zone.clicked.connect(self.reset_activity_zone);diagram_row.addWidget(self.reset_zone);row.addLayout(diagram_row);self.caption=QLabel();self.caption.setWordWrap(True);row.addWidget(self.caption)
         form=QFormLayout();form.setContentsMargins(0,0,0,0);form.setVerticalSpacing(7);row.addLayout(form)
@@ -143,16 +144,31 @@ class RoamingEditor(QWidget):
         self.reset_zone.setVisible(mode=='zone')
         if len(self.diagram.points)==1 and mode=='zone' and self.diagram.reason:
             self.caption.setText('请让活动区覆盖人物当前高度' if '高度' in self.diagram.reason else '活动区太小，请扩大框选范围')
-    def open(self):self.setGeometry(self.parentWidget().rect());self.refresh();self.scroll.verticalScrollBar().setValue(0);self.show();self.raise_();self.setFocus()
+    def open(self):
+        from data_page_motion import PageFade
+        parent=self.parentWidget();motion=getattr(self,'page_motion',None)
+        if motion is None:self.page_motion=motion=PageFade(parent)
+        frame=motion.current_frame() if motion.isVisible() else None
+        motion.clear()
+        if frame is None:frame=PageFade.snapshot(parent)
+        self.setGeometry(parent.rect());self.refresh();self.scroll.verticalScrollBar().setValue(0);self.show();self.raise_();self.layout().activate();self.setFocus()
+        motion.present(frame,PageFade.snapshot(self),self.geometry(),direction=1)
+    def close_page(self):
+        from data_page_motion import PageFade
+        parent=self.parentWidget();motion=getattr(self,'page_motion',None)
+        if motion is None:self.hide();return
+        frame=motion.current_frame() if motion.isVisible() else PageFade.snapshot(self)
+        motion.clear();self.hide()
+        motion.present(frame,PageFade.snapshot(parent),parent.rect(),direction=-1)
     def commit(self):
         self.settings.apply()
-        if not self.settings.draft.dirty:self.hide()
+        if not self.settings.draft.dirty:self.close_page()
         else:self.caption.setText(self.settings.status.text())
     def eventFilter(self,obj,event):
         if event.type()==QEvent.Type.Resize:self.setGeometry(obj.rect())
         elif event.type()==QEvent.Type.Hide:self.hide()
         return False
     def keyPressEvent(self,event):
-        if event.key()==Qt.Key.Key_Escape:self.hide();event.accept();return
+        if event.key()==Qt.Key.Key_Escape:self.close_page();event.accept();return
         super().keyPressEvent(event)
     def paintEvent(self,event):p=QPainter(self);p.fillRect(self.rect(),QColor(color('#f5f2f7')))

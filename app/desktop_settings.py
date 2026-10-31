@@ -5,7 +5,7 @@ import threading
 from PySide6.QtCore import Qt,QThread,Signal
 from PySide6.QtGui import QShortcut,QKeySequence
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QTabWidget,QWidget,
-    QCheckBox,QDoubleSpinBox,QPlainTextEdit,QPushButton,QComboBox,QLabel,QFileDialog,QMessageBox,QScrollArea,QLineEdit)
+    QCheckBox,QDoubleSpinBox,QPlainTextEdit,QPushButton,QComboBox,QLabel,QFileDialog,QMessageBox,QScrollArea,QLineEdit,QSizePolicy,QLayout)
 from desktop_core import DEFAULTS,VERSION
 from desktop_services import autostart_enabled,set_autostart,import_character,validate_character,all_items
 from settings_draft import SettingsDraft
@@ -17,6 +17,7 @@ from choice_controls import ChoiceCombo as QComboBox
 from number_controls import DecimalField as QDoubleSpinBox
 from card_motion import AnimatedDisclosure
 from theme_controls import ThemeChoices
+from settings_presentation import SettingsSwitchRow,SettingsThemeChoices,SettingsStatusLabel,SettingsResetButton,SettingsDisclosureButton,SettingsFooterButton
 
 class ConnectionJob(QThread):
     report=Signal(object)
@@ -56,16 +57,17 @@ class PathsJob(QThread):
 class SettingsDialog(QDialog):
     def __init__(self,pet,embedded=False,lazy=False):
         super().__init__(pet,Qt.WindowType.Widget if embedded else Qt.WindowType.Dialog);self.pet=pet;self.embedded=embedded;self.fields={};self.job=None;self.connection_job=None
-        self.field_tabs={};self.field_titles={};self.factors={};self._writing_widgets=True;self.draft=None;self.path_job=None;self._saving=False
+        self.field_tabs={};self.field_titles={};self.factors={};self._writing_widgets=True;self.draft=None;self.path_job=None;self._saving=False;self._visit_active=False
         if embedded:self.setWindowFlags(Qt.WindowType.Widget)
         self.setWindowTitle('白龙桌宠设置');self.resize(590,680)
         set_theme_style(self,editor_stylesheet(FONT_CSS)+
-            f'QPushButton{{border:0;border-radius:7px;padding:6px 10px;}}'
+            f'QPushButton{{background:{SELECTED};color:{PRIMARY};border:0;border-radius:7px;padding:6px 10px;}}'
+            f'QToolButton{{background:{PANEL};border-radius:6px;}}QToolButton:hover{{background:{SELECTED};}}'
             # The inherited hover used PANEL, identical to the settings page.
             # Keep a visible filled action on hover across all lazy-built tabs.
-            f'QPushButton:hover{{background:{SELECTED};}}'
+            f'QPushButton:hover{{background:{BORDER};}}QPushButton:checked{{background:{BORDER};}}'
             f'QPushButton:pressed,QPushButton:checked:hover{{background:{BORDER};}}'
-            f'QTabWidget::pane{{border:0;background:{PANEL};}}QTabBar::tab{{background:{SELECTED};color:{MUTED};border:0;border-radius:6px;padding:7px 10px;margin:2px;}}'
+            f'QTabWidget::pane{{border:0;background:transparent;}}QTabBar::tab{{background:{SELECTED};color:{MUTED};border:0;border-radius:6px;padding:7px 10px;margin:2px;}}'
             f'QTabBar::tab:selected{{background:{SURFACE};color:{INK};}}'
             f'QScrollBar:vertical{{background:{SELECTED};width:12px;margin:0;border:0;border-radius:6px;}}'
             f'QScrollBar::handle:vertical{{background:{ACCENT};border:2px solid {SELECTED};border-radius:6px;min-height:42px;}}'
@@ -73,25 +75,48 @@ class SettingsDialog(QDialog):
             'QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;width:0;border:0;background:transparent;}'
             'QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}'
             'QScrollBar:vertical:disabled,QScrollBar::handle:vertical:disabled{background:transparent;border-color:transparent;}')
-        outer=QVBoxLayout(self);self.tabs=QTabWidget();outer.addWidget(self.tabs,1)
-        outer.setContentsMargins(10,8,10,8);outer.setSpacing(6);self.tabs.setDocumentMode(True);self.tabs.tabBar().setExpanding(True)
+        outer=QVBoxLayout(self);self.tabs=QTabWidget();self.tabs.setMinimumWidth(0)
+        outer.setContentsMargins(0,0,0,0) if embedded else outer.setContentsMargins(12,10,12,10)
+        outer.setSpacing(9);self.tabs.setDocumentMode(True);self.tabs.tabBar().setExpanding(True)
+        self.category_buttons=[];self.page_titles=['外观与显示','人物与活动','状态与联动','角色与素材','闲聊与台词','更新与维护']
+        body=QWidget();body_row=QHBoxLayout(body);body_row.setContentsMargins(0,0,0,0);body_row.setSpacing(11)
+        sidebar=QWidget();sidebar.setObjectName('settings_sidebar');sidebar.setFixedWidth(57)
+        nav=QVBoxLayout(sidebar);nav.setContentsMargins(0,0,8,0);nav.setSpacing(4)
+        set_theme_style(sidebar,'QWidget#settings_sidebar{border:0;border-right:1px solid #e4dfea;background:transparent;}')
+        for index,label in enumerate(('面板','人物','Codex','素材','闲聊','维护')):
+            button=QPushButton(label);button.setObjectName('settings_category_'+str(index));button.setCheckable(True);button.setFixedHeight(33)
+            button.setAccessibleName(self.page_titles[index]);button.setCursor(Qt.CursorShape.PointingHandCursor)
+            set_theme_style(button,'QPushButton{'+FONT_CSS+f'font-size:11px;min-height:33px;max-height:33px;border:0;border-radius:6px;background:{PANEL};color:{MUTED};padding:0;}}QPushButton:hover{{background:{SELECTED};color:{INK};}}QPushButton:checked,QPushButton:checked:hover{{background:{SELECTED};color:{PRIMARY};}}')
+            button.clicked.connect(lambda checked=False,i=index:self.tabs.setCurrentIndex(i));nav.addWidget(button);self.category_buttons.append(button)
+        nav.addStretch();body_row.addWidget(sidebar)
+        right=QWidget();right.setMinimumWidth(0);right_row=QVBoxLayout(right);right_row.setContentsMargins(0,0,1,0);right_row.setSpacing(9)
+        heading=QHBoxLayout();heading.setContentsMargins(0,0,0,0);heading.setSpacing(4)
+        self.category_title=QLabel(self.page_titles[0]);set_theme_style(self.category_title,FONT_CSS+f'font-size:12px;color:{INK};background:transparent;');heading.addWidget(self.category_title,1)
+        self.defaults_button=SettingsResetButton();self.defaults_button.setFixedSize(22,22);self.defaults_button.setAccessibleName('本页恢复默认');self.defaults_button.setToolTip('本页默认');self.defaults_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.category_title.setFixedHeight(24)
+        set_theme_style(self.defaults_button,f'QToolButton{{font-size:18px;border:0;border-radius:7px;background:{PANEL};color:{PRIMARY};}}QToolButton:hover{{background:{SELECTED};}}QToolButton:disabled{{color:{MUTED};}}')
+        self.defaults_button.clicked.connect(self.defaults);heading.addWidget(self.defaults_button);right_row.addLayout(heading);right_row.addWidget(self.tabs,1);body_row.addWidget(right,1);outer.addWidget(body,1)
+        from data_page_motion import PageFade
+        self._category_motion=PageFade(self.tabs);self._category_index=0
         self._page_forms={};self._built_pages=set();self._building_index=0;self.refresh_buttons={}
         for title in ['面板与显示', '人物与动作', 'Codex 联动', '角色与素材', '闲聊与台词', '更新与维护']:self.tab(title)
         self.build_page(0)
         if not lazy:
             for index in range(1,6):self.build_page(index)
-        self.draft_status=QLabel();self.draft_status.setWordWrap(True);outer.addWidget(self.draft_status)
-        self.status=QLabel();self.status.setWordWrap(True);outer.addWidget(self.status)
-        row=QHBoxLayout()
-        self.defaults_button=QPushButton('本页恢复默认');self.defaults_button.clicked.connect(self.defaults);row.addWidget(self.defaults_button)
-        self.discard_button=QPushButton('放弃修改');self.discard_button.clicked.connect(self.reload);row.addWidget(self.discard_button)
-        self.apply_button=QPushButton('保存');self.apply_button.clicked.connect(self.apply);row.addWidget(self.apply_button)
-        button=QPushButton('返回' if embedded else '关闭');button.clicked.connect(self.dismiss);row.addWidget(button)
+        self.tabs.tabBar().hide()
+        self.status=SettingsStatusLabel();self.status.setWordWrap(True);set_theme_style(self.status,FONT_CSS+f'font-size:11px;color:{MUTED};');self.status.hide();outer.addWidget(self.status)
+        footer=QWidget();footer.setObjectName('settings_footer');set_theme_style(footer,'QWidget#settings_footer{background:transparent;border:0;border-top:1px solid #e4dfea;}')
+        row=QHBoxLayout(footer);row.setContentsMargins(0,10,0,0);row.setSpacing(7)
+        self.draft_status=QLabel();self.draft_status.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Preferred);set_theme_style(self.draft_status,FONT_CSS+f'font-size:10px;color:{MUTED};border:0;');row.addWidget(self.draft_status,1)
+        self.discard_button=SettingsFooterButton('放弃');self.discard_button.setAccessibleName('放弃修改');self.discard_button.clicked.connect(self.reload);row.addWidget(self.discard_button)
+        self.apply_button=SettingsFooterButton('保存',primary=True);self.apply_button.clicked.connect(self.apply);row.addWidget(self.apply_button)
+        if not embedded:
+            button=QPushButton('关闭');button.clicked.connect(self.dismiss);row.addWidget(button)
         for control in self.findChildren(QPushButton):control.setAutoDefault(False)
         self.apply_button.setProperty('role','primary');self.apply_button.setAutoDefault(True);self.apply_button.setDefault(True)
         self.save_shortcut=QShortcut(QKeySequence('Ctrl+S'),self);self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);self.save_shortcut.activated.connect(self.apply)
         self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        outer.addLayout(row);self.tabs.currentChanged.connect(self.activate_page);self.reload()
+        outer.addWidget(footer);self.tabs.currentChanged.connect(self.activate_page);self.activate_page(0);self.reload()
         if hasattr(pet,'settingsChanged'):pet.settingsChanged.connect(self.sync_from_pet)
         pet.bubble.dataBusyChanged.connect(self.update_refresh_state)
         for key in self.refresh_buttons:self.update_refresh_state(key,getattr(pet.bubble,key+'_busy'))
@@ -103,103 +128,149 @@ class SettingsDialog(QDialog):
         for button in self.findChildren(QPushButton):button.setAutoDefault(False)
         self._writing_widgets=False
     def activate_page(self,index):
-        self.build_page(index);self.update_draft_state()
+        previous=getattr(self,'_category_index',index);motion=getattr(self,'_category_motion',None)
+        frame=motion.current_frame() if motion and motion.isVisible() else None
+        if frame is None and motion and previous!=index and self.isVisible():frame=motion.snapshot(self.tabs.widget(previous))
+        if motion:motion.clear()
+        self.build_page(index)
+        for i,button in enumerate(self.category_buttons):button.setChecked(i==index)
+        self.category_title.setText(self.page_titles[index]);self.tabs.widget(index).verticalScrollBar().setValue(0);self.update_draft_state()
+        self._category_index=index
+        if frame is not None:
+            page=self.tabs.widget(index);page.ensurePolished();page.widget().layout().activate()
+            motion.present(frame,motion.snapshot(page),page.geometry(),direction=1 if index>previous else -1)
+    def begin_visit(self):
+        """Reset one page entry, never a repaint or a return from its subpage."""
+        if self._visit_active:return
+        self._visit_active=True
+        area=self.tabs.currentWidget();area.verticalScrollBar().setValue(0);area.horizontalScrollBar().setValue(0)
+    def end_visit(self):self._visit_active=False
+    def showEvent(self,event):
+        if not self.embedded:self.begin_visit()
+        super().showEvent(event)
+    def hideEvent(self,event):
+        if not self.embedded:self.end_visit()
+        super().hideEvent(event)
     def build_page_0(self):
         pet=self.pet
         appearance=self.tab('面板与显示')
-        motion=SlidingSegments([('性能','performance'),('质量','quality')])
-        appearance.addRow('界面动画',motion);self.fields['ui_animation_mode']=motion
-        self.field_tabs['ui_animation_mode']=0;self.field_titles['ui_animation_mode']='界面动画'
-        motion.currentIndexChanged.connect(lambda:self.edited('ui_animation_mode'))
-        self.section(appearance,'颜色主题',None)
-        themes=ThemeChoices();appearance.addRow(themes);self.fields['theme']=themes
+        appearance.setVerticalSpacing(0)
+        front=QWidget();groups=QVBoxLayout(front);groups.setContentsMargins(0,0,0,0);groups.setSpacing(13)
+        def group(title):
+            widget=QWidget();layout=QVBoxLayout(widget);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
+            label=QLabel(title);label.setFixedHeight(16);set_theme_style(label,FONT_CSS+f'font-size:11px;color:{MUTED};background:transparent;')
+            layout.addWidget(label);layout.addSpacing(7);groups.addWidget(widget)
+            return layout
+        theme_group=group('主题')
+        themes=SettingsThemeChoices();theme_group.addWidget(themes);self.fields['theme']=themes
         self.field_tabs['theme']=0;self.field_titles['theme']='颜色主题'
         themes.currentIndexChanged.connect(lambda:self.edited('theme'))
+        theme_group.addSpacing(4)
+        note=QLabel('选择后预览，保存后保留');note.setFixedHeight(17);note.setAlignment(Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignTop);set_theme_style(note,FONT_CSS+f'font-size:10px;color:{MUTED};');theme_group.addWidget(note)
+        shape_group=group('卡片形态')
+        self.mode=self.presentation_segments([('自动','auto'),('胶囊','mini'),('极简','minimal')])
+        shape_group.addWidget(self.mode);self.fields['bubble_mode']=self.mode;self.field_tabs['bubble_mode']=0;self.field_titles['bubble_mode']='卡片显示模式'
+        self.mode.currentIndexChanged.connect(lambda:self.edited('bubble_mode'))
+        motion_group=group('界面动画')
+        motion=self.presentation_segments([('性能','performance'),('质量','quality')])
+        motion_group.addWidget(motion);self.fields['ui_animation_mode']=motion
+        self.field_tabs['ui_animation_mode']=0;self.field_titles['ui_animation_mode']='界面动画'
+        motion.currentIndexChanged.connect(lambda:self.edited('ui_animation_mode'))
+        layout_group=group('布局')
+        for index,(key,title) in enumerate((('character_visible','显示人物'),('panel_detached','面板与人物分离'))):
+            if index:layout_group.addSpacing(1)
+            control=SettingsSwitchRow(title);control.setFixedHeight(31);control.setProperty('separated',bool(index));layout_group.addWidget(control)
+            self.fields[key]=control;self.field_tabs[key]=0;self.field_titles[key]=title;control.toggled.connect(lambda checked,key=key:self.edited(key))
+        appearance.addRow(front)
+        spacer=QWidget();spacer.setFixedHeight(10);appearance.addRow(spacer)
+        advanced=appearance
+        custom_button=QPushButton('自定义颜色');custom_button.clicked.connect(lambda:themes.setCurrentIndex(themes.findData('custom')));advanced.addRow(custom_button)
         custom=QWidget();custom_form=QFormLayout(custom);custom_form.setContentsMargins(0,0,0,0)
         for key,title in (('theme_accent','强调色'),('theme_surface','背景色'),('theme_ink','文字色')):
             field=QLineEdit();field.setMaxLength(7);field.setPlaceholderText('#RRGGBB');field.setAccessibleName(title)
             custom_form.addRow(title,field);self.fields[key]=field;self.field_tabs[key]=0;self.field_titles[key]=title
             field.textChanged.connect(lambda text,key=key:self.edited(key))
-        self.theme_custom=custom;appearance.addRow(custom)
+        self.theme_custom=custom;advanced.addRow(custom)
         custom.hide()
         themes.currentIndexChanged.connect(lambda:self.theme_custom.setVisible(themes.currentData()=='custom'))
-        self.section(appearance,'显示内容',None)
-        self.check(appearance,'panel_detached','面板与人物分别移动')
-        for key,title in [('character_visible','显示人物'),('on_top','始终置顶'),('mouse_through','鼠标穿透（可从托盘恢复）'),('bubble','显示面板'),('quota_visible','显示额度和重置时间')]:
-            self.check(appearance,key,title)
-        self.fullscreen_mode=SlidingSegments([('关闭','off'),('仅视频','video'),('游戏和视频','game_video')])
-        appearance.addRow('全屏时让位',self.fullscreen_mode);self.fields['fullscreen_yield_mode']=self.fullscreen_mode;self.field_tabs['fullscreen_yield_mode']=0;self.field_titles['fullscreen_yield_mode']='全屏时让位'
+        themes.currentIndexChanged.connect(lambda:self.refresh_disclosure_layout(self.theme_custom))
+        for key,title in [('on_top','始终置顶'),('mouse_through','鼠标穿透（可从托盘恢复）'),('bubble','显示面板'),('quota_visible','显示额度和重置时间')]:
+            self.check(advanced,key,title)
+        self.fullscreen_mode=self.presentation_segments([('关闭','off'),('仅视频','video'),('游戏和视频','game_video')])
+        advanced.addRow('全屏时让位',self.fullscreen_mode);self.fields['fullscreen_yield_mode']=self.fullscreen_mode;self.field_tabs['fullscreen_yield_mode']=0;self.field_titles['fullscreen_yield_mode']='全屏时让位'
         self.fullscreen_mode.currentIndexChanged.connect(lambda:self.edited('fullscreen_yield_mode'))
         note=QLabel('只在桌宠所在屏幕被窗口真正全屏占用时生效。游戏和视频模式隐藏人物和面板，仅保留托盘额度环；不会因完成提醒重新置顶。浏览器、办公和系统窗口不会按游戏处理。')
-        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');appearance.addRow(note)
-        self.section(appearance,'卡片与快捷入口','自动模式闲置后收为胶囊；手动选择胶囊或极简后不会因新状态自动展开。')
-        self.mode=SlidingSegments([('自动','auto'),('胶囊','mini'),('极简','minimal')])
-        appearance.addRow('卡片显示模式',self.mode);self.fields['bubble_mode']=self.mode;self.field_tabs['bubble_mode']=0;self.field_titles['bubble_mode']='卡片显示模式'
-        self.mode.currentIndexChanged.connect(lambda:self.edited('bubble_mode'))
+        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');advanced.addRow(note)
+        self.section(advanced,'胶囊快捷入口','自动模式闲置后收为胶囊；手动选择胶囊或极简后不会因新状态自动展开。')
         from quick_actions import ACTIONS
         self.shortcut=QComboBox()
         for key,title,icon in ACTIONS:self.shortcut.addItem(title,key)
-        appearance.addRow('胶囊左侧快捷功能',self.shortcut);self.fields['capsule_action']=self.shortcut;self.field_tabs['capsule_action']=0;self.field_titles['capsule_action']='胶囊快捷功能'
+        advanced.addRow('胶囊左侧快捷功能',self.shortcut);self.fields['capsule_action']=self.shortcut;self.field_tabs['capsule_action']=0;self.field_titles['capsule_action']='胶囊快捷功能'
         self.shortcut.currentIndexChanged.connect(lambda:self.edited('capsule_action'))
         self.website=QLineEdit();self.website.setPlaceholderText('https://…');self.website.setAccessibleName('自定义网页地址');self.website.setMaxLength(2048)
-        appearance.addRow('自定义网页地址',self.website);self.fields['capsule_website']=self.website;self.field_tabs['capsule_website']=0;self.field_titles['capsule_website']='自定义网页地址'
+        advanced.addRow('自定义网页地址',self.website);self.fields['capsule_website']=self.website;self.field_tabs['capsule_website']=0;self.field_titles['capsule_website']='自定义网页地址'
         self.website.textChanged.connect(lambda:self.edited('capsule_website'))
-        note=QLabel('仅卡片时可拖动空白处或极简圆；点击极简圆回到正常卡片，右键可切换显示模式。人物隐藏后暂停动画，Codex 联动继续。');note.setWordWrap(True);appearance.addRow(note)
 
     def build_page_1(self):
         pet=self.pet
         behavior=self.tab('人物与动作')
-        self.section(behavior,'位置与移动',None)
+        self.section(behavior,'人物大小',None)
         self.number(behavior,'scale','角色大小（倍）',.4,2.5,.1)
-        self.check(behavior,'no_move','锁定人物位置（禁止拖动和自主走动）')
-        self.check(behavior,'wandering','允许自主走动（不影响手动拖动）')
+        self.section(behavior,'自主活动',None)
+        self.check(behavior,'wandering','允许自主走动')
         self.roaming_button=QPushButton('走动设置  ›');self.roaming_button.setObjectName('open_roaming_settings');behavior.addRow(self.roaming_button)
         set_theme_style(self.roaming_button,'QPushButton#open_roaming_settings{background:#e8dff0;color:#75618d;border:0;border-radius:7px;padding:6px 9px;}QPushButton#open_roaming_settings:hover{background:#ded2e7;}QPushButton#open_roaming_settings:pressed{background:#d6c5ed;}QPushButton#open_roaming_settings:disabled{background:#efebf2;color:#706879;}')
-        self.check(behavior,'drag_physics','松手后惯性滑行与反弹')
-        self.check(behavior,'edge_docking','拖动贴边探头')
-        self.section(behavior,'动作与声音','自动动作静音；只在你主动点击或手动播放时使用音效。')
+        self.check(behavior,'edge_docking','允许贴边')
+        self.section(behavior,'动作与声音',None)
         self.check(behavior,'random_actions','自动随机动作')
-        self.check(behavior,'sound','主动点击人物或手动动作时播放音效')
-        self.advanced_button=QPushButton('展开高级动作参数');self.advanced_button.setCheckable(True);behavior.addRow(self.advanced_button)
+        self.check(behavior,'sound','点击或手动动作音效')
+        self.check(behavior,'no_move','锁定人物位置')
+        self.check(behavior,'drag_physics','松手后惯性滑行')
+        self.advanced_button=SettingsDisclosureButton('更多人物选项');self.advanced_button.setCheckable(True);behavior.addRow(self.advanced_button)
+        self.style_disclosure(self.advanced_button)
         advanced=QWidget();advanced_form=QFormLayout(advanced);advanced_form.setContentsMargins(0,0,0,0)
+        advanced_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         for key,title,lo,hi,step in [('playback_speed','播放速度（倍）',.25,3,.25),('action_gap','动作结束后等待（秒）',0,60,1),('random_interval','自主动作间隔（秒）',3,600,1)]:self.number(advanced_form,key,title,lo,hi,step)
         self.advanced_card=AnimatedDisclosure(advanced);behavior.addRow(self.advanced_card)
         self.advanced_button.toggled.connect(self.advanced_card.set_expanded)
-        self.advanced_button.toggled.connect(lambda checked:self.advanced_button.setText('收起高级动作参数' if checked else '展开高级动作参数'))
         from roaming_editor import RoamingEditor
         self.roaming_editor=RoamingEditor(self,self);self.roaming_button.clicked.connect(self.roaming_editor.open)
 
     def build_page_2(self):
         pet=self.pet
         connection=self.tab('Codex 联动')
+        self.section(connection,'运行联动',None)
+        self.codex_startup=SettingsSwitchRow('随 Codex 桌面端启动');connection.addRow(self.codex_startup)
+        self.field_tabs['codex_startup']=self._building_index;self.field_titles['codex_startup']='随 Codex 启动'
+        self.codex_startup.toggled.connect(lambda:self.edited('codex_startup'))
+        self.check(connection,'codex_exit','Codex 关闭后退出桌宠')
+        self.fields['codex_exit'].setToolTip('确认 Codex 桌面端已退出后，约 6 秒关闭桌宠。')
+        self.check(connection,'status_actions','人物响应任务状态')
         self.section(connection,'额度变化提醒',None)
         self.number(connection,'quota_decline_threshold','下降达到',1,100,1,suffix='%')
         self.number(connection,'quota_increase_threshold','上涨达到',1,100,1,suffix='%')
-        self.section(connection,'启动与退出','Windows 登录启动与随 Codex 启动相互独立；按需开启。')
-        self.startup=SwitchRow('登录 Windows 时启动');connection.addRow(self.startup)
+        self.startup=SettingsSwitchRow('登录 Windows 时启动');connection.addRow(self.startup)
         self.field_tabs['startup']=self._building_index;self.field_titles['startup']='开机启动'
         self.startup.toggled.connect(lambda:self.edited('startup'))
-        self.codex_startup=SwitchRow('随 Windows Codex 桌面端启动');connection.addRow(self.codex_startup)
-        self.field_tabs['codex_startup']=self._building_index;self.field_titles['codex_startup']='随 Codex 启动'
-        self.codex_startup.toggled.connect(lambda:self.edited('codex_startup'))
-        note=QLabel('登录时运行轻量监听；识别 Codex 桌面端，不依赖 Codex++。手动退出桌宠后，本次 Codex 使用期间不再拉起。可另行开启关闭联动。');note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');connection.addRow(note)
-        self.check(connection,'codex_exit','Codex 桌面端关闭后退出桌宠（确认退出后约6秒）')
+        connection=self.disclosure_form(connection,'连接与更多选项')
         self.section(connection,'状态与人物响应','面板持续更新，人物在安全边界切换；不会逐条打断动作。')
         self.check(connection,'commentary','显示 Codex 工作过程与回复摘要')
-        self.check(connection,'status_actions','人物响应 Codex 状态')
         self.number(connection,'status_action_interval','单次状态动作最小间隔（秒）',8,120,1)
-        note=QLabel('思考/阅读和处理任务在状态稳定1.5秒后进入，保持中段循环，状态改变后自然收尾。其他动作完整播放并按间隔检查。完成消息立即提醒，庆祝等待安全边界。');note.setWordWrap(True);set_theme_style(note,'font-size:11px;color:#706879;');connection.addRow(note)
 
         self.section(connection,'Codex 连接健康','各项独立检测；失败不会当作已读、零额度或零用量。')
         self.connection_button=QPushButton('检测连接与额度');self.connection_button.setProperty('role','primary');self.connection_button.clicked.connect(self.check_connection);connection.addRow(self.connection_button)
         self.health_panel=CapabilityPanel();self.health_panel.set_snapshot(pet.connection_health.snapshot());connection.addRow(self.health_panel)
+        # Six diagnostic cards remain intact; one column fits the category pane.
+        health_grid=self.health_panel.layout();cards=[health_grid.itemAt(i).widget() for i in range(health_grid.count())]
+        for card in cards:health_grid.removeWidget(card)
+        for i,card in enumerate(cards):health_grid.addWidget(card,i,0)
         pet.connectionHealthChanged.connect(self.health_panel.set_snapshot)
         row=QWidget();buttons=QHBoxLayout(row);buttons.setContentsMargins(0,0,0,0);self.refresh_buttons={}
-        for key,title,slot in [('quota','刷新额度',pet.refresh_quota),('reset','刷新重置消息',pet.refresh_reset_feed),('token','刷新 Token',pet.refresh_tokens)]:
+        for key,title,slot in [('quota','刷新额度',pet.refresh_quota),('reset','刷新公告',pet.refresh_reset_feed),('token','刷新 Token',pet.refresh_tokens)]:
             button=QPushButton(title);button.clicked.connect(slot);buttons.addWidget(button);self.refresh_buttons[key]=(button,title)
         connection.addRow(row)
         self.path_toggle=QPushButton('连接路径与检测报告');self.path_toggle.setCheckable(True);connection.addRow(self.path_toggle)
-        path_body=QWidget();paths=QFormLayout(path_body);paths.setContentsMargins(0,4,0,4)
+        path_body=QWidget();paths=QFormLayout(path_body);paths.setContentsMargins(0,4,0,4);paths.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         from codex_connection import saved_paths,data_home
         saved=saved_paths();self.path_fields={};self.native_path_rows=[];self.path_form=paths
         self.path_source=SlidingSegments([('Windows','windows'),('WSL','wsl')]);self.path_source.setCurrentIndex(self.path_source.findData(saved.get('source') or 'windows'),False);paths.addRow('连接来源',self.path_source)
@@ -208,7 +279,7 @@ class SettingsDialog(QDialog):
             field=QLineEdit(saved.get(key,''));field.setPlaceholderText('留空自动识别');field.setAccessibleName(title);self.path_fields[key]=field;layout.addWidget(field,1)
             browse=QPushButton('选择…');browse.clicked.connect(lambda checked=False,k=key:self.choose_path(k));layout.addWidget(browse);paths.addRow(title,row)
             self.native_path_rows.append(row)
-        self.wsl_body=QWidget();wsl_form=QFormLayout(self.wsl_body);wsl_form.setContentsMargins(0,0,0,0)
+        self.wsl_body=QWidget();wsl_form=QFormLayout(self.wsl_body);wsl_form.setContentsMargins(0,0,0,0);wsl_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         distro_row=QWidget();distro_layout=QHBoxLayout(distro_row);distro_layout.setContentsMargins(0,0,0,0)
         self.wsl_distro=QComboBox();self.wsl_distro.setAccessibleName('WSL 发行版')
         self.wsl_distro.addItem(saved.get('wsl_distro') or '请刷新发行版',saved.get('wsl_distro',''));distro_layout.addWidget(self.wsl_distro,1)
@@ -218,7 +289,6 @@ class SettingsDialog(QDialog):
             field=QLineEdit(saved.get(key,''));field.setPlaceholderText(hint);field.setAccessibleName(title);self.wsl_fields[key]=field;wsl_form.addRow(title,field)
         paths.addRow(self.wsl_body)
         self.active_path=QLabel('当前生效目录：'+str(data_home()));self.active_path.setWordWrap(True);set_theme_style(self.active_path,f'font-size:11px;color:{MUTED};');paths.addRow(self.active_path)
-        note=QLabel('保存后重启桌宠生效。WSL 验证会启动所选发行版；使用 Linux 登录，Windows 数据独立保留。');note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');paths.addRow(note)
         row=QWidget();layout=QHBoxLayout(row);layout.setContentsMargins(0,0,0,0)
         self.save_paths_button=QPushButton('验证并保存路径');self.save_paths_button.clicked.connect(self.validate_paths);layout.addWidget(self.save_paths_button)
         reset=QPushButton('改为自动识别');reset.clicked.connect(self.clear_paths);layout.addWidget(reset);paths.addRow(row)
@@ -235,10 +305,17 @@ class SettingsDialog(QDialog):
             self.section(library,'内置白龙画质','素材与程序独立；下载和切换立即执行，不属于设置草稿。')
             from material_controller import MaterialPanel
             self.material_panel=MaterialPanel(pet.materials);library.addRow(self.material_panel)
+            # Quality choices and download controls share a row in the wide
+            # dialog. Stack them here without replacing controller behavior.
+            layout=self.material_panel.layout();choice=self.material_panel.choice
+            for i in range(layout.count()):
+                item=layout.itemAt(i);row=item.layout()
+                if row is not None and row.indexOf(choice)>=0:
+                    row.removeWidget(choice);layout.insertWidget(i,choice);break
         self.section(library,'角色资源','切换、导入和预览立即执行；预览始终静音。')
         self.characters=QComboBox();library.addRow('当前角色',self.characters)
         button=QPushButton('切换到所选角色');button.clicked.connect(self.switch_character);library.addRow(button)
-        button=QPushButton('导入角色文件夹（WebP / GIF / WebM）');button.clicked.connect(self.import_pack);library.addRow(button)
+        button=QPushButton('导入角色文件夹');button.setToolTip('支持 WebP、GIF 和 WebM 素材');button.clicked.connect(self.import_pack);library.addRow(button)
         tool=QPushButton('WebM 转换工具…');tool.clicked.connect(self.select_converter);library.addRow(tool)
         self.actions=QComboBox();library.addRow('动作分类与预览',self.actions)
         button=QPushButton('静音预览所选动作');button.clicked.connect(self.preview);library.addRow(button)
@@ -254,7 +331,8 @@ class SettingsDialog(QDialog):
         self.check(chat,'self_talk','启用自动台词')
         self.check(chat,'talk_quiet','Codex 工作时不自言自语')
         self.number(chat,'talk_min','台词最短间隔（秒）',5,3600,5);self.number(chat,'talk_max','台词最长间隔（秒）',5,7200,5)
-        self.lines=hide_scrollbars(QPlainTextEdit());self.lines.setMaximumHeight(100);self.lines.setPlaceholderText('每行一句，自动台词不会播放声音');chat.addRow('自定义台词',self.lines)
+        custom=self.disclosure_form(chat,'自定义台词')
+        self.lines=hide_scrollbars(QPlainTextEdit());self.lines.setMaximumHeight(100);self.lines.setPlaceholderText('每行一句，自动台词不会播放声音');custom.addRow(self.lines)
         self.field_tabs['talk_lines']=self._building_index;self.field_titles['talk_lines']='自定义台词';self.lines.textChanged.connect(lambda:self.edited('talk_lines'))
 
     def build_page_5(self):
@@ -266,16 +344,37 @@ class SettingsDialog(QDialog):
             from update_widgets import UpdatePanel
             self.update_panel=UpdatePanel(pet.updates);maintenance.addRow(self.update_panel)
         self.section(maintenance,'诊断与数据','维护操作立即执行；不属于设置草稿。')
+        button=QPushButton('导出诊断');button.setToolTip('导出诊断报告，不含对话和密钥');button.clicked.connect(pet.export_diagnostics);maintenance.addRow(button)
         if hasattr(pet,'open_install_manager'):
             button=QPushButton('程序位置与安装管理');button.clicked.connect(pet.open_install_manager);maintenance.addRow(button)
-        for title,slot in [('打开配置与聊天记录目录',pet.open_data),('导出诊断报告（不含对话和密钥）',pet.export_diagnostics),('备份设置（不含密钥与对话）',pet.backup_settings),('恢复设置备份',pet.restore_settings),('清理历史版本与备份（先预览）',pet.cleanup_installations)]:
-            button=QPushButton(title);button.clicked.connect(slot);maintenance.addRow(button)
+        data=self.disclosure_form(maintenance,'数据与恢复')
+        for title,hint,slot in [('打开数据目录','打开配置与聊天记录目录',pet.open_data),('备份设置','不含密钥与对话',pet.backup_settings),('恢复设置','恢复设置备份',pet.restore_settings),('查看可清理内容','清理历史版本与备份，先预览',pet.cleanup_installations)]:
+            button=QPushButton(title);button.setToolTip(hint);button.clicked.connect(slot);data.addRow(button)
         maintenance.addRow(QLabel('当前版本 '+VERSION))
 
     def section(self,form,title,note):
-        name=QLabel(title);set_theme_style(name,f'font-size:13px;font-weight:500;color:{PRIMARY};background:transparent;padding:2px;margin-top:10px;');form.addRow(name)
-        if note:
-            label=QLabel(note);label.setWordWrap(True);set_theme_style(label,f'font-size:11px;color:{MUTED};margin-bottom:3px;');form.addRow(label)
+        name=QLabel(title);set_theme_style(name,FONT_CSS+f'font-size:11px;font-weight:500;color:{MUTED};background:transparent;padding:0;margin-top:5px;');form.addRow(name)
+    def disclosure_form(self,form,title):
+        """Keep low-frequency controls present in the same draft and form tree."""
+        button=SettingsDisclosureButton(title);button.setCheckable(True);button.setAutoDefault(False);self.style_disclosure(button)
+        form.addRow(button);content=QWidget();body=QFormLayout(content);body.setContentsMargins(0,3,0,3);body.setHorizontalSpacing(7);body.setVerticalSpacing(5)
+        body.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows);body.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        card=AnimatedDisclosure(content);form.addRow(card);button.toggled.connect(card.set_expanded)
+        return body
+    def style_disclosure(self,button):
+        set_theme_style(button,'QPushButton{'+FONT_CSS+f'font-size:11px;color:{PRIMARY};border:0;border-radius:6px;background:{SELECTED};padding:6px 22px 6px 8px;text-align:left;}}QPushButton:hover{{background:{PANEL};}}QPushButton:checked{{background:{BORDER};}}QPushButton:checked:hover{{background:{PANEL};}}')
+    def refresh_disclosure_layout(self,widget):
+        parent=widget.parentWidget()
+        while parent is not None and parent is not self:
+            if parent.layout():parent.layout().invalidate();parent.layout().activate()
+            if isinstance(parent,AnimatedDisclosure) and parent.expanded:parent.refresh_content()
+            parent=parent.parentWidget()
+    def presentation_segments(self,items):
+        control=SlidingSegments(items,compact=True);control.setFixedHeight(28);control.setProperty('largeCardPalette',True)
+        control.layout().setContentsMargins(2,2,2,2);control.layout().setSpacing(2)
+        for button in control.buttons.values():
+            set_theme_style(button,'QToolButton{'+FONT_CSS+f'font-size:11px;color:{MUTED};background:transparent;border:0;padding:0 2px;}}QToolButton:checked{{color:{PRIMARY};}}QToolButton:focus{{border:0;outline:0;color:{PRIMARY};}}')
+        return control
     def choose_path(self,key):
         if key=='home':value=QFileDialog.getExistingDirectory(self,'选择 Codex 数据目录',self.path_fields[key].text())
         else:value,_=QFileDialog.getOpenFileName(self,'选择 Codex CLI（不是桌面主程序）',self.path_fields[key].text(),'程序 (*.exe);;所有文件 (*)')
@@ -324,18 +423,19 @@ class SettingsDialog(QDialog):
         button,title=self.refresh_buttons[key];button.setEnabled(not busy);button.setText('查询中…' if busy else title)
     def tab(self,title):
         if title in self._page_forms:return self._page_forms[title]
-        widget=QWidget();form=QFormLayout(widget);form.setVerticalSpacing(5);form.setHorizontalSpacing(12);form.setContentsMargins(9,3,9,10)
-        if self.embedded:
-            widget.setObjectName('settings_category');set_theme_style(widget,'QWidget#settings_category{background:#f5f2f7;}')
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            area=hide_scrollbars(QScrollArea());area.setWidgetResizable(True)
-            # A permanently hidden bar also keeps disclosure viewport width stable.
-            area.setWidget(widget)
-            bar=area.verticalScrollBar();bar.setSingleStep(32)
-            bar.rangeChanged.connect(lambda low,high,b=bar:b.setEnabled(high>low))
-            index=self.tabs.addTab(area,{'面板与显示':'面板','人物与动作':'人物','Codex 联动':'Codex','角色与素材':'素材','闲聊与台词':'闲聊','更新与维护':'维护'}.get(title,title))
-            self.tabs.setTabToolTip(index,title)
-        else:self.tabs.addTab(widget,title)
+        widget=QWidget();widget.setMinimumWidth(0);form=QFormLayout(widget);form.setVerticalSpacing(4);form.setHorizontalSpacing(7);form.setContentsMargins(0,0,0,10)
+        widget.setObjectName('settings_category');set_theme_style(widget,f'QWidget#settings_category{{background:transparent;}}QLabel{{'+FONT_CSS+f'font-size:11px;color:{INK};background:transparent;}}')
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows);form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # Lazy pages publish their real minimum before the first scroll-area
+        # layout, rather than briefly squeezing nested download/update panels.
+        form.setSizeConstraint(QLayout.SizeConstraint.SetMinAndMaxSize)
+        area=hide_scrollbars(QScrollArea());area.setWidgetResizable(True);area.setFrameShape(QScrollArea.Shape.NoFrame);area.setMinimumWidth(0)
+        set_theme_style(area,'QScrollArea{border:0;background:transparent;}');area.viewport().setAutoFillBackground(False)
+        area.setWidget(widget)
+        bar=area.verticalScrollBar();bar.setSingleStep(32)
+        bar.rangeChanged.connect(lambda low,high,b=bar:b.setEnabled(high>low))
+        index=self.tabs.addTab(area,{'面板与显示':'面板','人物与动作':'人物','Codex 联动':'Codex','角色与素材':'素材','闲聊与台词':'闲聊','更新与维护':'维护'}.get(title,title))
+        self.tabs.setTabToolTip(index,title)
         self._page_forms[title]=form
         return form
     def dismiss(self):
@@ -345,7 +445,7 @@ class SettingsDialog(QDialog):
         if self.embedded and event.key()==Qt.Key.Key_Escape:self.dismiss();event.accept();return
         super().keyPressEvent(event)
     def check(self,form,key,title):
-        widget=SwitchRow(title);self.fields[key]=widget;form.addRow(widget);self.field_tabs[key]=self._building_index;self.field_titles[key]=title
+        widget=SettingsSwitchRow(title);self.fields[key]=widget;form.addRow(widget);self.field_tabs[key]=self._building_index;self.field_titles[key]=title
         widget.toggled.connect(lambda:self.edited(key))
     def number(self,form,key,title,lo,hi,step,factor=1,suffix=''):
         widget=QDoubleSpinBox();widget.setRange(lo*factor,hi*factor);widget.setSingleStep(step*factor);widget.setDecimals(0 if step*factor>=1 else 2);widget.setSuffix(suffix)
@@ -423,11 +523,12 @@ class SettingsDialog(QDialog):
             self.roaming_editor.save.setEnabled(bool(count));self.roaming_editor.discard.setEnabled(bool(count))
         from theme_registry import THEME_KEYS
         theme_only=bool(self.draft.dirty) and self.draft.dirty.issubset(THEME_KEYS)
-        text='主题预览，Ctrl+S 保存' if theme_only else f'{count} 项未保存，Ctrl+S 保存' if count else '设置已保存'
+        text='主题预览' if theme_only else f'{count} 项未保存' if count else '设置已保存'
+        tooltip=text+'；Ctrl+S 保存'
         if self.draft.conflicts:
             names='、'.join(self.field_titles[k] for k in sorted(self.draft.conflicts))
-            text+='\n外部也修改了：'+names+'。应用将采用此处草稿；放弃修改将采用当前值。'
-        self.draft_status.setText(text)
+            text+=' / 有冲突';tooltip+='\n外部也修改了：'+names+'。保存将采用此处草稿；放弃修改将采用当前值。'
+        self.draft_status.setText(text);self.draft_status.setToolTip(tooltip);self.draft_status.setAccessibleDescription(tooltip)
         self.defaults_button.setEnabled(any(tab==self.tabs.currentIndex() and key in DEFAULTS for key,tab in self.field_tabs.items()))
         if 'no_move' in self.fields:
             locked=self.fields['no_move'].isChecked()

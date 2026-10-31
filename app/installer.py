@@ -108,7 +108,10 @@ def startup_preference(root=ROOT):
     if not manifest.get('current'):return False
     folder=Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs/Startup'
     from windows_entries import command_matches,legacy_command
-    command=[str(checked_version(root,manifest['current'])/'BailongEnhanced.exe')]
+    from deployment_state import owned_destination
+    # Reading a preference must still work after the current EXE disappears.
+    # Keep the ownership/path guard; execution and rollback retain full checks.
+    command=[str(owned_destination(root,manifest['current'])/'BailongEnhanced.exe')]
     if (folder/'白龙桌宠增强版.lnk').exists():return command_matches(folder/'白龙桌宠增强版.lnk',command)
     old=legacy_command(folder/'BailongEnhanced.vbs')
     return old is not None and [os.path.normcase(x) for x in old]==[os.path.normcase(x) for x in command]

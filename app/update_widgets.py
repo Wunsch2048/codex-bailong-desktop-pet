@@ -27,11 +27,10 @@ class UpdatePanel(QWidget):
         self.install=QPushButton('下载并安装');self.install.setObjectName('install_app_update');self.install.setProperty('role','primary');self.install.clicked.connect(controller.download_install);row.addWidget(self.install)
         self.cancel=QPushButton('暂停下载');self.cancel.clicked.connect(controller.cancel);row.addWidget(self.cancel);layout.addLayout(row)
         self.details_button=QPushButton('查看更新内容');self.details_button.setCheckable(True);layout.addWidget(self.details_button)
+        set_theme_style(self.details_button,'QPushButton{background:#e8dff0;color:#75618d;border:0;border-radius:7px;padding:6px 9px;}QPushButton:hover,QPushButton:checked:hover{background:#ded2e7;}QPushButton:checked{background:#e8dff0;}QPushButton:pressed{background:#d6c5ed;}')
         self.details=hide_scrollbars(QPlainTextEdit());self.details.setReadOnly(True);self.details.setMaximumHeight(160);self.details.setAccessibleName('版本更新内容')
         self.disclosure=AnimatedDisclosure(self.details);layout.addWidget(self.disclosure);self.details_button.toggled.connect(self.disclosure.set_expanded)
         self.github=QPushButton('在 GitHub 查看此版本');self.github.clicked.connect(self.open_release);layout.addWidget(self.github)
-        note=QLabel('只有点击“下载并安装”才会下载。安装器会保留设置、聊天和回退版本；更新完成后清理下载缓存。')
-        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');layout.addWidget(note)
         controller.changed.connect(self.set_state);self.set_state(controller.snapshot())
     def set_state(self,state):
         self.state=state;phase=state['phase'];busy=self.controller.job is not None

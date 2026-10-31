@@ -160,6 +160,18 @@ class ReadAcknowledgements:
         self.first_read={key:self.first_read.get(key,now) for key in candidates}
         return [key for key in candidates if now-self.first_read[key]>=self.settle_seconds]
 
+def terminal_conversations(home,pairs):
+    """Bounded exact-turn repair for a missed log/IPC terminal, read-only."""
+    pairs=list(dict.fromkeys((session_id(s),str(t)) for s,t in pairs if s and t))[:128]
+    if not pairs:return []
+    try:
+        with closing(sqlite3.connect((Path(home)/'thread_history_1.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
+            slots=','.join('(?,?)' for _ in pairs)
+            rows=db.execute("WITH wanted(thread_id,turn_id) AS (VALUES "+slots+") SELECT a.thread_id,a.turn_id,a.status FROM thread_turns a JOIN wanted p ON a.thread_id=p.thread_id AND a.turn_id=p.turn_id WHERE a.rollout_ordinal=(SELECT MAX(b.rollout_ordinal) FROM thread_turns b WHERE b.thread_id=a.thread_id AND b.turn_id=a.turn_id) AND a.status IN ('completed','failed','interrupted')",[v for pair in pairs for v in pair])
+            return list(rows)
+    except (OSError,sqlite3.Error,ValueError):return []
+
+
 def active_conversations(home):
     home=Path(home)
     try:

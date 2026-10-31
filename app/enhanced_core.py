@@ -103,6 +103,8 @@ class Session:
     compacting: bool = False
     waiting_reason: str = ''
     updated: float = 0
+    runtime_active: bool|None = None
+    runtime_turn: str = ''
 
 
 class ActivityReducer:
@@ -113,11 +115,25 @@ class ActivityReducer:
     def _status(self,sid,s,activity='commentary',user_message=False,turn_started=False):
         waiting=s.waiting_reason if not s.done else ''
         label={'input':'等待你的输入','approval':'等待你的批准'}.get(waiting)
-        return dict(kind='status',session=sid,state='waiting' if waiting else 'working' if s.compacting else s.state,
-                    text=label or ('正在压缩上下文' if s.compacting else s.message),title=s.title,turn=s.turn,
-                    activity='waiting' if waiting else 'compact' if s.compacting else activity,display=label or ('正在压缩上下文' if s.compacting else s.display),
+        quiet=not s.done and s.runtime_turn==s.turn and s.runtime_active is False
+        return dict(kind='status',session=sid,state='waiting' if waiting else 'idle' if quiet else 'working' if s.compacting else s.state,
+                    text=label or ('等待新的 Codex 任务' if quiet else '正在压缩上下文' if s.compacting else s.message),title=s.title,turn=s.turn,
+                    activity='waiting' if waiting else 'idle' if quiet else 'compact' if s.compacting else activity,display=label or ('等待新任务' if quiet else '正在压缩上下文' if s.compacting else s.display),
                     compacting=s.compacting,waiting_reason=waiting,waiting=sum(bool(x.waiting_reason) and not x.done for x in self.sessions.values()),
-                    user_message=user_message,turn_started=turn_started,active=sum(not x.done or x.compacting for x in self.sessions.values()))
+                    user_message=user_message,turn_started=turn_started,active=sum((not x.done or x.compacting) and not x.source_subagent and not (x.runtime_turn==x.turn and x.runtime_active is False) for x in self.sessions.values()))
+
+    def set_runtime(self,sid,active,turn):
+        """Explicit runtime idleness is reversible, never a synthetic completion."""
+        s=self.sessions.get(sid)
+        if not s or s.source_subagent or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
+        if s.runtime_turn==turn and s.runtime_active is active:return []
+        s.runtime_turn=turn;s.runtime_active=active
+        return [self._status(sid,s)]
+
+    def runtime_events(self,sid,active,turn):
+        s=self.sessions.get(sid)
+        if not s or s.source_subagent or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
+        return self.set_runtime(sid,active,turn)+[dict(kind='animation_lifecycle',session=sid,turn=turn,active=active)]
 
     def terminate(self,sid,status,turn):
         s=self.sessions.get(sid)
@@ -189,6 +205,7 @@ class ActivityReducer:
             if s.compacting:s.compacting=False;changed=True
         elif kind == 'event_msg' and typ in ('task_started', 'turn_started'):
             s.compacting=False;s.waiting_reason=''
+            s.runtime_active=None;s.runtime_turn=''
             s.turn = str(p.get('turn_id') or stamp)
             s.done = False
             s.state, s.message = 'thinking', '收到任务，正在思考…'

@@ -89,8 +89,13 @@ def backup_data(data_root,install_root,previous):
 def restore_data(data_root,backup,install_root):
     """Restore a closed application's verified snapshot, including SQLite sidecars."""
     data_root=plain_path(Path(data_root).absolute());base=plain_path(Path(install_root).resolve()/'deployment-backups')
-    backup=plain_path(Path(backup).absolute())
-    if backup.parent!=base or backup.resolve()!=backup:raise ValueError('数据备份路径无效')
+    backup=Path(backup).absolute()
+    if '..' in backup.parts:raise ValueError('数据备份路径无效')
+    # Windows TEMP can use an 8.3 alias (RUNNER~1) while the install root is
+    # canonical. Reject links before resolving; a spelling alias is not a link.
+    for part in (backup,*backup.parents):plain_path(part)
+    backup=backup.resolve(strict=True)
+    if backup.parent!=base:raise ValueError('数据备份路径无效')
     proof=json.loads((backup/'backup.json').read_text(encoding='utf-8'))
     if proof.get('complete') is not True or not isinstance(proof.get('files'),dict):raise ValueError('用户数据备份未完成')
     def eligible(name):return Path(name).suffix.lower() in ('.json','.sqlite','.sqlite3','.db') and name not in ('runtime.json','codex-connection-check.json')

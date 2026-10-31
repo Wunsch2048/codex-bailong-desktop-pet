@@ -12,7 +12,7 @@ class TrimTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup);self.imports={}
     def file(self,name,deps=(),delay=()):
         p=self.root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'fixture')
-        self.imports[str(p)]=(deps,delay);return p
+        self.imports[str(p.resolve())]=(deps,delay);return p
     def pe(self,path,**kwargs):
         normal,delay=self.imports[path]
         class PE:

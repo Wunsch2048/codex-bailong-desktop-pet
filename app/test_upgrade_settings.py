@@ -22,7 +22,8 @@ def preferences(mode='minimal',action='website',theme='cyber'):
 
 class UpgradeSettingsTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        """使用规范临时路径，避免 Windows 短目录名影响备份恢复校验"""
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
     def tearDown(self):self.temp.cleanup()
     def assert_preferences(self,raw,value):
         for key in KEYS:self.assertEqual(value.get(key),raw.get(key),key)

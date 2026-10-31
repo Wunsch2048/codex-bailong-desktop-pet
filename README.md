@@ -19,7 +19,7 @@
 | 平台 | 入口与维护者 | 当前说明的支持范围 |
 | --- | --- | --- |
 | Linux / Niri / KDE | [helantianshen 的社区仓库](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 预览版；KDE Plasma X11 / XWayland 源码支持，限制见作者说明 |
-| macOS / Apple Silicon | [Kki1ds 的社区预览包](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases/tag/v1.0.1-mac.1) | 仅 Apple Silicon 的 DMG 预览包；未公证，无应用内更新，支持范围与限制见作者说明 |
+| macOS / Apple Silicon | [Kki1ds 的社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet) / [下载页面](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases) | Apple Silicon 的 DMG 社区版；未公证，无应用内更新，最新版本、支持范围与限制以作者仓库说明为准 |
 
 社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
 

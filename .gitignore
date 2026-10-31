@@ -23,3 +23,5 @@ outputs/**
 *.zip
 *.7z
 .DS_Store
+
+/work/

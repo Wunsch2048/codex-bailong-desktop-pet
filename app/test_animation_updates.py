@@ -40,6 +40,29 @@ class AnimationUpdateTests(unittest.TestCase):
         if url.endswith('/latest/download/SHA256SUMS.txt'):return Response((self.dest/'SHA256SUMS.txt').read_bytes())
         return Response((self.dest/url.rsplit('/',1)[-1]).read_bytes())
     def release(self):return check_release('1.0.5',self.opener,app_root=self.app,state_dir=self.state)
+    def test_animation_capability_ignores_joint_program_assets_in_both_channels(self):
+        """联合发布在动画模式下不读取 Windows 程序描述或载荷"""
+        for suffix in ('program.json','program.zip','windows-x64.zip'):
+            name=f'bailong-desktop-pet-{self.version}-{suffix}'
+            raw=b'Windows package must not be read'
+            self.payload['assets'].append(dict(name=name,state='uploaded',size=len(raw),digest='sha256:'+hashlib.sha256(raw).hexdigest(),browser_download_url=self.url(name)))
+            with (self.dest/'SHA256SUMS.txt').open('a') as sums:sums.write(hashlib.sha256(raw).hexdigest()+'  '+name+'\n')
+        for limited in (False,True):
+            with self.subTest(limited=limited):
+                calls=[]
+                def opener(url,headers=None):
+                    """模拟 API 限流并拒绝任何 Windows 载荷访问"""
+                    calls.append(url)
+                    self.assertNotIn('-program.',url);self.assertNotIn('-windows-x64.zip',url)
+                    if limited and url==API:raise HTTPError(url,429,'limited',{},None)
+                    return self.opener(url,headers)
+                release=check_release('1.0.5',opener,app_root=self.app,state_dir=self.state,program_version='1.0.5',allow_program=False)
+                self.assertEqual(release.kind,'animation');self.assertIsNone(release.fallback)
+                self.assertEqual(release.minimum_program_version,'1.0.5')
+                self.assertTrue(release.asset_name.endswith('-animation-light.zip'))
+                with self.assertRaisesRegex(UpdateError,'先更新程序'):
+                    check_release('1.0.4',opener,app_root=self.app,state_dir=self.state,program_version='1.0.4',allow_program=False)
+
     def test_pure_animation_staging_commit_restart_and_rollback_retains_old_files(self):
         release=self.release();self.assertEqual(release.kind,'animation')
         self.assertTrue(release.asset_name.endswith('-animation-light.zip'))

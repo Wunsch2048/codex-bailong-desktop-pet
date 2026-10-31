@@ -1,0 +1,97 @@
+name: Build Linux packages
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QT_QPA_PLATFORMTHEME: ''
+      PYTHONPATH: .:tools:app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-linux.txt
+            tools/requirements-linux-build.txt
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 bubblewrap zstd squashfs-tools
+          python -m pip install -r tools/requirements-linux-build.txt
+      - name: Check Linux adapters and shared data handling
+        run: python -m unittest test_linux_ui test_linux_codex_integration test_soft_curves_navigation.NavigationTests test_conversation_navigation.NameNavigationTests.test_clicking_each_name_emits_exact_id_without_expanding_or_marking_read test_linux_codex_watch test_linux_autostart test_linux_wayland_input test_linux_entrypoints test_linux_launcher test_linux_backends test_linux_kde test_linux_readonly test_linux_placement test_linux_surfaces test_linux_walk test_linux_niri test_reset_watch test_reset_recovery test_reset_presentation test_refresh_flow
+      - name: Prepare verified materials and AppImage tools
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          from material_store import MaterialStore
+
+          root = Path.cwd()
+          work = root / 'work/linux-ci'
+          work.mkdir(parents=True)
+          materials = MaterialStore(root, work / 'state').ensure('light')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f'MATERIALS={materials}\n')
+          locks = json.loads((root / 'tools/appimage-tools.lock.json').read_text())
+          for name, spec in locks.items():
+              target = work / name
+              subprocess.run(['curl', '--fail', '--location', '--retry', '3',
+                              '--output', str(target), spec['url']], check=True)
+              with target.open('rb') as stream:
+                  actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+              if actual != spec['sha256']:
+                  raise ValueError('构建工具 SHA256 不匹配：' + name)
+              target.chmod(0o755)
+          PY
+      - name: Build portable directory
+        run: python tools/build_linux.py --destination work/linux-ci/build --materials "$MATERIALS"
+      - name: Package AppImage and portable archive
+        run: |
+          python tools/package_linux.py \
+            --bundle work/linux-ci/build/dist/bailong-linux \
+            --destination work/linux-ci/packages \
+            --appimagetool work/linux-ci/appimagetool \
+            --runtime work/linux-ci/runtime \
+            --name "Bailong-ci-${GITHUB_SHA:0:12}-linux-x86_64"
+      - name: Verify archives and frozen entrypoints outside checkout
+        run: |
+          cd work/linux-ci/packages
+          sha256sum -c SHA256SUMS.txt
+          mkdir "$RUNNER_TEMP/bailong-smoke"
+          tar --zstd -xf ./*.tar.zst -C "$RUNNER_TEMP/bailong-smoke"
+          cp ./*.AppImage "$RUNNER_TEMP/bailong-smoke/Bailong.AppImage"
+          cd "$RUNNER_TEMP/bailong-smoke"
+          unset PYTHONPATH
+          ./bailong-linux/AppRun --help
+          ./Bailong.AppImage --appimage-extract-and-run --help
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          root = Path('bailong-linux')
+          for name, expected in json.loads((root / 'payload-sha256.json').read_text()).items():
+              with (root / name).open('rb') as stream:
+                  actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+              if actual != expected:
+                  raise ValueError('归档载荷 SHA256 不匹配：' + name)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bailong-linux-x86_64-${{ github.sha }}
+          path: work/linux-ci/packages/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

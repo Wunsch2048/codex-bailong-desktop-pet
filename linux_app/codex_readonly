@@ -1,0 +1,55 @@
+#!/bin/sh
+# 只允许额度查询所需的 app-server，运行时数据留在临时挂载中
+set -eu
+# 宿主程序使用系统库，不能继承 PyInstaller 的私有动态库目录
+if [ "${BAILONG_FROZEN:-0}" = 1 ]; then
+    if [ "${LD_LIBRARY_PATH_ORIG+x}" = x ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH_ORIG"
+    else
+        unset LD_LIBRARY_PATH
+    fi
+fi
+if [ "$#" -ne 1 ] || [ "$1" != 'app-server' ]; then
+    echo 'Only app-server is supported' >&2
+    exit 2
+fi
+: "${CODEX_HOME:?CODEX_HOME is required}"
+: "${BAILONG_NATIVE_CODEX:?BAILONG_NATIVE_CODEX is required}"
+# 保留真实路径，启动器可能通过 $0 查找相邻脚本、模块和资源。
+CODEX_HOME=$(readlink -f -- "$CODEX_HOME")
+BAILONG_NATIVE_CODEX=$(readlink -f -- "$BAILONG_NATIVE_CODEX")
+export CODEX_HOME BAILONG_NATIVE_CODEX
+set -- -- "$BAILONG_NATIVE_CODEX" -c 'cli_auth_credentials_store="file"' app-server
+for name in config.toml auth.json; do
+    if [ -f "$CODEX_HOME/$name" ]; then
+        set -- --ro-bind "$CODEX_HOME/$name" "$CODEX_HOME/$name" "$@"
+    fi
+done
+# home 内的安装需完整位于同一顶层子目录（如 packages/）。只读挂载整个
+# 安装子树，而非只挂载单个二进制；home 根目录仍为私有可写运行空间。
+case "$BAILONG_NATIVE_CODEX" in
+    "$CODEX_HOME"/*)
+        relative=${BAILONG_NATIVE_CODEX#"$CODEX_HOME"/}
+        case "$relative" in
+            */*) runtime="$CODEX_HOME/${relative%%/*}" ;;
+            *) echo '请将完整 CLI 安装目录放在 CODEX_HOME 的子目录内或外部；不支持 home 根目录的独立启动器' >&2; exit 2 ;;
+        esac
+        set -- --ro-bind "$runtime" "$runtime" "$@"
+        ;;
+esac
+set -- --tmpfs "$CODEX_HOME" "$@"
+# /tmp 也被隔离；若在此临时安装 CLI，同样保留整个安装子树及原路径。
+# home 内的情况已由上面的安装挂载处理，避免重新暴露真实 home。
+case "$BAILONG_NATIVE_CODEX" in
+    "$CODEX_HOME"/*) ;;
+    /tmp/*)
+        relative=${BAILONG_NATIVE_CODEX#/tmp/}
+        case "$relative" in
+            */*) runtime="/tmp/${relative%%/*}" ;;
+            *) echo '请将完整 CLI 安装目录放在 /tmp 的子目录内或外部' >&2; exit 2 ;;
+        esac
+        set -- --ro-bind "$runtime" "$runtime" "$@"
+        ;;
+esac
+exec bwrap --die-with-parent --ro-bind / / --dev-bind /dev /dev --proc /proc \
+    --tmpfs /tmp "$@"

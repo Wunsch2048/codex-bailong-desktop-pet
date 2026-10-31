@@ -1068,6 +1068,9 @@ class DesktopPet(EnhancedPet):
         except OSError as error:self.say(str(error),6000)
     def open_data(self):QDesktopServices.openUrl(QUrl.fromLocalFile(str(STATE_DIR)))
     def open_install_manager(self):
+        """只在 Windows 打开已登记的安装管理程序"""
+        from app_updates import program_updates_supported
+        if not program_updates_supported():self.say('当前平台不支持 Windows 安装管理，请手动管理程序目录。',6000);return
         try:
             from installer import checked_version,read_manifest
             from storage_locations import install_root
@@ -1081,10 +1084,12 @@ class DesktopPet(EnhancedPet):
         self._tray_update_hint=('有更新 '+str(state.get('latest','')) if state.get('phase')=='available' else '')
         self._refresh_tray_icon()
     def install_app_update(self,path):
+        """核对平台和已验证的暂存目录后启动程序安装"""
         import subprocess
         from process_launch import launch_own
-        from app_updates import cache_paths,UpdateError
+        from app_updates import cache_paths,UpdateError,program_updates_supported
         try:
+            if not program_updates_supported():raise UpdateError('当前平台不支持 Windows 程序更新，请手动更新程序')
             release=self.updates.release
             if release is None:raise OSError('更新信息已失效，请重新检查')
             if release.kind=='program':
@@ -1222,6 +1227,9 @@ class DesktopPet(EnhancedPet):
         value['work_animation_count']=len([v for v in self.manifest.get('workAnimations',[]) if v]);value['semantic_work_actions']=True;value['explicit_task_arrival_animation']=True
         atomic_json(path,value);self.say('诊断已保存：'+path.name,6000)
     def cleanup_installations(self):
+        """只清理 Windows 安装器登记且经用户确认的历史版本"""
+        from app_updates import program_updates_supported
+        if not program_updates_supported():self.say('当前平台不支持 Windows 历史版本清理，请手动管理旧程序。',6000);return
         from installer import ROOT as install_root,DATA
         from installation_cleanup import cleanup_plan,CleanupJob
         if getattr(self,'_cleanup_job',None):self.say('历史版本清理正在进行。',3000);return

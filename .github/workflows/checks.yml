@@ -26,3 +26,28 @@ jobs:
       # one process and leaking theme/motion preferences between modules.
       - run: python tools/check_source.py
       - run: python tools/check_program_bootstrap.py
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+      BAILONG_ISOLATED: "1"
+      QT_QPA_PLATFORMTHEME: ''
+      PYTHONPATH: .:tools:app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-linux.txt
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 bubblewrap
+      - run: python -m pip install -r requirements-linux.txt
+      - run: python -m compileall -q linux_app run_linux.py run_kde.py run_niri.py tools/build_linux.py tools/package_linux.py
+      - name: Check Linux adapters and shared data handling
+        run: python tools/check_source.py test_source_checks test_linux_updates test_linux_drag_panel test_linux_ui test_linux_codex_integration test_soft_curves_navigation.NavigationTests test_conversation_navigation.NameNavigationTests.test_clicking_each_name_emits_exact_id_without_expanding_or_marking_read test_linux_codex_watch test_linux_autostart test_linux_wayland_input test_linux_entrypoints test_linux_launcher test_linux_backends test_linux_kde test_linux_readonly test_linux_placement test_linux_surfaces test_linux_walk test_linux_niri test_reset_watch test_reset_recovery test_reset_presentation test_refresh_flow

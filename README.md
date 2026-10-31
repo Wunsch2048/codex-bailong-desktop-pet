@@ -23,6 +23,23 @@
 
 社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
 
+## Linux / niri / KDE
+
+本 PR 的源码正在适配上游 **v1.3.0**，尚未发布对应 Linux 安装包，最终 niri/KDE 实机验收仍待完成。已公开的社区预览包仍为 **v1.2.1-linux-preview.4**，使用旧版程序与素材；其验证记录不能代替当前源码的验收。
+
+| 环境 | 源码入口 | 窗口后端 |
+| --- | --- | --- |
+| niri | `.venv/bin/python run_niri.py` | 原生 Wayland + niri IPC |
+| KDE Plasma | `.venv/bin/python run_kde.py` | X11 / XWayland |
+
+`run_linux.py` 自动选择后端，也可显式指定。Linux 使用独立 XDG 用户目录和只读 Codex 查询隔离；依赖、素材及运行步骤见 [Linux 说明](docs/LINUX.md)、[KDE 说明](docs/KDE.md)和[包体说明](docs/LINUX_PACKAGE.md)。当前适配不代表支持所有 Linux 桌面或发行版。
+
+已发布预览包下载：[AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.AppImage)、[便携 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/Bailong-1.2.1-linux-preview.4-x86_64.tar.zst)、[SHA-256](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.2.1-linux-preview.4/SHA256SUMS.txt)。支持范围和未适配功能见[该版说明](docs/releases/v1.2.1-linux-preview.4.md)。这些是社区预发布包，上游 Windows 稳定版更新入口不适用于 Linux。
+
+Linux 程序仍通过手动替换 AppImage 或便携目录更新，用户设置和统计保存在 `${XDG_DATA_HOME:-~/.local/share}/codex-bailong/BailongEnhanced`。切换程序前退出旧实例；声音、聊天密钥安全保存、原生 KDE Wayland及全屏让位等限制见各桌面说明。
+
+## Windows 当前版本与历史更新
+
 ### v1.3.0 程序与动画联合更新
 
 - 正常卡片实时速率、分会话悬停、用量与回合均速柱线图；历史悬停新增回合中位速率，缺样虚线和有效回合数区分未知与零。

@@ -2,9 +2,9 @@
 
 ![文章海报](docs/media/cover.png)
 
-一只陪你使用 Codex 的 Windows 白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，当前公开版本 **v1.4.0**。
+一只陪你使用 Codex 的 Windows 白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，当前公开版本 **v1.4.1**。
 
-**[首次安装：在线安装器 1.4.0](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.4.0/bailong-desktop-pet-1.4.0-setup.exe)** | [程序更新包](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) | [快速部署](docs/快速部署说明.txt) | [全部新增功能](docs/新增功能说明.txt) | [开发说明](docs/DEVELOPMENT.md) | [迭代历史](docs/迭代历史.txt)
+**[首次安装：在线安装器 1.4.1](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.4.1/bailong-desktop-pet-1.4.1-setup.exe)** | [程序更新包](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) | [快速部署](docs/快速部署说明.txt) | [全部新增功能](docs/新增功能说明.txt) | [开发说明](docs/DEVELOPMENT.md) | [迭代历史](docs/迭代历史.txt)
 
 在线安装器直接下载并校验最新累计程序，不必先安装旧基础版。程序不含人物动画，可在设置中按需下载轻量或高清资源；升级保留设置、统计和素材偏好。
 
@@ -23,7 +23,21 @@
 
 社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
 
-### v1.4.0 大卡片改版与稳定性更新
+### v1.4.1 人物资源恢复与启动联动修复
+
+- 修复人物开启但资源未就绪的兼容路径：完整旧资源本地校验恢复；缺文件时提供“动画待补齐”入口，复用已有文件再补齐。
+- 不自动下载大动画包，保留旧资源、主动仅卡片、画质与隐藏面板选择。
+- 修复桌宠/监听随宿主回收，以及切换开关或WSL后旧结果误触发跟随关闭的问题。
+
+[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.4.1) | [版本文档](docs/releases/v1.4.1.md)
+
+累计程序更新，现有完整动画继续使用。修复说明与验证范围见版本文档，安全软件反馈仍单独跟进。
+
+![动画待补齐入口](docs/media/update-1.4.1/material-hint.png)
+
+配图使用隔离合成配置。
+
+### v1.4.0 大卡片改版与稳定性更新（历史）
 
 - 状态、聊天、设置统一整理，设置分类、按钮与说明更清楚。
 - 额度详情、Token 明细及重置公告局部切换，高度随内容平滑变化；聊天与设置保持固定布局。

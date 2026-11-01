@@ -134,17 +134,49 @@ class MaterialStore:
             if stage.exists():shutil.rmtree(stage)
 
     def _commit(self,stage,target,tier='hd'):
+        target=Path(target);expected=checked(self.cache,tier+'/'+self.catalog['tiers'][tier]['id'])
+        if target!=expected:raise MaterialError('素材缓存位置无效')
         target.parent.mkdir(parents=True,exist_ok=True)
+        retained=None
         if target.exists():
             # Never change an existing cache directory while a player may read it.
             if self.available(tier):return
-            if not self.card_only:raise MaterialError('已有素材缓存损坏，请移除动画资源后重试')
+            if self.current and Path(self.root)==target and not self.card_only:
+                raise MaterialError('当前动画正在使用，请先切换画质后修复')
             if not target.resolve().is_relative_to(self.cache.resolve()):raise MaterialError('素材缓存位置无效')
             # Explicit removal may retain metadata or a file locked by another
             # process. Keep that remainder; publish a fresh verified directory.
-            target.replace(self.cache/('retained-'+uuid.uuid4().hex))
-        stage.replace(target)
+            retained=self.cache/('retained-'+uuid.uuid4().hex)
+            target.replace(retained)
+        try:stage.replace(target)
+        except OSError:
+            if retained and not target.exists():retained.replace(target)
+            raise
         self._known_availability[tier]=True
+
+    def recover_local(self,tier,cancel=lambda:False,progress=lambda n,t,p:None):
+        """Recover a complete current set locally, without network or preferences."""
+        if self.card_only or self.location_error or not self.catalog:return None
+        if self.available(tier):return self.tier_root(tier)
+        from material_incremental import candidate_roots,reuse_files
+        candidates=candidate_roots(self,tier);files=self.catalog['tiers'][tier]['files']
+        needed={f['bytes'] for f in files};present=set()
+        # Cheap necessary condition avoids hashing gigabytes on every startup
+        # when an older pack simply lacks the new manifest/actions.
+        for root,names in candidates:
+            for name in names:
+                cancelled(cancel)
+                try:present.add(checked(root,name).stat().st_size)
+                except (OSError,ValueError,TypeError):pass
+        if not needed.issubset(present):return None
+        self.cache.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='recover-',dir=self.cache) as folder:
+            stage=Path(folder)/'extracted';stage.mkdir()
+            reused=reuse_files(self,tier,stage,cancel,progress,candidates)
+            if len(reused)!=len(files):return None
+            self.verify(stage,tier,cancel,progress);self._receipt(stage,tier)
+            cancelled(cancel);target=self.tier_root(tier)
+            self._commit(stage,target,tier);return target
 
     def ensure(self,tier,cancel=lambda:False,progress=lambda n,t,p:None,opener=None):
         if self.location_error:raise MaterialError(self.location_error)
@@ -211,7 +243,9 @@ class MaterialStore:
             except (zipfile.BadZipFile,RuntimeError) as exc:raise MaterialError('素材压缩包无效') from exc
         return root
 
-    def activate(self,tier,root):
+    def activate(self,tier,root,*,save_preference=True):
         if Path(root)!=self.tier_root(tier) or not self.available(tier):raise MaterialError('素材尚未准备完成')
-        atomic_json(self.preference,dict(schema=1,tier=tier,cardOnly=False))
-        self.preferred=tier;self.current=tier;self.root=Path(root);self.card_only=False
+        if save_preference:
+            atomic_json(self.preference,dict(schema=1,tier=tier,cardOnly=False))
+            self.preferred=tier;self.card_only=False
+        self.current=tier;self.root=Path(root)

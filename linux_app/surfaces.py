@@ -219,7 +219,9 @@ class Surfaces(QObject):
                 # Qt 的透明输入标志不能替代 Wayland 输入区域，空 mask 又会恢复整窗命中
                 widget.windowHandle().setMask(QRegion(-1, -1, 1, 1))
                 widget.update()
-            self.entries[widget]['waiting'] = None
+            # 改尺寸不会撤销已发出的相对移动，须等原请求确认后再按新目标计算
+            if event.type() == QEvent.Type.Show:
+                self.entries[widget]['waiting'] = None
             if not self.timer.isActive():
                 self.timer.start(0)
         return False
@@ -367,6 +369,10 @@ def install(stack):
         painter = QPainter(widget)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         painter.fillRect(widget.rect(), Qt.GlobalColor.transparent)
+        # 上游 release 会先清空图片并重绘，再隐藏窗口；这次绘制只能擦除旧帧
+        if widget.image is None:
+            painter.end()
+            return
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         parent = getattr(widget, '_linux_popup_parent', None)
@@ -378,6 +384,7 @@ def install(stack):
             transition.paint_morph(painter)
         elif stage == 'landing':
             painter.drawPixmap(transition._linux_frame_offset, widget.image)
+        painter.end()
 
     def paint_source_cover(widget, event):
         """等待临时画布定位时，原窗口保持原截图和原尺寸"""
@@ -488,6 +495,8 @@ def install(stack):
 
     def cancel_transition(transition):
         """关闭或快速导航时同步结束交接，不遗留透明控件及额外窗口"""
+        # 共享取消会先销毁临时窗口再调用 finish，不能继续进入等待原生画布的分支
+        transition._linux_stage = None
         cancel(transition)
         release_transition(transition)
 

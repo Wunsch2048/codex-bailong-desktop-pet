@@ -234,6 +234,84 @@ class LinuxDragPanelTests(unittest.TestCase):
                 self.settle()
                 self.assertTrue(bubble.is_island())
 
+    def test_failed_large_card_capture_releases_niri_handoff(self):
+        """新版准备异常也须撤销 niri 交接状态，随后仍可正常展开和移动"""
+        bubble = self.pet.bubble
+        transition = bubble.size_transition
+        for target in (False, True):
+            with self.subTest(target=target):
+                bubble.show_status(False)
+                self.settle()
+                if target:
+                    transition.begin()
+                    bubble.expanded = True
+                    bubble.redraw()
+                with patch('panel_transition.SurfaceState.capture', side_effect=RuntimeError('capture failed')):
+                    with self.assertRaisesRegex(RuntimeError, 'capture failed'):
+                        if target:transition.commit()
+                        else:bubble.toggle_details()
+                self.assertTrue(bubble.updatesEnabled())
+                self.assertTrue(bubble.layout.isEnabled())
+                self.assertTrue(bubble.content.isVisible())
+                self.assertIsNone(getattr(transition, '_linux_stage', None))
+                self.assertFalse(transition.landing.isVisible())
+                self.assertEqual(self.controller.opacity.opacity(), 1)
+                bubble.show_status(True)
+                self.settle()
+                self.point += QPoint(12, 7)
+                self.pet.position_bubble()
+                self.assertEqual(bubble.pos(), bubble.content_geometry().topLeft())
+
+    def test_large_card_help_and_hide_cancel_preserve_next_navigation(self):
+        """独立说明页及隐藏取消沿用原生交接，不遗留旧尺寸或透明画布"""
+        bubble = self.pet.bubble
+        bubble.show_explanations()
+        self.settle()
+        self.assertEqual(bubble.panel_page, 'help')
+        bubble.return_to_status()
+        bubble.hide()
+        self.settle()
+        self.assertFalse(bubble.size_transition.landing.isVisible())
+        bubble.show()
+        bubble.show_status(True)
+        self.settle()
+        self.assertTrue(bubble.content.isVisible())
+        self.assertEqual(self.controller.opacity.opacity(), 1)
+        self.assertEqual(bubble.geometry(), bubble.content_geometry())
+
+    def test_native_release_erases_frame_before_hiding_without_paint_error(self):
+        """共享释放先清空并重绘画布；播放和落地阶段都须接受这次透明绘制"""
+        bubble = self.pet.bubble
+        transition = bubble.size_transition
+        for stage in ('playing', 'landing'):
+            with self.subTest(stage=stage):
+                bubble.show_status(False)
+                self.settle()
+                bubble.toggle_details()
+                APP.processEvents()
+                if transition._linux_stage == 'preparing':
+                    transition.release_landing()
+                if stage == 'landing':
+                    transition.complete()
+                self.assertEqual(transition._linux_stage, stage)
+                self.assertIsNotNone(transition.landing.image)
+                errors, frames = [], []
+                def paint_error(kind, value, trace):
+                    """保留异常文本，不持有绘制栈和仍在使用的 QPainter"""
+                    errors.append(str(value))
+                def publish(widget, image):
+                    """在隐藏前读取实际缓冲，验证释放画面已擦除"""
+                    frames.append(widget.screen().grabWindow(int(widget.winId())).toImage())
+                with patch('sys.excepthook', paint_error), patch('native_landing.publish', publish):
+                    transition.landing.release()
+                transition.cancel()
+                self.assertEqual(errors, [])
+                self.assertEqual(len(frames), 1)
+                frame = frames[0].convertToFormat(QImage.Format.Format_RGBA8888)
+                self.assertFalse(frame.isNull())
+                self.assertFalse(any(bytes(frame.constBits())[3::4]))
+
+
 
 if __name__ == '__main__':
     unittest.main()

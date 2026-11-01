@@ -44,7 +44,7 @@ class AnimatedDisclosure(QWidget):
     settled=Signal(bool)
     def __init__(self,body,parent=None,background=SURFACE):
         super().__init__(parent);self.body=body;body.setParent(self);self.background=background
-        self.expanded=False;self.progress=0.;self.full_height=1;self._frame=None;self._animating=False;self._measuring=False
+        self.expanded=False;self.progress=0.;self._start=0.;self._target=0.;self.full_height=1;self._frame=None;self._animating=False;self._measuring=False
         # setFixedHeight changes maximumHeight. Remember the body's own limit
         # before measuring it, especially for capped text editors.
         self._body_height_limit=body.maximumHeight()
@@ -67,7 +67,7 @@ class AnimatedDisclosure(QWidget):
     def set_expanded(self,value):
         value=bool(value)
         if value==self.expanded and (self._animating or self.isVisible() or not value):return
-        self.animation.stop();self.expanded=value;previous_height=self.full_height;self._measure()
+        self.animation.stop();self.expanded=value;self._start=self.progress;self._target=1. if value else 0.;previous_height=self.full_height;self._measure()
         if not self.isVisible() and not value:self._finish();return
         visible=self.isVisible() or bool(self.parentWidget() and self.parentWidget().isVisible())
         if not visible:self.show();self._finish();return

@@ -2,7 +2,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import unittest
-from PySide6.QtCore import QPoint, QRect, QSize
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt
 from linux_app.surfaces import Surfaces
 
 
@@ -30,6 +30,21 @@ class SurfaceTests(unittest.TestCase):
             Surfaces.sync(m);Surfaces.sync(m)
             m.controller.action.assert_called_once_with('MoveFloatingWindow',id=7,x={'AdjustFixed':100},y={'AdjustFixed':0})
             e['point']=QPoint(2250,400)
+            m.actual=lambda w:QPoint(2200,400)
+            Surfaces.sync(m)
+            self.assertEqual(m.controller.action.call_args.kwargs['x'],{'AdjustFixed':50})
+
+    def test_resize_keeps_pending_move_until_compositor_acknowledges_it(self):
+        """松手后的卡片放大不能清除移动确认，否则会按旧坐标重复发送相对位移"""
+        m,w,e,_=self.manager()
+        w.windowFlags.return_value=Qt.WindowType.Tool
+        with patch('linux_app.surfaces.QApplication.screenAt', return_value=SimpleNamespace(name=lambda:'right')):
+            Surfaces.sync(m)
+            e['point']=QPoint(2250,400)
+            Surfaces.eventFilter(m,w,SimpleNamespace(type=lambda:QEvent.Type.Resize))
+            Surfaces.sync(m)
+            m.controller.action.assert_called_once_with('MoveFloatingWindow',id=7,x={'AdjustFixed':100},y={'AdjustFixed':0})
+            self.assertEqual(e['waiting'],QPoint(2200,400))
             m.actual=lambda w:QPoint(2200,400)
             Surfaces.sync(m)
             self.assertEqual(m.controller.action.call_args.kwargs['x'],{'AdjustFixed':50})

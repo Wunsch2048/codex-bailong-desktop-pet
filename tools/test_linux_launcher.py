@@ -3,6 +3,7 @@ from argparse import Namespace
 from contextlib import ExitStack
 from pathlib import Path
 import json
+import io
 import itertools
 import os
 import tempfile
@@ -84,6 +85,68 @@ class LauncherTests(unittest.TestCase):
                 launcher.prepare_state(state)
                 self.assertEqual(json.loads((state / 'settings.json').read_text()), {'scale': 1.5})
                 materials.assert_not_called()
+
+    def test_missing_materials_do_not_block_startup_or_change_preferences(self):
+        """缺素材和主动仅卡片都可继续启动，准备设置时不校验或启用动画"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / 'settings.json'
+            previous = '{"schema":2,"character_visible":false,"bubble":false,"random_actions":false}'
+            config.write_text(previous)
+            for frozen, card_only in itertools.product((False, True), repeat=2):
+                with self.subTest(frozen=frozen, card_only=card_only), \
+                     patch.object(launcher, 'ROOT', root), \
+                     patch('sys.frozen', frozen, create=True), \
+                     patch('material_store.MaterialStore') as store, \
+                     patch('linux_app.live.prepare_materials') as prepare:
+                    store.return_value.current = None
+                    store.return_value.card_only = card_only
+                    launcher.prepare_state(root)
+                    self.assertEqual(config.read_text(), previous)
+                    store.assert_not_called()
+                    prepare.assert_not_called()
+
+    def test_only_missing_visible_builtin_materials_schedule_recovery(self):
+        """Linux 使用共享后台恢复，隐藏人物、自定义人物和仅卡片不触发扫描"""
+        from desktop_core import normalized
+        pet = Mock()
+        args = Namespace(desktop='niri', codex_home=Path('/unused/codex'), codex_cli=Path('/unused/cli'))
+        cases = ((True, True, 'builtin', False, True),
+                 (False, True, 'builtin', False, False),
+                 (True, False, 'builtin', False, False),
+                 (True, True, 'custom', False, False),
+                 (True, True, 'builtin', True, False))
+        with ExitStack() as stack:
+            for target in ('autostart.install', 'codex_watch.install', 'live.install', 'live.start', 'ui.install', 'niri.install', 'niri.attach'):
+                stack.enter_context(patch('linux_app.' + target))
+            stack.enter_context(patch('desktop.DesktopPet', return_value=pet))
+            stack.enter_context(patch('enhanced.ResetThread'))
+            timer = stack.enter_context(patch('PySide6.QtCore.QTimer.singleShot'))
+            for missing, visible, character, card_only, recover in cases:
+                with self.subTest(missing=missing, visible=visible, character=character, card_only=card_only):
+                    pet.settings = normalized(dict(character_visible=visible, character=character, bubble=False))
+                    pet._materials_missing = missing
+                    pet.material_store.card_only = card_only
+                    timer.reset_mock()
+                    launcher.create_pet(stack, args)
+                    if recover:timer.assert_called_once_with(400, pet, pet.materials.recover_local)
+                    else:timer.assert_not_called()
+                    self.assertFalse(pet.settings['bubble'])
+
+    def test_explicit_runtime_check_reports_unavailable_materials(self):
+        """严格素材自检仍返回失败，并说明可从界面补齐，避免 None 画质异常"""
+        args = Namespace(watch_codex=False, check_runtime=True)
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.object(launcher, 'arguments', return_value=args), \
+             patch.object(launcher, 'environment', return_value=Path(folder)), \
+             patch.object(launcher, 'prepare_state'), \
+             patch('material_store.MaterialStore') as store, \
+             patch('sys.stdout', new_callable=io.StringIO) as output:
+            store.return_value.current = None
+            store.return_value.card_only = False
+            self.assertEqual(launcher.main(), 1)
+            self.assertEqual(json.loads(output.getvalue())['materials'], 'unavailable')
+            store.return_value.verify.assert_not_called()
 
     def test_reject_codex_as_writable_state(self):
         """启动参数不能绕过真实 Codex 数据目录的写入边界"""

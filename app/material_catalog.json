@@ -232,10 +232,7 @@
           "sha256": "529eca31b7f55bcb3288e8caea9c42beabcf667b03834c8e374e0413cdc95536"
         }
       ],
-      "bytes": 1044786805,
-      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip",
-      "archiveBytes": 1044792307,
-      "archiveSha256": "35b6950fb7b14793af24791b284444440e3f8741cf594581b7fd49e4344687b0"
+      "bytes": 1044786805
     },
     "hd": {
       "id": "e26d8826cefcc901eb5d1d2c",
@@ -468,10 +465,7 @@
         }
       ],
       "bytes": 1803877003,
-      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-hd.zip",
-      "archiveBytes": 1803882505,
-      "archiveSha256": "88072be5a37de41740c8c47c5de33aae13febd8d430cf4a95fc4ba210fae6ecc"
+      "url": "https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/materials-e26d8826cefcc901eb5d1d2c/bailong-hd-e26d8826cefcc901eb5d1d2c.zip"
     }
-  },
-  "releaseVersion": "1.3.0"
+  }
 }

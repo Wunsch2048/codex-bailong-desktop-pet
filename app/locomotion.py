@@ -5,6 +5,8 @@ thread; a late reader retains the last valid frame rather than blocking input.
 """
 from stream_player import PreparedSegment
 
+APPROVED_WALK_SOURCE='5af83f299cf8b8920985ffbc337e6529919ba53e6217f2221033f813c8a3b5e8'
+
 def travel_speed(item,base):
     """Match displacement to the selected action, never to left/right facing."""
     return min(300,base*1.6) if item and item.get('movementKind')=='run' else base
@@ -25,7 +27,17 @@ def profile(item):
     if p.get('seamFile') and (type(p.get('seamFrames')) is not int or not 1<=p['seamFrames']<=24):raise ValueError('移动动画衔接无效')
     if 'entryEnd' in p and (type(p['entryEnd']) is not int or not 0<=p['entryEnd']<=end):raise ValueError('移动动画起步范围无效')
     if 'interruptOnStop' in p and type(p['interruptOnStop']) is not bool:raise ValueError('移动动画停止方式无效')
-    return dict(p)
+    result=dict(p)
+    # The published, user-approved 339-frame walk turns front at frame 281.
+    # Keep those frames in the one-shot return, not in every long-distance lap.
+    # Normalize the exact legacy descriptor so existing HD/light downloads work
+    # without replacing their bytes or changing unrelated/custom characters.
+    approved=item.get('userApprovedSource')
+    if (item.get('id') in ('move01left','move01right') and isinstance(approved,dict) and
+        approved.get('sha256')==APPROVED_WALK_SOURCE and
+        (start,end,count,move_start,fps,p.get('entryEnd'))==(96,292,339,36,24,95)):
+        result['end']=280
+    return result
 
 class Locomotion:
     def __init__(self):self.phase=None;self.body=None;self.tail=None;self.seam=None;self.seam_path=None;self.stopping=False;self.cycles=0;self.error=None

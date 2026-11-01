@@ -108,7 +108,10 @@ def startup_preference(root=ROOT):
     if not manifest.get('current'):return False
     folder=Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs/Startup'
     from windows_entries import command_matches,legacy_command
-    command=[str(checked_version(root,manifest['current'])/'BailongEnhanced.exe')]
+    from deployment_state import owned_destination
+    # Reading a preference must still work after the current EXE disappears.
+    # Keep the ownership/path guard; execution and rollback retain full checks.
+    command=[str(owned_destination(root,manifest['current'])/'BailongEnhanced.exe')]
     if (folder/'白龙桌宠增强版.lnk').exists():return command_matches(folder/'白龙桌宠增强版.lnk',command)
     old=legacy_command(folder/'BailongEnhanced.vbs')
     return old is not None and [os.path.normcase(x) for x in old]==[os.path.normcase(x) for x in command]
@@ -149,7 +152,7 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
         env=dict(BAILONG_DEPLOY_TOKEN=token,BAILONG_DEPLOY_RECEIPT=str(ready_receipt))
         progress('正在确认新版窗口与本地服务就绪…')
         from process_launch import launch_own
-        process=launch_own([str(exe)],cwd=str(exe.parent),env=env,creationflags=0x08000000)
+        process=launch_own([str(exe)],independent=True,cwd=str(exe.parent),env=env,creationflags=0x08000000)
         journal['pid']=process.pid;atomic(root/'deployment-journal.json',journal)
         ready=wait_ready(process,exe,ready_receipt,token,VERSION)
         ready_receipt.unlink(missing_ok=True)
@@ -171,7 +174,7 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
         if old and not restarted:
             try:
                 from process_launch import launch_own
-                launch_own([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+                launch_own([str(old)],independent=True,cwd=str(old.parent),creationflags=0x08000000)
             except OSError:raise OSError(str(error)+'；旧版未能自动恢复，请从安装目录启动旧版。') from error
         raise
 

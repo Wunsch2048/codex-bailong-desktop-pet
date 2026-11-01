@@ -77,6 +77,7 @@ class DesktopPet(EnhancedPet):
         from material_controller import MaterialController
         self.materials=MaterialController(self.material_store,self)
         self.materials.ready.connect(self.queue_material)
+        self.materials.recovered.connect(lambda tier,root:self.queue_material(tier,root,automatic=True))
         self.materials.removeRequested.connect(self.remove_materials)
         self.materials.rollbackRequested.connect(self.rollback_animation_update)
         self._material_exit_pending=False
@@ -129,22 +130,31 @@ class DesktopPet(EnhancedPet):
             self.video_yield=VideoYield(self)
         self.save_settings()
         self.schedule_animation()
+        if monitor and self._materials_missing and self.settings.get('character','builtin')=='builtin' and self.settings.get('character_visible',True) and not self.material_store.card_only:
+            QTimer.singleShot(400,self,self.materials.recover_local)
 
     def poll_codex_presence(self):
         from codex_connection import is_wsl_source
-        if is_wsl_source():return
+        if is_wsl_source():
+            self._codex_exit_gate.reset();return
         if not self.settings.get('codex_exit') or self._codex_polling or self._codex_closing:return
         self._codex_polling=True
+        generation=self._codex_exit_gate.generation
         def read():
             from codex_startup import desktop_sessions
             try:value=desktop_sessions()
             except Exception:value=None
-            try:self.codexPresence.emit(value)
+            try:self.codexPresence.emit((generation,value))
             except RuntimeError:pass
         threading.Thread(target=read,name='BailongCodexPresence',daemon=True).start()
-    def observe_codex_presence(self,value):
+    def observe_codex_presence(self,packet):
         self._codex_polling=False
         if self._codex_closing or not self.settings.get('codex_exit'):return
+        from codex_connection import is_wsl_source
+        if is_wsl_source():
+            self._codex_exit_gate.reset();return
+        generation,value=packet
+        if generation!=self._codex_exit_gate.generation:return
         if self._codex_exit_gate.observe(value):self.close()
 
     def asset_path(self,item):
@@ -309,7 +319,7 @@ class DesktopPet(EnhancedPet):
     def autonomous_boundary(self,now):
         if not self.isVisible() or self.dragging or self.throwing or self.walking or (getattr(self,'edge_dock',None) and self.edge_dock.active):return False
         if now<max(self.next_chain,self.buffer_until,self.status_hold):return False
-        if self.settings.get('status_actions',True) and self.reactions.busy(now):return False
+        if self.settings.get('status_actions',True) and (self.reactions.busy(now) or self.bubble.status_indicator.is_busy()):return False
         if self.roaming.queue:self.start_walk();return self.walking
         self.next_chain=now+self.settings['random_interval']+self.settings['action_gap']
         choices=['idle'];weights=[30]
@@ -437,6 +447,7 @@ class DesktopPet(EnhancedPet):
 
     def start_walk(self):
         if self._materials_missing or not self.settings.get('character_visible',True):return
+        if self.settings.get('status_actions',True) and (self.reactions.busy(time.monotonic()) or self.bubble.status_indicator.is_busy()):return
         if getattr(self,'edge_dock',None) and self.edge_dock.active:return
         if self.settings_dialog and self.settings_dialog.isVisible():return
         if self.bubble.underMouse() or self.underMouse() or self.bubble.size_transition.running or self.bubble.size_transition.preparing:return
@@ -614,6 +625,8 @@ class DesktopPet(EnhancedPet):
             elif event.get('kind')=='monitor_error':
                 self.reactions.observe(dict(state='offline',text='监听异常',active=0),time.monotonic())
             super().on_activity(event)
+            if event.get('kind')=='status' and self.settings.get('status_actions',True) and self.bubble.status_indicator.is_busy() and self.walking and not (self.dragging or self.throwing):
+                self.stop_walk(land=True)
     def complete_animation(self,event):
         if self.reactions.queue_completion(event,time.monotonic()):self.pending_completion=event
     def update_connection_health(self,values):
@@ -923,6 +936,7 @@ class DesktopPet(EnhancedPet):
                     if active:panel.raise_();panel.activateWindow()
     def show_panel(self,panel):
         if not panel.isWindow():
+            if not self.bubble.enabled:self.set_option('bubble',True)
             self.stop_walk();self.throwing=False;self._desktop_hidden=False;self.apply_surface_visibility()
             # First activation can synchronously polish the native editor and
             # take a full frame. Do it before the snapshot animation starts so
@@ -1148,10 +1162,11 @@ class DesktopPet(EnhancedPet):
         if self.bubble.report:self.bubble.report.animation.stop();self.bubble.report.hide()
         if self.chat_window:self.chat_window.shutdown();self.chat_window.deleteLater();self.chat_window=None
 
-    def queue_material(self,tier,root):
+    def queue_material(self,tier,root,*,automatic=False):
         if self.settings.get('character','builtin')!='builtin':
             self.materials.failed('请先切回内置白龙，再切换内置素材画质');return
         self._pending_material=(tier,Path(root))
+        self._pending_material_automatic=automatic
         if self._materials_missing or self._desktop_hidden or not self.settings.get('character_visible',True):self.apply_material()
 
     def queue_animation_update(self,ready):
@@ -1175,6 +1190,7 @@ class DesktopPet(EnhancedPet):
     def apply_material(self):
         if not self._pending_material:return False
         tier,root=self._pending_material;self._pending_material=None
+        automatic=getattr(self,'_pending_material_automatic',False);self._pending_material_automatic=False
         animation=getattr(self,'_pending_animation',None);self._pending_animation=None
         store=animation['store'] if animation else self.material_store
         old=(self.asset_root,self.manifest,self.idles,self.variants)
@@ -1183,7 +1199,8 @@ class DesktopPet(EnhancedPet):
             # Fully verified in the worker. Probe the entry frame before committing preference.
             from PIL import Image
             with Image.open(root/(m['idle'].get('playbackFile') or m['idle']['file'])) as im:im.load()
-            store.activate(tier,root)
+            if automatic:store.activate(tier,root,save_preference=False)
+            else:store.activate(tier,root)
             self.sustained.cancel()
             if self.player:self.player.close()
             self.player=StreamPlayer();self.player.ended=True
@@ -1193,7 +1210,8 @@ class DesktopPet(EnhancedPet):
             self.reactions.set_actions(item['id'] for item in all_items(m))
             missing=self._materials_missing;self._materials_missing=False
             if missing:
-                self.apply_settings(dict(character_visible=True,bubble=True));self.idle()
+                if not automatic:self.apply_settings(dict(character_visible=True,bubble=True))
+                self.idle();self.apply_surface_visibility()
             if animation:
                 from animation_updates import commit
                 commit(animation);self.material_store=store;self.materials.store=store
@@ -1270,6 +1288,11 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError) as error:QMessageBox.warning(self.settings_dialog,'恢复失败',str(error))
     def record_state(self):
         path=STATE_DIR/'runtime.json';value=super().runtime_state()
+        now=time.monotonic()
+        value['activity_projection']=dict(display_busy=self.bubble.status_indicator.is_busy(),animation_busy=self.reactions.busy(now),
+            known_animation_sessions=len(self.reactions.sessions),
+            recent_active_leases=sum(active and now-stamp<=35 for turn,active,stamp in self.reactions.leases.values()),
+            recent_idle_leases=sum(not active and now-stamp<=35 for turn,active,stamp in self.reactions.leases.values()))
         value['status_icon_timing']=self.bubble.status_indicator.timing_snapshot()
         value['material_status_cached']=True
         from decode_runtime import STATS

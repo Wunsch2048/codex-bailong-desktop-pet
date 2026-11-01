@@ -112,4 +112,36 @@ class DesktopContinuousTests(unittest.TestCase):
     def test_new_turn_cannot_reuse_old_turn_loop(self):
         self.assert_lifecycle_exit('new-turn')
 
+    def test_runtime_idle_projects_to_icon_roster_and_animation_without_clearing_unread(self):
+        from enhanced_core import ActivityReducer,Session
+        p=self.pet;r=ActivityReducer();r.sessions['test']=Session(state='working',turn='one',done=False)
+        p.on_activity(r._status('test',r.sessions['test']))
+        p.bubble.status_indicator.unread=[('another','old-completion')]
+        for event in r.runtime_events('test',False,'one'):p.on_activity(event)
+        self.assertFalse(p.bubble.status_indicator.is_busy())
+        self.assertEqual(p.last_activity['state'],'idle')
+        self.assertEqual(p.bubble.roster.items['test']['state'],'idle')
+        self.assertFalse(p.reactions.busy(time.monotonic()))
+        self.assertEqual(p.bubble.status_indicator.unread,[('another','old-completion')])
+
+    def test_task_stops_autonomous_route_at_natural_movement_tail(self):
+        from unittest.mock import Mock
+        p=self.pet;p.walking=True;p.mode='walk';p.gate.state='walk'
+        p.roaming.queue=[(500,500)];p.locomotion.phase='body'
+        with patch.object(p.locomotion,'request_stop') as stop:
+            p.on_activity(dict(kind='status',session='test',turn='one',state='thinking',active=1))
+            stop.assert_called_once()
+        self.assertFalse(p.walking);self.assertFalse(p.roaming.queue)
+        self.assertTrue(p.locomotion.active)
+        p.locomotion.phase=None
+
+    def test_active_status_does_not_interrupt_manual_drag_or_disabled_link(self):
+        p=self.pet
+        for disabled,dragging in ((False,True),(True,False)):
+            p.settings['status_actions']=not disabled;p.dragging=dragging;p.walking=True
+            with patch.object(p,'stop_walk') as stop:
+                p.on_activity(dict(kind='status',session='test',turn='one',state='thinking',active=1))
+                stop.assert_not_called()
+        p.dragging=False;p.walking=False
+
 if __name__=='__main__':unittest.main()

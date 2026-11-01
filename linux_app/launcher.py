@@ -58,10 +58,8 @@ def environment(args):
 
 
 def prepare_state(state):
-    """首次迁移旧设置和已校验素材，后续启动保留用户设置及素材选择"""
-    from material_store import MaterialStore
+    """只为缺失设置建立初值，人物资源由界面的后台恢复入口处理"""
     from desktop_core import atomic_json
-    from .live import prepare_materials
     legacy = ROOT / 'work/linux-validation/state-live/BailongEnhanced'
     settings = state / 'settings.json'
     if not settings.exists():
@@ -71,19 +69,11 @@ def prepare_state(state):
             values = dict(schema=2, character_visible=True, bubble=True, wandering=True,
                           random_actions=True, commentary=True, sound=False)
         atomic_json(settings, values)
-    store = MaterialStore(ROOT, state)
-    if store.current is None:
-        if getattr(sys, 'frozen', False):
-            raise RuntimeError('程序包缺少有效素材，请重新解压完整便携包或下载完整 AppImage')
-        source = legacy if MaterialStore(ROOT, legacy).available('light') else ROOT / 'work/linux-validation/state/BailongEnhanced'
-        try:
-            prepare_materials(ROOT, source, state)
-        except (OSError, ValueError) as error:
-            raise RuntimeError('缺少可用素材；请先按照 docs/LINUX.md 的素材步骤准备') from error
 
 
 def create_pet(stack, args):
     """装配已验证的平台适配，不启动 Windows 自启动与更新服务"""
+    from PySide6.QtCore import QTimer
     from . import live
     from enhanced import ResetThread
     from desktop import DesktopPet
@@ -113,7 +103,7 @@ def create_pet(stack, args):
         windows.attach(pet, stack)
     else:
         windows.attach(pet)
-    pet.show()
+    pet.apply_surface_visibility()
     live.start(pet, args.codex_home)
     # 公告查询使用原工作线程，保留缓存、手动刷新和失败状态处理
     pet.reset_worker = ResetThread(pet)
@@ -125,6 +115,9 @@ def create_pet(stack, args):
     pet.reset_worker.start()
     pet.bubble.redraw()
     pet.position_bubble()
+    if (pet._materials_missing and pet.settings.get('character', 'builtin') == 'builtin'
+            and pet.settings.get('character_visible', True) and not pet.material_store.card_only):
+        QTimer.singleShot(400, pet, pet.materials.recover_local)
     return pet
 
 
@@ -151,6 +144,10 @@ def main(argv=None, *, desktop='auto'):
             import ssl
             import quota
             store = MaterialStore(ROOT, state)
+            if store.current is None:
+                print(json.dumps(dict(materials='card_only' if store.card_only else 'unavailable',
+                                      error='未找到可验证的动画，请启动界面后在素材页启用或补齐')))
+                return 1
             store.verify(store.root, store.current)
             ssl.create_default_context()
             with ExitStack() as stack:

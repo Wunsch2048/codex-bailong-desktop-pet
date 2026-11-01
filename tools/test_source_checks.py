@@ -19,3 +19,19 @@ class SourceChecksTests(unittest.TestCase):
                 self.assertEqual((selected['returncode'], selected['tests']), (0, 1), selected)
                 missing = check_source.run('test_scope.Scope.test_missing')
                 self.assertNotEqual(missing['returncode'], 0)
+
+    def test_empty_suite_and_import_failure_are_rejected(self):
+        """零用例和模块导入失败都不能成为成功记录，tools 目录也须可导入"""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'app').mkdir()
+            (root / 'tools').mkdir()
+            (root / 'app/settings_controls.py').write_text('def _system_motion_enabled(): return True\n')
+            (root / 'tools/test_empty.py').write_text('import unittest\n')
+            (root / 'tools/test_broken.py').write_text('raise RuntimeError("import failed")\n')
+            with patch.object(check_source, 'ROOT', root):
+                empty = check_source.run('test_empty')
+                self.assertEqual((empty['returncode'], empty['tests']), ('no_tests', 0), empty)
+                broken = check_source.run('test_broken')
+                self.assertNotEqual(broken['returncode'], 0)
+                self.assertIn('import failed', broken['failure'])

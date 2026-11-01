@@ -2,7 +2,7 @@
 
 本分支在 [helantianshen 的 Linux/niri 适配](https://github.com/helantianshen/codex-bailong-desktop-pet/tree/3144a6769b1590f4e2665077d907b92bb7d4c4d7)上增加 KDE 支持。KDE 最初适配的 Windows 基线为 v1.0.0，linux-preview.2 起包含 KDE 后端；早期 linux-preview.1 下载包只支持 niri。按[上游 Linux issue 的审阅建议](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/2#issuecomment-6392931998)隔离平台代码、说明实机环境与功能边界。
 
-当前源码同步上游 1.3.0，合并前修复和待验项目见 [HANDOFF](../HANDOFF.md)。程序需手动更新，维护页只提供兼容动画更新和 Linux 下载入口；已保存的行为开关不因升级被开启。当前公开包仍为 v1.2.1-linux-preview.4，基于上游 v1.2.1；以下 KDE 实机记录来自此前适配，新版完整交互尚未在 KDE 复验，详见 [发布说明](releases/v1.2.1-linux-preview.4.md)。
+当前源码同步上游 1.4.1，合并内容和待验项目见 [HANDOFF](../HANDOFF.md)。程序需手动更新，维护页只提供兼容动画更新和 Linux 下载入口；已保存的行为开关不因升级被开启。上一轮 1.3.0 审阅修复后，用户在 KDE 做过基本操作并反馈正常；本轮 1.4.1 的新版页面与素材恢复尚未在 KDE 复验。当前公开包仍为基于上游 v1.2.1 的 v1.2.1-linux-preview.4，详见 [发布说明](releases/v1.2.1-linux-preview.4.md)。
 
 ## 启动
 
@@ -15,14 +15,14 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-linux.txt
 ```
 
-Git 不保存动画。首次运行先下载[原项目轻量素材](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)，然后导入：
+Git 不保存动画。可以直接启动卡片，再在设置的“动画待补齐”或“素材”页主动下载。已有完整缓存会在后台校验并恢复；仅卡片、隐藏人物与 HD 偏好保留。也可下载[原项目轻量素材](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)，导入后显式使用该验证目录：
 
 ```sh
 .venv/bin/python tools/linux_probe.py materials /绝对路径/bailong-desktop-pet-1.3.0-animation-light.zip
-.venv/bin/python run_kde.py
+.venv/bin/python run_kde.py --data-dir "$PWD/work/linux-validation/state"
 ```
 
-导入逐项核对素材当前清单中的 45 个文件及 SHA-256。已有有效素材和配置会继续使用；源码入口会复用已验证素材。
+导入逐项核对素材当前清单中的 45 个文件及 SHA-256。默认数据目录不会自动引用这个验证目录；已有默认目录中的有效素材和配置继续使用。
 
 KDE 的专用入口固定使用 KDE 后端；niri 单独使用 `run_niri.py`，不受继承的其他桌面环境标记影响。两个入口只调用共享的 Linux 生命周期和数据服务，不复制业务代码，且不能用 `--desktop` 切换成另一个桌面。原 `run_linux.py` 保留自动识别和 `--desktop kde/niri`，兼容已有启动配置。
 
@@ -44,7 +44,7 @@ CLI 优先使用 `--codex-cli`，其次是 `BAILONG_CODEX`、PATH 中的 `codex`
 
 CLI 始终在其原路径执行，未被遮蔽的安装保持原样；若 CLI 位于 CODEX_HOME 内，则将其所在的顶层安装子树（如 `packages/`，包括相邻脚本、模块、资源）只读挂回原位置。安装的完整依赖须在该子树内或其他未遮蔽的系统路径；CODEX_HOME 根目录仍是私有可写运行空间，根层 config/auth 单独只读挂载。`/tmp` 内的临时安装也按完整子目录保留原路径。直接放在 CODEX_HOME 或 `/tmp` 根目录的独立启动器会明确拒绝，请将完整安装放进子目录或外部；不会把单个文件重定位到 `/tmp/bailong-codex`。
 
-## 历史 KDE 验证记录（不含当前 1.3.0 源码）
+## 历史 KDE 验证记录（不含当前 1.4.1 源码）
 
 本机环境为 Evernight Vista 44.0.1（Fedora 44 衍生）、x86_64、KDE Plasma / KWin 6.7.5、Wayland 会话、Qt xcb 经 XWayland 显示、200% 缩放；Python 3.12.15、PySide6 / Qt 6.9.2。已核对实际 X11 窗口坐标与物理尺寸，覆盖人物程序化移动、设置/聊天页、日报、分离面板、胶囊往返、人物 1.0/1.4 倍大小及关闭置顶；已观察真实额度、Token 和 IPC 健康状态。素材和 TLS 自检入口（已有日常实例时指定独立数据目录）：
 

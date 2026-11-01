@@ -115,6 +115,7 @@ class InteractionTests(unittest.TestCase):
         self.pet.apply_settings(dict(random_actions=False,wandering=False),save=False);self.pet.show();settle(self.pet)
     def tearDown(self):
         self.pet.close();settle(self.pet)
+        self.pet.deleteLater();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete);APP.processEvents()
         for p in reversed(self.patches):p.stop()
         self.tmp.cleanup()
     def settings(self):
@@ -135,7 +136,7 @@ class InteractionTests(unittest.TestCase):
     def test_conflict_is_visible_and_discard_uses_current_values(self):
         s=self.settings();s.fields['scale'].setValue(1.3);self.pet.apply_settings(dict(scale=1.1))
         self.assertEqual(s.fields['scale'].value(),1.3);self.assertEqual(s.draft.conflicts,{'scale'})
-        self.assertIn('外部也修改了',s.draft_status.text());s.apply();self.assertEqual(self.pet.settings['scale'],1.3)
+        self.assertIn('有冲突',s.draft_status.text());s.apply();self.assertEqual(self.pet.settings['scale'],1.3)
         s.fields['scale'].setValue(1.4);self.pet.apply_settings(dict(scale=1.0));s.discard_button.click()
         self.assertEqual(s.fields['scale'].value(),1.0);self.assertFalse(s.draft.dirty)
     def test_startup_failure_does_not_block_other_settings_or_clear_draft(self):

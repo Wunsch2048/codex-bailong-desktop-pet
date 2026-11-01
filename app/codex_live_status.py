@@ -172,7 +172,10 @@ class LifecycleProjection:
             turn=latest_turn(state) or {};runtime=state.get('threadRuntimeStatus') or {}
             if self.emit_terminal and turn.get('turnId') and turn.get('status') in ('completed','failed','interrupted'):
                 self.emit_terminal(sid,turn['status'],turn['turnId'])
-            value=(turn.get('turnId') or '',turn.get('status')=='inProgress' and runtime.get('type')=='active')
+            # Missing runtime fields / disconnect are unknown, not idle.
+            terminal=turn.get('status') in ('completed','failed','interrupted')
+            if not turn.get('turnId') or not terminal and (turn.get('status')!='inProgress' or runtime.get('type') not in ('active','idle')):continue
+            value=(turn['turnId'],not terminal and turn.get('status')=='inProgress' and runtime.get('type')=='active')
             previous=self.activity_sent.get(sid)
             if previous and previous[:2]==value and now-previous[2]<15:continue
             self.activity_sent[sid]=(*value,now)

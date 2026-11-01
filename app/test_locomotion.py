@@ -42,11 +42,28 @@ class LocomotionTests(unittest.TestCase):
     start=1200 if direction<0 else 100;target=start+direction*900
     bubble=SimpleNamespace(underMouse=lambda:False,size_transition=SimpleNamespace(running=False,preparing=False),report=None,panel_page='status')
     played=[]
-    pet=SimpleNamespace(_materials_missing=False,settings_dialog=None,edge_dock=None,bubble=bubble,settings=dict(character_visible=True,panel_detached=True,no_move=False,wander_horizontal_only=True,move_speed=55,wander_home=dict(screen='speed-fixture',x=.1,y=.1)),dragging=False,throwing=False,gate=SimpleNamespace(state='idle'),frameGeometry=lambda:QRect(start,100,200,200),width=lambda:200,height=lambda:200,x=lambda:start,y=lambda:100,underMouse=lambda:False,roaming=SimpleNamespace(next=lambda *a:((target,100),(0,0,1720,880))),manifest=dict(moveAnimations=items),locomotion=SimpleNamespace(active=False),play=lambda item,state:played.append(item) or True,prepare_landing=lambda:None)
+    pet=SimpleNamespace(_materials_missing=False,settings_dialog=None,edge_dock=None,bubble=bubble,settings=dict(character_visible=True,panel_detached=True,no_move=False,status_actions=False,wander_horizontal_only=True,move_speed=55,wander_home=dict(screen='speed-fixture',x=.1,y=.1)),dragging=False,throwing=False,gate=SimpleNamespace(state='idle'),frameGeometry=lambda:QRect(start,100,200,200),width=lambda:200,height=lambda:200,x=lambda:start,y=lambda:100,underMouse=lambda:False,roaming=SimpleNamespace(next=lambda *a:((target,100),(0,0,1720,880))),manifest=dict(moveAnimations=items),locomotion=SimpleNamespace(active=False),play=lambda item,state:played.append(item) or True,prepare_landing=lambda:None)
     with patch('desktop.QApplication.screenAt',return_value=screen),patch('desktop.random.random',return_value=0 if running else 1):DesktopPet.start_walk(pet)
     self.assertEqual(played[0]['movementKind'],'run' if running else 'walk')
     self.assertEqual(pet.walk_direction,direction);self.assertEqual(pet.walk_speed,88 if running else 55)
     self.assertTrue(pet.walking)
+ def test_approved_walk_keeps_front_return_out_of_repeated_body(self):
+  from locomotion import APPROVED_WALK_SOURCE
+  for direction in ('left','right'):
+   item=dict(id='move01'+direction,durationMs=14125,userApprovedSource=dict(sha256=APPROVED_WALK_SOURCE),locomotion=dict(start=96,end=292,sourceFrames=339,moveStart=36,fps=24,forwardOnly=True,entryEnd=95,interruptOnStop=True))
+   with patch('locomotion.PreparedSegment',Segment):
+    p=Player();m=Locomotion();m.begin(p,'approved.webp',205,item)
+    self.assertEqual(p.kw['end_frame'],95)
+    for _ in range(4):
+     m.boundary(p,205);self.assertEqual(p.adopted[-1],(96,280))
+    m.request_stop();m.poll_stop(p,205);self.assertEqual(p.adopted[-1],(281,338))
+    self.assertEqual(item['locomotion']['end'],292)
+ def test_unknown_walk_source_and_newer_descriptors_are_not_normalized(self):
+  from locomotion import APPROVED_WALK_SOURCE
+  spec=dict(start=96,end=292,sourceFrames=339,moveStart=36,fps=24,forwardOnly=True,entryEnd=95)
+  self.assertEqual(profile(dict(id='move01right',locomotion=spec,userApprovedSource=dict(sha256='custom')))['end'],292)
+  for custom in (None,'custom',[]):self.assertEqual(profile(dict(id='move01right',locomotion=spec,userApprovedSource=custom))['end'],292)
+  self.assertEqual(profile(dict(id='move01right',locomotion=dict(spec,end=270),userApprovedSource=dict(sha256=APPROVED_WALK_SOURCE)))['end'],270)
  def test_long_clip_separates_entrance_and_keeps_source_body_order(self):
   p=Player();m=Locomotion()
   with patch('locomotion.PreparedSegment',Segment):

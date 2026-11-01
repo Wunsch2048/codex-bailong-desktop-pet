@@ -166,8 +166,12 @@ class LinuxUpdateTests(unittest.TestCase):
             self.assertEqual(panel.check.text(), '检查动画更新')
             titles = {b.text() for b in dialog.findChildren(QPushButton)}
             self.assertNotIn('程序位置与安装管理', titles)
-            self.assertNotIn('清理历史版本与备份（先预览）', titles)
-            self.assertIn('备份设置（不含密钥与对话）', titles)
+            self.assertNotIn('查看可清理内容', titles)
+            self.assertIn('数据与恢复', titles)
+            buttons = {b.text(): b for b in dialog.findChildren(QPushButton)}
+            self.assertEqual(buttons['备份设置'].toolTip(), '不含密钥与对话')
+            self.assertEqual(buttons['恢复设置'].toolTip(), '恢复设置备份')
+            self.assertIn('不含对话和密钥', buttons['导出诊断'].toolTip())
             link = dialog.findChild(QPushButton, 'linux_program_download')
             with patch('linux_app.ui.QDesktopServices.openUrl') as open_url:
                 link.click()
@@ -178,3 +182,20 @@ class LinuxUpdateTests(unittest.TestCase):
             self.controller.publish(package_kind='animation')
             self.assertFalse(panel.install.isHidden())
             self.assertEqual(panel.install.text(), '下载动画')
+
+    def test_windows_maintenance_keeps_installation_controls(self):
+        """共享维护页改版后，Windows 仍能找到安装管理与清理入口"""
+        pet = PetStub()
+        pet.updates = self.controller
+        pet.open_install_manager = Mock()
+        pet.cleanup_installations = Mock()
+        with patch('app_updates.program_updates_supported', return_value=True), \
+             patch('desktop_settings.autostart_enabled', return_value=False), \
+             patch('codex_startup.enabled', return_value=False):
+            dialog = SettingsDialog(pet, embedded=True)
+            self.assertIn('update_checks', dialog.fields)
+            buttons = {b.text(): b for b in dialog.findChildren(QPushButton)}
+            buttons['程序位置与安装管理'].click()
+            buttons['查看可清理内容'].click()
+            pet.open_install_manager.assert_called_once()
+            pet.cleanup_installations.assert_called_once()

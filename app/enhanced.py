@@ -88,13 +88,14 @@ class ActivityThread(QThread):
                 if self.presence_reader is None or not self.presence_reader.is_alive():
                     self.presence_reader=threading.Thread(target=self.read_presence,name='BailongCodexPresence',daemon=True);self.presence_reader.start()
             try:
-                from session_read_state import session_id,active_conversations,conversation_names
+                from session_read_state import session_id,active_conversations,conversation_names,terminal_conversations
                 from enhanced_core import Session
                 try:pending=json.loads((self.session_dir/'task-notifications.json').read_text(encoding='utf-8')).get('unread',[])
                 except (OSError,ValueError,AttributeError):pending=[]
                 pending=[k for k in pending if isinstance(k,list) and len(k)==2 and all(isinstance(v,str) for v in k)]
                 seeds=[]
-                if time.monotonic()-self.last_active_scan>=15:
+                history_due=time.monotonic()-self.last_active_scan>=15
+                if history_due:
                     self.last_active_scan=time.monotonic();seeds=[] if self.wsl else active_conversations(self.tail.home)
                     existing={session_id(s) for s in self.tail.reducer.sessions}
                     for e in seeds:
@@ -114,6 +115,11 @@ class ActivityThread(QThread):
                     states={session_id(sid):v for sid,v in self.tail.reducer.sessions.items()}
                     batch.extend(e for e in seeds if not states.get(session_id(e['session']),Session()).done)
                 self.targets.sync(self.tail.reducer.sessions,pending,displayed,visited)
+                if history_due and not self.wsl:
+                    unfinished={session_id(sid):s.turn for sid,s in self.tail.reducer.sessions.items() if not s.done and not s.source_subagent and s.turn}
+                    ids=self.targets.choose('terminal',128,unfinished)
+                    for sid,turn,status in terminal_conversations(self.tail.home,[(sid,unfinished[sid]) for sid in ids]):
+                        batch.extend(self.tail.reducer.terminate(self.targets.alias(sid),status,turn))
                 self.live_reader.set_targets(self.targets.ipc_targets())
                 while not self.live_events.empty():
                     phase,sid,value,turn=self.live_events.get_nowait();target=self.targets.alias(sid)
@@ -121,7 +127,7 @@ class ActivityThread(QThread):
                         if phase=='terminal':
                             batch.extend(self.tail.reducer.terminate(target,value,turn));continue
                         if phase=='activity':
-                            batch.append(dict(kind='animation_lifecycle',session=target,turn=turn,active=value));continue
+                            batch.extend(self.tail.reducer.runtime_events(target,value,turn));continue
                         apply=self.tail.reducer.set_waiting if phase=='waiting' else self.tail.reducer.set_compacting
                         batch.extend(apply(target,value,turn))
                 if time.monotonic()-self.last_name_scan>=3:

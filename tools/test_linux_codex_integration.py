@@ -98,6 +98,33 @@ class IntegrationTests(unittest.TestCase):
         pet.close()
         pet.deleteLater()
 
+    def test_late_linux_presence_result_after_reset_does_not_close_pet(self):
+        """真实后台线程的旧结果不能推进重新启用后的退出计数"""
+        pet = PresencePet()
+        entered, release = threading.Event(), threading.Event()
+        def delayed_sessions():
+            """阻塞本次读取，模拟用户切换开关时仍在执行的旧查询"""
+            entered.set()
+            release.wait(3)
+            return set()
+        try:
+            with patch.object(codex_watch, 'desktop_sessions', side_effect=delayed_sessions), ExitStack() as stack:
+                codex_watch.install(stack, Namespace(), Path('/source'))
+                pet._codex_exit_gate.observe({(1, 10)})
+                pet.poll_codex_presence()
+                self.wait(entered.is_set)
+                pet._codex_exit_gate.reset()
+                for current in ({(2, 20)}, set(), set()):pet._codex_exit_gate.observe(current)
+                release.set()
+                self.wait(lambda: not pet._codex_polling)
+                self.assertFalse(pet.closed)
+                self.assertEqual(pet._codex_exit_gate.absent, 2)
+        finally:
+            release.set()
+            self.wait(lambda: not pet._codex_polling)
+            pet.close()
+            pet.deleteLater()
+
     def test_protocol_dispatch_and_host_environment(self):
         """使用注册协议和参数数组，宿主工具不继承打包 Qt 路径"""
         result = subprocess.CompletedProcess([], 0, 'chatgpt.desktop\n', '')

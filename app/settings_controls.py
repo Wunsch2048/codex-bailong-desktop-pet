@@ -99,8 +99,9 @@ class SlidingSegments(QWidget):
         if self.animation.state()!=self.animation.State.Running:
             self.pill=QRectF(self.buttons[self.currentData()].geometry())
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color(SELECTED)));p.drawRoundedRect(QRectF(self.rect()),8,8)
-        p.setBrush(QColor(theme_color(SURFACE)));p.drawRoundedRect(self.pill,5,5)
+        preview=bool(self.property('largeCardPalette'))
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color(PANEL if preview else SELECTED)));p.drawRoundedRect(QRectF(self.rect()),8,8)
+        p.setBrush(QColor(theme_color(SELECTED if preview else SURFACE)));p.drawRoundedRect(self.pill,5,5)
 
 
 class SwitchRow(QCheckBox):

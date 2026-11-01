@@ -125,7 +125,7 @@ class BubbleTests(unittest.TestCase):
         self.bubble.reset_snapshot={'pending':item};self.bubble.redraw();settle()
         announcement=next(w for w in self.bubble.findChildren(Announcement) if w.isVisible())
         self.assertIn(text,announcement.toolTip());self.assertEqual(self.bubble.height(),186)
-        self.bubble.toggle_details();settle();self.bubble.details_tabs.setCurrentIndex(2)
+        self.bubble.toggle_details();settle();self.bubble.details_tabs.setCurrentIndex(2);settle()
         self.assertIn(text,[w.text() for w in self.bubble.findChildren(QLabel) if w.isVisible()])
     def test_all_shortcut_buttons_fit_inside_compact_bubble_on_both_cards(self):
         for page in ('tokens','reset'):

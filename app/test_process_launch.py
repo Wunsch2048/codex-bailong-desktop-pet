@@ -4,11 +4,47 @@ from unittest.mock import patch,Mock
 from process_launch import own_environment,launch_own,clean_dll_search
 
 class LaunchTests(unittest.TestCase):
+    def test_explicit_environment_removals_apply_after_inherited_overlay_merge(self):
+        with patch.dict(os.environ,BAILONG_DEPLOY_TOKEN='test-nonce',BAILONG_DEPLOY_RECEIPT='test-receipt'),patch('subprocess.Popen') as start:
+            launch_own(['pet.exe'],env={'LOCALAPPDATA':'same-user'},remove_environment=('BAILONG_DEPLOY_TOKEN','BAILONG_DEPLOY_RECEIPT'))
+        env=start.call_args.kwargs['env']
+        self.assertFalse('BAILONG_DEPLOY_TOKEN' in env,'交接参数不能因环境合并而恢复')
+        self.assertFalse('BAILONG_DEPLOY_RECEIPT' in env,'交接回执不能因环境合并而恢复')
+        self.assertEqual(env['LOCALAPPDATA'],'same-user')
+    @unittest.skipUnless(sys.platform=='win32','Windows job policy')
+    def test_independent_flags_respect_host_breakaway_policy(self):
+        from process_launch import independent_creationflags
+        for policy,success,expected in ((0x2800,True,0x09000000),(0x2000,True,0x08000000),(0x1000,True,0x08000000),(0,False,0x08000000)):
+            api=Mock()
+            def query(handle,kind,pointer,size,returned):
+                self.assertEqual(kind,2);pointer._obj.flags=policy;return success
+            api.QueryInformationJobObject.side_effect=query
+            with self.subTest(policy=policy,success=success),patch('ctypes.WinDLL',return_value=api):
+                self.assertEqual(independent_creationflags(0x08000000),expected)
+    def test_codex_listener_launch_is_independent_and_drops_install_nonce(self):
+        """监听独立启动且不继承安装交接参数，失败时不输出完整环境"""
+        import codex_startup
+        with patch.dict(os.environ,BAILONG_DEPLOY_TOKEN='test-nonce',BAILONG_DEPLOY_RECEIPT='test-receipt'),patch('process_launch.launch_own') as start:
+            codex_startup.spawn(['pet.exe','--watch-codex'])
+        self.assertTrue(start.call_args.kwargs['independent'])
+        for key in ('BAILONG_DEPLOY_TOKEN','BAILONG_DEPLOY_RECEIPT'):
+            self.assertFalse(key in start.call_args.kwargs['env'],key)
+    def test_independent_launch_preserves_existing_flags_and_environment(self):
+        with patch('process_launch.independent_creationflags',return_value=0x09000000) as flags,patch('subprocess.Popen') as start:
+            launch_own(['pet.exe','--watch-codex'],independent=True,creationflags=0x08000000)
+        flags.assert_called_once_with(0x08000000)
+        self.assertEqual(start.call_args.kwargs['creationflags'],0x09000000)
+        self.assertEqual(start.call_args.args[0],['pet.exe','--watch-codex'])
+    def test_regular_child_does_not_request_independent_lifetime(self):
+        with patch('process_launch.independent_creationflags') as flags,patch('subprocess.Popen'):
+            launch_own(['helper.exe'],creationflags=0x08000000)
+        flags.assert_not_called()
     def test_first_upgrade_repairs_legacy_parent_qt_plugin_paths(self):
+        """Windows 冻结环境必须移除旧 Qt 插件路径，失败只报告变量名"""
         from process_launch import configure_frozen_qt
         with patch.object(sys,'frozen',True,create=True),patch.object(sys,'_MEIPASS',str(Path.cwd()/'new-runtime'),create=True),patch.dict(os.environ,{'QT_QPA_PLATFORM_PLUGIN_PATH':'old-runtime','QT_PLUGIN_PATH':'old-runtime'}),patch('PySide6.QtCore.QCoreApplication.setLibraryPaths') as set_paths:
             configure_frozen_qt()
-            self.assertNotIn('QT_QPA_PLATFORM_PLUGIN_PATH',os.environ)
+            self.assertFalse('QT_QPA_PLATFORM_PLUGIN_PATH' in os.environ,'QT_QPA_PLATFORM_PLUGIN_PATH')
             self.assertEqual(os.environ['QT_PLUGIN_PATH'],str(Path(sys._MEIPASS)/'PySide6/plugins'))
             set_paths.assert_called_once_with([os.environ['QT_PLUGIN_PATH']])
     def test_clean_environment_does_not_drop_account_network_or_receipt(self):

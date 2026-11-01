@@ -77,6 +77,19 @@ class ControlsTests(unittest.TestCase):
             QTest.wheelEvent(host.windowHandle(),choice.mapTo(host,choice.rect().center()),QPoint(0,-120));APP.processEvents()
             self.assertEqual(choice.currentIndex(),0)
             self.assertGreater(area.verticalScrollBar().value(),0)
+    def test_numeric_wheel_never_changes_values_and_scrolls_the_page(self):
+        from PySide6.QtWidgets import QScrollArea
+        from number_controls import DecimalField,IntegerField
+        for kind in (DecimalField,IntegerField):
+            host=QWidget();host.resize(360,300);outer=QVBoxLayout(host);area=QScrollArea();area.setWidgetResizable(True);outer.addWidget(area)
+            body=QWidget();layout=QVBoxLayout(body);field=kind();field.setRange(0,100);field.setValue(40);layout.addWidget(field);layout.addSpacing(1200);area.setWidget(body)
+            host.show();APP.processEvents()
+            for focused in (False,True):
+                field.setFocus() if focused else field.clearFocus()
+                area.verticalScrollBar().setValue(0);APP.processEvents()
+                QTest.wheelEvent(host.windowHandle(),field.mapTo(host,QPoint(20,15)),QPoint(0,-120));APP.processEvents()
+                self.assertEqual(field.value(),40);self.assertGreater(area.verticalScrollBar().value(),0)
+            host.hide();host.deleteLater();APP.processEvents()
     def test_settings_still_keep_drafts_and_only_apply_on_request(self):
         from desktop_settings import SettingsDialog
         pet=PetStub()

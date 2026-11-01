@@ -127,7 +127,8 @@ class HeaderHints(QObject):
     def _restore_header(self):
         if not self.rebuilding:return
         self.rebuilding=False;role=self.role;self.role=None
-        for button in getattr(self.parent(),'_header_actions',[]):
+        for button in self.parent().findChildren(QWidget):
+            if not button.property('headerActionHint'):continue
             if button.objectName()==role and button.isVisible() and QRect(button.mapToGlobal(QPoint()),button.size()).contains(QCursor.pos()):
                 self.target=weakref.ref(button);self._show();return
         self.dismiss(True)
@@ -147,8 +148,15 @@ class HeaderHints(QObject):
         self.watch.start()
 
     def eventFilter(self,obj,event):
-        if not isinstance(obj,QWidget):return False
-        b=self.parent();kind=event.type()
+        # Style/palette/paint storms are irrelevant to hover lifetime. Do not
+        # traverse widget ancestry while Qt is polishing or tearing down forms.
+        kind=event.type()
+        if kind not in (QEvent.Type.Hide,QEvent.Type.Close,QEvent.Type.Move,QEvent.Type.Resize,QEvent.Type.ToolTip,QEvent.Type.Enter,QEvent.Type.Leave,QEvent.Type.MouseButtonPress,QEvent.Type.ParentChange):return False
+        from shiboken6 import isValid
+        if not isinstance(obj,QWidget) or not isValid(obj):return False
+        b=self.parent()
+        if b is None or not isValid(b):return False
+        if obj is not b and not b.isVisible():return False
         if obj is b and (kind in (QEvent.Type.Hide,QEvent.Type.Close) or (kind in (QEvent.Type.Move,QEvent.Type.Resize) and not self.rebuilding)):self.dismiss(True)
         if obj is not b and not b.isAncestorOf(obj):return False
         if kind==QEvent.Type.ToolTip:

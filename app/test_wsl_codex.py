@@ -123,7 +123,8 @@ class WslCodexTests(unittest.TestCase):
         connection._saved_paths.cache_clear()
     def test_wsl_source_never_exits_when_windows_codex_closes(self):
         from desktop import DesktopPet
-        fake=SimpleNamespace(settings=dict(codex_exit=True),_codex_polling=False,_codex_closing=False)
+        from codex_startup import ExitGate
+        fake=SimpleNamespace(settings=dict(codex_exit=True),_codex_polling=False,_codex_closing=False,_codex_exit_gate=ExitGate())
         with patch('codex_connection.is_wsl_source',return_value=True),patch('threading.Thread') as launch:
             DesktopPet.poll_codex_presence(fake);launch.assert_not_called()
 

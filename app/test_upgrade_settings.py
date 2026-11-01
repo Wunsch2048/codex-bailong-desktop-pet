@@ -72,6 +72,53 @@ class UpgradeSettingsTests(unittest.TestCase):
         self.assertEqual(config.read_bytes(),before)
     def test_public_zip_upgrade_and_backup_preserve_other_machine_settings(self):self.deploy()
     def test_program_directory_upgrade_and_backup_preserve_other_machine_settings(self):self.deploy(True)
+    def test_restore_rejects_traversal_outside_backup_and_corrupt_bytes(self):
+        """路径别名兼容不能放过越界或摘要错误，拒绝时保留当前设置"""
+        from directory_deploy import backup_data,restore_data
+        install=self.root/'install';install.mkdir()
+        data=self.root/'data';data.mkdir();settings=data/'settings.json'
+        settings.write_text('{"theme":"cyber"}',encoding='utf-8')
+        backup=backup_data(data,install,'previous')
+        settings.write_text('{"theme":"teal"}',encoding='utf-8');before=settings.read_bytes()
+        for path in (backup/'..'/backup.name,self.root,backup.parent):
+            with self.subTest(path=path),self.assertRaises(ValueError):restore_data(data,path,install)
+            self.assertEqual(settings.read_bytes(),before)
+        (backup/'settings.json').write_bytes(b'x'*len((backup/'settings.json').read_bytes()))
+        with self.assertRaisesRegex(ValueError,'校验失败'):restore_data(data,backup,install)
+        self.assertEqual(settings.read_bytes(),before)
+
+    @unittest.skipIf(os.name=='nt','POSIX symbolic links')
+    def test_restore_rejects_symbolic_backup_and_linked_parent(self):
+        """解析规范路径前拒绝备份及父目录链接，不能借链接进入合法目录"""
+        from directory_deploy import backup_data,restore_data
+        install=self.root/'install';install.mkdir()
+        data=self.root/'data';data.mkdir();settings=data/'settings.json'
+        settings.write_text('{"theme":"cyber"}',encoding='utf-8')
+        backup=backup_data(data,install,'previous')
+        direct=backup.parent/'alias';direct.symlink_to(backup,target_is_directory=True)
+        parent=self.root/'linked-install';parent.symlink_to(install,target_is_directory=True)
+        settings.write_text('{"theme":"teal"}',encoding='utf-8');before=settings.read_bytes()
+        for path in (direct,parent/'deployment-backups'/backup.name):
+            with self.subTest(path=path),self.assertRaises(ValueError):restore_data(data,path,install)
+            self.assertEqual(settings.read_bytes(),before)
+
+    @unittest.skipUnless(os.name=='nt','Windows short path aliases')
+    def test_verified_backup_restores_through_windows_short_path_alias(self):
+        import ctypes,directory_deploy
+        install=self.root/'installation with long name';install.mkdir()
+        data=self.root/'alias-data';data.mkdir();settings=data/'settings.json'
+        settings.write_text('{"theme":"cyber"}',encoding='utf-8')
+        backup=directory_deploy.backup_data(data,install,'previous')
+        get_short=ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p,ctypes.c_uint32];get_short.restype=ctypes.c_uint32
+        buf=ctypes.create_unicode_buffer(32768);size=get_short(str(backup),buf,len(buf))
+        self.assertTrue(size and size<len(buf))
+        alias=Path(buf.value)
+        if alias==backup:self.skipTest('8.3 aliases disabled on this volume')
+        settings.write_text('{"theme":"teal"}',encoding='utf-8')
+        directory_deploy.restore_data(data,alias,install)
+        self.assertEqual(settings.read_text('utf-8'),'{"theme":"cyber"}')
+        with self.assertRaises(ValueError):directory_deploy.restore_data(data,backup.parent,install)
     def test_actual_application_start_close_retains_shortcut_mode_and_theme(self):
         from PySide6.QtWidgets import QApplication
         import desktop,enhanced

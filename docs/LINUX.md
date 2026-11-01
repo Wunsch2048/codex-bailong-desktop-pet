@@ -11,13 +11,15 @@
 
 当前入口使用原人物、气泡和界面组件。窗口及数据适配集中在 `linux_app/`，共享更新代码按平台能力限制程序安装。下方旧版实机记录只适用于当时版本，不能作为当前源码的验收结论。
 
-## 当前源码：上游 1.3.0，尚未发布 Linux 包
+## 当前源码：上游 1.4.1，尚未发布 Linux 包
 
-PR #20 的合并前修复基于上游 `4c14b37`。已有设置中的随机动作、回复摘要和自主走动开关会保留，包括合法的 `false`；旧迁移标记不再触发强制开启。全新安装默认开启这三项，缺失项由共享设置逻辑补默认。
+PR #20 的源码已合并上游 `60eab31`，保留此前审阅修复。已有设置中的随机动作、回复摘要和自主走动开关会保留，包括合法的 `false`；旧迁移标记不再触发强制开启。全新安装默认开启这三项，缺失项由共享设置逻辑补默认。
 
 维护页提供 Linux 程序下载页和独立动画更新。程序需手动更新；Windows 程序安装、目录迁移及历史版本清理入口不提供给 Linux。手动动画检查在 GitHub API 正常和限流备用通道中都只选择动画附件，并核对实际程序最低版本与 SHA-256，兼容后才允许下载和切换。
 
-niri 原生拖动接入 1.3.0 的临时收纳与贴边流程，收纳结束再交给跟随画布，松手恢复原显示偏好；分段走动保留下一段路径。自动回归与实机待验项目见 [HANDOFF](../HANDOFF.md)。主题、35 个动作及其接缝、跨屏拖动、页面复位和真实速率/成本显示仍需在 niri/KDE 实机确认。
+niri 保留临时收纳、贴边和跟随画布，并接入新版状态/聊天/设置/说明页。取消形变时先退出原生窗口准备状态，避免窗口已释放后继续等待显示。当前源码允许缺素材启动；显示人物时在后台检查已知本地缓存，完整校验后恢复，缺失内容由用户在素材页主动下载。已有 HD、仅卡片和隐藏偏好不会被自动改写。
+
+本轮已完成 Linux 自动回归及 niri 原生窗口验证，用户确认胶囊展开/收起、普通左键拖动及松手后的位置正常，范围见 [HANDOFF](../HANDOFF.md)。附着面板在人物拖动后回到普通状态卡，沿用上游 Windows 的交互规则。跨屏/热插拔、35 个动作的完整接缝、真实会话及本轮 KDE 交互仍需实机验收；此前版本反馈不代替本轮结论。
 
 ## 当前发布：v1.2.1-linux-preview.4
 
@@ -57,7 +59,7 @@ PyCharm 选择「桌宠 Linux」，解释器为项目 `.venv/bin/python`，脚�
 .venv/bin/python run_linux.py --codex-home ~/.codex --codex-cli /usr/lib/chatgpt/resources/codex --data-dir ~/.local/share/codex-bailong
 ```
 
-首次启动从仓库 `work/linux-validation/state-live/BailongEnhanced` 迁移已有桌宠设置，并复用已校验素材；原文件保留。后续不覆盖已有设置或素材选择。不会迁移 Codex 凭据、旧诊断截图或会话正文，统计索引从真实数据重新建立。素材采用硬链接，跨文件系统时回退为复制。
+源码首次启动仅在目标设置文件不存在时，从仓库 `work/linux-validation/state-live/BailongEnhanced` 迁移已有桌宠设置；原文件保留。启动不再同步搬运历史验证目录的素材，也不因素材缺失退出。共享后台恢复只检查当前素材目录、已知缓存和受管安装清单；用户指定的 `--data-dir` 决定此次使用哪套状态。不会迁移 Codex 凭据、旧诊断截图或会话正文，统计索引从真实数据重新建立。
 
 依赖使用 `requirements-linux.txt`，已有环境不需重新安装：
 
@@ -68,13 +70,14 @@ uv pip install --python .venv/bin/python -r requirements-linux.txt
 
 系统需有 niri/Wayland（niri 后端）或 KDE/XWayland（KDE 后端），以及 bubblewrap 的 `bwrap`。没有 bwrap 时拒绝启动，不回退到无隔离的额度查询。数据读取继续使用真实 Unix IPC、只读 SQLite 和会话日志；额度 app-server 只能读取真实配置和认证文件，运行时写入临时挂载，代码位于 `linux_app/codex_readonly`。
 
-当前源码需要 1.3.0 的匹配素材；旧版 32 文件素材包不能用于本次验收。下载[1.3.0 轻量动画](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)（约 1.04 GB），再运行：
+当前 1.4.1 沿用 1.3.0 的匹配素材，旧版 32 文件素材包不能用于人物验收。首次启动可先使用卡片，在设置的“动画待补齐”或“素材”页主动下载；程序不会自动下载大体积动画。也可下载[1.3.0 轻量动画](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)（约 1.04 GB）后导入独立验证目录：
 
 ```sh
 .venv/bin/python tools/linux_probe.py materials /绝对路径/bailong-desktop-pet-1.3.0-animation-light.zip
+.venv/bin/python run_niri.py --data-dir "$PWD/work/linux-validation/state"
 ```
 
-导入按 `app/material_catalog.json` 校验全部 45 个文件的大小和 SHA-256，再激活到隔离素材目录。源码入口随后可复用已校验素材；未导入时，不把仅卡片测试视为人物动画验收。
+导入按 `app/material_catalog.json` 校验全部 45 个文件的大小和 SHA-256，再激活到 `work/linux-validation/state`；启动时须显式使用这个数据目录。默认数据目录不会自动引用它。仅卡片测试不能作为人物动画验收。
 
 ## niri 专用窗口规则
 

@@ -15,6 +15,7 @@ def size_text(value):
 
 class UpdatePanel(QWidget):
     def __init__(self,controller,parent=None):
+        """连接共享更新状态，并解释当前平台允许安装的资源"""
         super().__init__(parent);self.controller=controller;self.setObjectName('app_update_panel')
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(6)
         self.version=QLabel();self.version.setWordWrap(True);set_theme_style(self.version,f'font-size:12px;font-weight:500;color:{PRIMARY};');layout.addWidget(self.version)
@@ -27,12 +28,13 @@ class UpdatePanel(QWidget):
         self.install=QPushButton('下载并安装');self.install.setObjectName('install_app_update');self.install.setProperty('role','primary');self.install.clicked.connect(controller.download_install);row.addWidget(self.install)
         self.cancel=QPushButton('暂停下载');self.cancel.clicked.connect(controller.cancel);row.addWidget(self.cancel);layout.addLayout(row)
         self.details_button=QPushButton('查看更新内容');self.details_button.setCheckable(True);layout.addWidget(self.details_button)
+        set_theme_style(self.details_button,'QPushButton{background:#e8dff0;color:#75618d;border:0;border-radius:7px;padding:6px 9px;}QPushButton:hover,QPushButton:checked:hover{background:#ded2e7;}QPushButton:checked{background:#e8dff0;}QPushButton:pressed{background:#d6c5ed;}')
         self.details=hide_scrollbars(QPlainTextEdit());self.details.setReadOnly(True);self.details.setMaximumHeight(160);self.details.setAccessibleName('版本更新内容')
         self.disclosure=AnimatedDisclosure(self.details);layout.addWidget(self.disclosure);self.details_button.toggled.connect(self.disclosure.set_expanded)
         self.github=QPushButton('在 GitHub 查看此版本');self.github.clicked.connect(self.open_release);layout.addWidget(self.github)
-        program_supported=controller.snapshot()['program_supported']
-        note=QLabel('只有点击“下载并安装”才会下载。安装器会保留设置、聊天和回退版本；更新完成后清理下载缓存。' if program_supported else '动画校验通过后等待当前动作结束再切换，保留上一套素材供回退。不会下载或安装 Windows 程序。')
-        note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');layout.addWidget(note)
+        if not controller.snapshot()['program_supported']:
+            note=QLabel('动画校验通过后等待当前动作结束再切换，保留上一套素材供回退。不会下载或安装 Windows 程序。')
+            note.setWordWrap(True);set_theme_style(note,f'font-size:11px;color:{MUTED};');layout.addWidget(note)
         controller.changed.connect(self.set_state);self.set_state(controller.snapshot())
     def set_state(self,state):
         """更新状态只展示当前平台允许执行的下载操作"""

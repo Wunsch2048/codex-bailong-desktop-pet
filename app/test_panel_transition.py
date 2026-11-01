@@ -100,21 +100,19 @@ class PanelTests(unittest.TestCase):
         b.size_transition.complete();self.assertEqual(b.size(),size)
         b.show_page('chat',chat);self.assertTrue(b.size_transition.running);self.assertEqual(b.size(),size)
         b.size_transition.complete();self.assertEqual(draft.text(),'draft')
-    def test_expanded_navigation_keeps_one_size_and_only_moves_the_body(self):
-        b=self.b;b.toggle_details();b.size_transition.complete();original=QRect(b.geometry())
+    def test_expanded_navigation_uses_body_motion_or_shared_size_motion(self):
+        b=self.b;b.toggle_details();b.size_transition.complete();status_size=b.size()
         chat=QWidget();QLineEdit('draft',chat)
         for change in (lambda:b.show_page('chat',chat),lambda:b.show_page('settings',QWidget()),b.return_to_status):
-            change();t=b.size_transition
-            self.assertEqual(t.target_rect,original)
-            self.assertTrue(t.same_size_fade)
-            nav=b.layout.itemAt(1).widget()
-            self.assertGreater(t.cover.y(),nav.geometry().bottom())
+            change();t=b.size_transition;target=QRect(t.target_rect)
+            self.assertTrue(t.running)
+            if t.same_size_fade:
+                nav=b.layout.itemAt(1).widget();self.assertGreater(t.cover.y(),nav.geometry().bottom())
             for ms in (0,40,80,120):
                 t.animation.setCurrentTime(ms)
-                self.assertEqual(b.geometry(),original)
-                self.assertEqual(t.visible_geometry(),original)
                 self.assertEqual(b.grab().toImage().pixelColor(b.rect().center()).alpha(),255)
-            t.complete();self.assertEqual(b.geometry(),original)
+            t.complete();self.assertEqual(b.geometry(),target)
+        self.assertEqual(b.size(),status_size)
     def test_editor_handoff_preserves_body_origin_and_rounded_window_corners(self):
         b=self.b;b.toggle_details();b.size_transition.complete()
         for change in (lambda:b.show_page('chat',QWidget()),lambda:b.show_page('settings',QWidget()),b.return_to_status):
@@ -124,7 +122,8 @@ class PanelTests(unittest.TestCase):
                 for x,y in ((0,b.height()-1),(b.width()-1,b.height()-1),(2,b.height()-3)):
                     self.assertEqual(image.pixelColor(round(x*ratio),round(y*ratio)).alpha(),0)
             t.complete()
-            self.assertEqual(t.cover.geometry(),body,'Handoff moved the body raster over the header')
+            if t.same_size_fade:self.assertEqual(t.cover.geometry(),body,'Handoff moved the body raster over the header')
+            self.assertEqual(b.geometry(),b.content_geometry())
     def test_text_remains_dark_under_a_dark_system_palette(self):
         old=APP.palette();dark=QPalette(old)
         for role in (QPalette.ColorRole.WindowText,QPalette.ColorRole.Text,QPalette.ColorRole.ButtonText):dark.setColor(role,QColor('white'))
@@ -139,6 +138,28 @@ class PanelTests(unittest.TestCase):
         b=self.b;b.toggle_details();b.hide()
         self.assertFalse(b.size_transition.running);self.assertTrue(b.layout.isEnabled())
         self.assertFalse(b.size_transition.frozen)
+    def test_cancel_during_preparation_releases_the_entire_snapshot_transaction(self):
+        b=self.b;t=b.size_transition;t.begin();self.assertIsNotNone(t.old_surface)
+        t.cancel()
+        for name in ('old_surface','before','start_rect','target_rect','canvas_rect','start_page_state','morph'):
+            self.assertIsNone(getattr(t,name),name)
+        b.expanded=True;b.redraw();t.commit()
+        self.assertFalse(t.running);self.assertFalse(t.preparing);self.assertTrue(b.updatesEnabled())
+        self.assertEqual(b.geometry(),b.content_geometry());self.assertTrue(b.content.isVisible())
+    def test_return_from_editor_to_hidden_owner_does_not_morph_a_canceled_origin(self):
+        from unittest.mock import patch
+        b=self.b;owner=QWidget();owner.settings={};b._owner=owner
+        try:
+            for motion in (False,True):
+                with patch('settings_controls.motion_enabled',return_value=motion):
+                    b.show();b.show_page('settings',QWidget());b.size_transition.complete();APP.processEvents()
+                    b.return_to_status();APP.processEvents();t=b.size_transition
+                    self.assertEqual(b.panel_page,'status');self.assertFalse(b.isVisible())
+                    self.assertFalse(t.running);self.assertFalse(t.preparing);self.assertTrue(b.updatesEnabled())
+                    self.assertIsNone(t.old_surface);self.assertIsNone(t.start_rect)
+            owner.show();b.redraw();APP.processEvents();self.assertTrue(b.isVisible())
+            self.assertEqual(b.size(),b.content.size())
+        finally:b._owner=None;owner.close();owner.deleteLater();APP.processEvents()
     def test_disable_bubble_rebounds_and_hides_then_can_be_shown_again(self):
         b=self.b;original=QRect(b.geometry());b.enabled=False;b.redraw();t=b.size_transition
         self.assertTrue(t.closing);self.assertTrue(b.isVisible())

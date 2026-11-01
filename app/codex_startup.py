@@ -47,7 +47,8 @@ def ensure_watcher(executable=None):
 def spawn(command):
     env=os.environ.copy()
     for key in ('BAILONG_DEPLOY_TOKEN','BAILONG_DEPLOY_RECEIPT'):env.pop(key,None)
-    return subprocess.Popen(command,creationflags=0x08000000,close_fds=True,env=env)
+    from process_launch import launch_own
+    return launch_own(command,independent=True,remove_environment=('BAILONG_DEPLOY_TOKEN','BAILONG_DEPLOY_RECEIPT'),creationflags=0x08000000,close_fds=True,env=env)
 
 def stop_watchers(root=None):
     root=Path(root or install_root()).resolve();manifest=read_json(root/'installations.json')
@@ -173,7 +174,9 @@ def main():
 class ExitGate:
     """Only close after this run actually observed Codex, never on unknown data."""
     def __init__(self):self.reset()
-    def reset(self):self.seen=False;self.absent=0
+    def reset(self):
+        self.generation=getattr(self,'generation',-1)+1
+        self.seen=False;self.absent=0
     def observe(self,current):
         if current is None:self.absent=0;return False
         if current:self.seen=True;self.absent=0;return False

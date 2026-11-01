@@ -2,7 +2,7 @@ import unittest
 from PySide6.QtCore import Qt,QPointF,QRectF
 from PySide6.QtGui import QFontMetricsF
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication,QLabel
+from PySide6.QtWidgets import QApplication,QLabel,QToolButton
 from compact_bubble import CompactBubble,Announcement
 from dashboard_cards import CardDeck
 from test_reset_presentation import NOW,snapshot
@@ -39,7 +39,15 @@ class ResetCardTests(unittest.TestCase):
         self.assertEqual(bubble.detail_tab,'reset');self.assertEqual(bubble.details_tabs.currentIndex(),2)
         labels=[w.text() for w in bubble.findChildren(QLabel) if w.isVisible()]
         self.assertIn(data['pending']['text'],labels);self.assertTrue(any('Codex Resets' in text for text in labels))
-        self.assertTrue(any(w.isVisible() and not w.dense for w in bubble.findChildren(Announcement)))
+        # The redesigned details keep the full notice and its source together.
+        source=next(w for w in bubble.details_tabs.areas['reset'].findChildren(QToolButton) if w.isVisible() and w.toolTip()=='公告来源')
+        from unittest.mock import patch
+        from reset_watch import SOURCE_URL
+        with patch('detail_sections.QDesktopServices.openUrl',return_value=True) as opened:
+            QTest.mouseClick(source,Qt.MouseButton.LeftButton)
+            self.assertEqual(opened.call_count,1)
+            self.assertEqual(opened.call_args.args[0].toString(),SOURCE_URL)
+        self.assertEqual(bubble.details_tabs.currentIndex(),2)
     def test_keyboard_opens_card_and_switch_to_tokens_stops_countdown(self):
         import time
         data=snapshot(7200);data['pending']['scheduled']=time.time()+7200

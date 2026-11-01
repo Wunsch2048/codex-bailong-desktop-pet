@@ -16,6 +16,12 @@ class CardMotionTests(unittest.TestCase):
         for i in range(8):rows.addWidget(QLabel('保留的内容 '+str(i)))
         self.card=AnimatedDisclosure(body);layout.addWidget(self.card);self.window.setFixedSize(360,500);self.window.show();APP.processEvents()
     def tearDown(self):self.window.close();self.window.deleteLater();APP.processEvents()
+    def test_hidden_clock_callback_has_initialized_endpoints(self):
+        from unittest.mock import patch
+        errors=[]
+        with patch('sys.excepthook',side_effect=lambda *args:errors.append(args)):
+            self.card.animation.setCurrentTime(40)
+        self.assertFalse(errors);self.assertEqual(self.card.progress,0.)
     def test_reversal_preserves_current_height_and_snapshot_then_releases_it(self):
         c=self.card;c.set_expanded(True);c.animation.setCurrentTime(100);height=c.height();frame=c._frame.cacheKey()
         c.set_expanded(False);self.assertEqual(c.height(),height);self.assertEqual(c._frame.cacheKey(),frame)
@@ -53,10 +59,19 @@ class CardMotionTests(unittest.TestCase):
 class IntegratedCardTests(unittest.TestCase):
     def setUp(self):self.fixture=fixtures.InteractionTests();self.fixture.setUp()
     def tearDown(self):self.fixture.tearDown()
+    def open_containing_disclosures(self,settings,button):
+        # Paths now live inside the Codex "more" group. A hidden programmatic
+        # click does not represent the user's visible route to that control.
+        settings._category_motion.clear();parents=[];parent=button.parentWidget()
+        while parent is not None and parent is not settings:
+            if isinstance(parent,AnimatedDisclosure):parents.append(parent)
+            parent=parent.parentWidget()
+        for parent in reversed(parents):parent.set_expanded(True);parent.complete()
+        APP.processEvents();self.assertTrue(button.isVisible())
     def test_advanced_and_paths_keep_drafts_and_outer_window_size(self):
         f=self.fixture;s=f.settings();b=f.pet.bubble;native=QRect(b.geometry())
         for tab,button,card in ((1,s.advanced_button,s.advanced_card),(2,s.path_toggle,s.paths_card)):
-            s.tabs.setCurrentIndex(tab);APP.processEvents();button.click();self.assertTrue(card._animating)
+            s.tabs.setCurrentIndex(tab);APP.processEvents();self.open_containing_disclosures(s,button);button.click();self.assertTrue(card._animating)
             for ms in (30,100,180,300):
                 card.animation.setCurrentTime(ms);APP.processEvents();self.assertEqual(b.geometry(),native)
             card.complete();self.assertTrue(card.body.isVisible())
@@ -67,7 +82,7 @@ class IntegratedCardTests(unittest.TestCase):
     def test_scrollbar_never_changes_disclosure_width_mid_motion(self):
         s=self.fixture.settings()
         for tab,button,card in ((1,s.advanced_button,s.advanced_card),(2,s.path_toggle,s.paths_card)):
-            s.tabs.setCurrentIndex(tab);APP.processEvents();button.click();card.animation.pause()
+            s.tabs.setCurrentIndex(tab);APP.processEvents();self.open_containing_disclosures(s,button);button.click();card.animation.pause()
             APP.processEvents();initial=card.width()
             heights=[]
             for step in range(40):

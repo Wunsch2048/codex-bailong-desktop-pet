@@ -4,15 +4,21 @@ Reference: Apple's WWDC23 10194 at 11:12 and 12:43. Captures are prepared
 once per navigation; each frame is only a few raster draws on a fixed canvas.
 """
 from theme_registry import color as theme_color
-from dataclasses import dataclass,field
+from dataclasses import dataclass,field,replace
 import math
+from shiboken6 import isValid
 from PySide6.QtCore import QRectF,QPoint,QPointF,QSizeF,Qt
 from PySide6.QtGui import QPixmap,QPainter,QPainterPath,QColor,QPen,QRegion,QFontMetrics
-from PySide6.QtWidgets import QWidget,QToolButton
+from PySide6.QtWidgets import QWidget,QToolButton,QAbstractScrollArea
 from spring_motion import container_progress,stage
 from ui_theme import SURFACE,ISLAND
 
 PANEL_RADIUS=18.
+
+
+def valid_widget(widget):
+    # shiboken6.isValid(None) is True: test the optional reference as well.
+    return widget is not None and isValid(widget)
 
 
 def pixel_size(value,ratio):return math.floor(value*ratio+.5)
@@ -32,10 +38,14 @@ def raster_offset(point,canvas,ratio,origin=QPointF()):
 def complete_frame(bubble):
     size=bubble.content.size();ratio=bubble.devicePixelRatioF()
     image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
-    p=QPainter(image);p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p=QPainter(image)
     if not bubble.is_compact():
+        p.save();p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setBrush(QColor(theme_color(SURFACE)));p.setPen(QPen(QColor(theme_color('#e0d9e6')),1))
         p.drawRoundedRect(QRectF(0,0,size.width(),size.height()).adjusted(.5,.5,-.5,-.5),PANEL_RADIUS,PANEL_RADIUS)
+        p.restore()
+    # Native child painters start without shape antialiasing. Leaking the
+    # paper's hint into render() blurs 1px separators in animation endpoints.
     bubble.content.render(p,QPoint(),QRegion(),QWidget.RenderFlag.DrawChildren);p.end()
     return image
 
@@ -67,6 +77,9 @@ class SurfaceState:
     page:str=''
     expanded:bool=False
     shared_bounds:dict=field(default_factory=dict)
+    exclusive_bounds:dict=field(default_factory=dict)
+    visible_bounds:dict=field(default_factory=dict)
+    detail_index:int=0
 
     @classmethod
     def capture(cls,bubble,origin=None,frame=None,content=None):
@@ -93,19 +106,33 @@ class SurfaceState:
                 if widget:
                     pos=widget.mapTo(bubble.content,QPoint());satellites.append((QRectF(QPointF(origin+pos),QSizeF(widget.size())),snapshot(widget)))
         screen=bubble.screen()
-        shared={}
+        shared={};exclusive={};owners={};visible={}
         if not island and not minimal and bubble.panel_page=='status':
             heading=getattr(bubble,'_status_title',None)
-            candidates={'heading':heading.parentWidget() if heading is not None else None,
+            candidates={'heading':heading.parentWidget() if valid_widget(heading) else None,
                         'conversations':bubble.status_view,'quota':getattr(bubble,'quota_summary_card',None),
                         'statistics':bubble.deck,'today_tokens':bubble.today_tokens_card,
                         'live_rate':getattr(bubble,'live_rate_card',None)}
-            candidates.update({'action_'+str(i):widget for i,widget in enumerate(getattr(bubble,'_header_actions',[]))})
+            for index,widget in enumerate(getattr(bubble,'_header_actions',[])):
+                if not valid_widget(widget):continue
+                action={'bubble_report':1,'bubble_compact':2,'bubble_details':3}.get(widget.objectName())
+                if action is None:action={'刷新':0,'数据':1,'收起':2,'详情':3,'收回':3}.get(widget.property('headerActionHint'),index)
+                candidates['action_'+str(action)]=widget
+            candidates={key:widget for key,widget in candidates.items() if valid_widget(widget)}
+            owners.update(candidates)
             for key,widget in candidates.items():
                 if widget is not None and widget.isVisibleTo(root) and widget.width()>0 and widget.height()>0:
                     shared[key]=QRectF(QPointF(widget.mapTo(root,QPoint())),QSizeF(widget.size()))
             for sid,row in bubble.status_view.rows.items():
-                if not row.isVisibleTo(root):continue
+                if not valid_widget(row) or not row.isVisibleTo(root):continue
+                regions=getattr(row,'transition_regions',None)
+                if callable(regions):
+                    point=QPointF(row.mapTo(root,QPoint()))
+                    for name,region in regions().items():
+                        region=QRectF(region)
+                        if region.isValid() and not region.isEmpty():
+                            shared['conversation_'+name+'_'+sid]=region.translated(point)
+                    continue
                 point=QPointF(row.mapTo(root,QPoint()));left=row.text_left()
                 if left:
                     shared['conversation_title_'+sid]=QRectF(point.x(),point.y(),max(1,left-6),row.height())
@@ -125,7 +152,8 @@ class SurfaceState:
                 footer=shared['today_tokens'];daily=bubble.today_tokens_card
                 if getattr(daily,'compact',False):
                     from typography import ui_font
-                    link=QFontMetrics(ui_font(10)).horizontalAdvance('24h ›')+10
+                    entry='›' if getattr(daily,'expanded',False) else '24h ›'
+                    link=QFontMetrics(ui_font(10)).horizontalAdvance(entry)+10
                     shared['today_tokens_link']=QRectF(footer.right()-link,footer.y(),link,footer.height())
                     shared['today_tokens_amount']=QRectF(footer.x()+30,footer.y(),max(1,footer.width()-link-30),footer.height())
                 else:shared['today_tokens_link']=QRectF(footer.right()-45,footer.y(),45,footer.height())
@@ -136,8 +164,10 @@ class SurfaceState:
             if deck is not None and 'statistics' in shared:
                 controls={'statistics_tab_'+key:widget for key,widget in deck.tabs.buttons.items()}
                 controls.update({'statistics_range_'+key:widget for key,widget in getattr(deck.content,'range_buttons',{}).items()})
+                choice=getattr(deck,'range_menu',None)
+                if choice is not None:controls['statistics_range_choice']=choice
                 for key,widget in controls.items():
-                    shared[key]=QRectF(QPointF(widget.mapTo(root,QPoint())),QSizeF(widget.size()))
+                    if widget.isVisibleTo(root):shared[key]=QRectF(QPointF(widget.mapTo(root,QPoint())),QSizeF(widget.size()))
                 plot=getattr(deck.content,'plot',None)
                 if plot is not None:
                     from typography import ui_font
@@ -161,22 +191,87 @@ class SurfaceState:
                     source=getattr(deck.content,'source_button',None)
                     if source is not None and source.isVisibleTo(root):
                         shared['statistics_reset_source']=QRectF(QPointF(source.mapTo(root,QPoint())),QSizeF(source.size()))
+            # New details are not a second copy of the whole normal card.
+            # Capture the actual layout regions once; reveal them around the
+            # continuously moving shared metrics and conversation labels.
+            for key,widget in (
+                ('navigation',next((w for w in root.findChildren(QWidget,'detail_shortcuts') if w.isVisibleTo(root)),None)),
+                ('task_caption',next((w for w in root.findChildren(QWidget,'detail_status_title') if w.isVisibleTo(root)),None)),
+                ('details',getattr(bubble,'details_tabs',None))):
+                if valid_widget(widget) and widget.isVisibleTo(root) and widget.width()>0 and widget.height()>0:
+                    exclusive[key]=QRectF(QPointF(widget.mapTo(root,QPoint())),QSizeF(widget.size()))
+                    owners[key]=widget
+            for key in shared.keys()|exclusive.keys():
+                owner_key=key
+                while owner_key not in owners and owner_key:
+                    owner_key=shared_parent(owner_key)
+                widget=owners.get(owner_key);clip=QRectF(root.rect())
+                while widget is not None and widget is not root:
+                    if isinstance(widget,QAbstractScrollArea):
+                        viewport=widget.viewport()
+                        clip=clip.intersected(QRectF(QPointF(viewport.mapTo(root,QPoint())),QSizeF(viewport.size())))
+                    widget=widget.parentWidget()
+                visible[key]=clip
         return cls(rect,image,glyph_rect,glyph,island,satellites,frame if frame is not None else complete_frame(bubble),QPointF(origin),QPointF(screen.geometry().topLeft()) if screen else QPointF(),root.height()/2 if island or minimal else PANEL_RADIUS,
-                   bubble.panel_page,bool(bubble.expanded),shared)
+                   bubble.panel_page,bool(bubble.expanded),shared,exclusive,visible,
+                   bubble.details_tabs.currentIndex() if valid_widget(getattr(bubble,'details_tabs',None)) else 0)
 
 
 def mix_rect(a,z,f):
     return QRectF(a.x()+(z.x()-a.x())*f,a.y()+(z.y()-a.y())*f,a.width()+(z.width()-a.width())*f,a.height()+(z.height()-a.height())*f)
 
 
+def mix_color(a,z,f):
+    """Interpolate premultiplied color; transparent black is not gray paint."""
+    wa=(1.-f)*a.alphaF();wz=f*z.alphaF();alpha=wa+wz
+    if alpha<=0:return QColor(Qt.GlobalColor.transparent)
+    return QColor(round((a.red()*wa+z.red()*wz)/alpha),
+                  round((a.green()*wa+z.green()*wz)/alpha),
+                  round((a.blue()*wa+z.blue()*wz)/alpha),round(alpha*255))
+
+
+def shared_parent(key):
+    """Semantic ownership, independent of coincident/overlapping rectangles."""
+    for prefix,parent in (('conversation_','conversations'),('quota_','quota'),
+                          ('today_tokens_','today_tokens'),('live_rate_','live_rate'),
+                          ('statistics_plot_','statistics_plot'),('statistics_reset_','statistics_reset'),
+                          ('statistics_','statistics')):
+        if key.startswith(prefix):return parent
+    return ''
+
+
+def shared_descendant(child,parent):
+    child=shared_parent(child)
+    while child:
+        if child==parent:return True
+        child=shared_parent(child)
+    return False
+
+
+def clear_outside(image,clip):
+    """Drop pixels outside a scroll viewport, once during frame preparation."""
+    bounds=QRectF(QPointF(),image.deviceIndependentSize());clip=clip.intersected(bounds)
+    p=QPainter(image);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+    if clip.isEmpty():p.fillRect(bounds,Qt.GlobalColor.transparent)
+    else:
+        for area in (QRectF(0,0,bounds.width(),clip.top()),
+                     QRectF(0,clip.bottom(),bounds.width(),bounds.height()-clip.bottom()),
+                     QRectF(0,clip.top(),clip.left(),clip.height()),
+                     QRectF(clip.right(),clip.top(),bounds.width()-clip.right(),clip.height())):
+            if not area.isEmpty():p.fillRect(area,Qt.GlobalColor.transparent)
+    p.end()
+
+
 class SharedPart:
     """Prepared endpoint rasters and bounded reusable blend buffers."""
     def __init__(self,start,end,key):
-        self.frames=[];self.rects=[];self.pixel_rects=[];self.buffers=None;self.buffer_builds=0
-        self.fit=('left' if key in ('quota','conversations','today_tokens','live_rate','statistics_plot_left','statistics_reset') or key.startswith(('conversation_title_','conversation_detail_')) else
+        self.detail_direction=(1 if end.detail_index>start.detail_index else -1) if key=='details' and start.detail_index!=end.detail_index else None
+        self.frames=[];self.rects=[];self.pixel_rects=[];self.clips=[];self.buffers=None;self.buffer_builds=0
+        self.fit=('left' if key in ('navigation','task_caption','details','quota','conversations','today_tokens','live_rate','statistics_plot_left','statistics_reset') or key.startswith(('conversation_title_','conversation_detail_')) else
                   'right' if key.startswith('quota_value_') or key in ('today_tokens_link','today_tokens_amount','live_rate_value','statistics_plot_right') else
                   'center' if key.startswith(('statistics_tab_','statistics_range_')) or key in ('statistics_plot_title','statistics_plot_middle','statistics_plot_empty','conversation_counter') else 'stretch')
         self.backgrounds=[];self.corner=10 if key=='quota' else 6 if key in ('today_tokens','live_rate') else 0
+        self.corners=tuple(11 if key=='quota' and state.expanded else self.corner for state in (start,end))
         self.single=key.startswith('quota_track_') or key=='statistics_plot';self.background_painter=None
         for state in (start,end):
             local=state.shared_bounds[key];ratio=state.content.devicePixelRatioF()
@@ -185,11 +280,14 @@ class SharedPart:
             from PySide6.QtCore import QRect
             crop=QRect(left,top,max(1,right-left),max(1,bottom-top))
             image=state.content.copy(crop);image.setDevicePixelRatio(ratio)
+            clip=state.visible_bounds.get(key,QRectF(QPointF(),state.rect.size()))
+            self.clips.append(clip.translated(state.rect.topLeft()))
             if self.fit!='stretch' and not key.startswith('conversation_'):
                 self.backgrounds.append(image.toImage().pixelColor(min(image.width()-1,max(0,round(3*ratio))) if self.corner else 0,image.height()//2 if self.corner else 0))
+            clear_outside(image,clip.translated(-left/ratio,-top/ratio))
             children=[]
             for child_key,child in state.shared_bounds.items():
-                if child_key!=key and local.contains(child) and child.width()*child.height()<local.width()*local.height():
+                if shared_descendant(child_key,key) and local.contains(child):
                     children.append(QRectF(child.x()-left/ratio,child.y()-top/ratio,child.width(),child.height()))
             if children:
                 q=QPainter(image);q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
@@ -213,7 +311,7 @@ class SharedPart:
                 q=QPainter(out);self._draw(q,image,QRectF(0,0,width,height));q.end();normalized.append(out)
             self.same=normalized[0].toImage()==normalized[1].toImage()
     def prepare(self,ratio):
-        if self.same or self.background_painter:return
+        if self.same or self.background_painter or self.detail_direction is not None:return
         size=(max(pixel_size(r.width(),ratio) for r in self.rects),max(pixel_size(r.height(),ratio) for r in self.rects))
         if self.buffers is not None and self.buffers[0]==(ratio,size):return
         images=[]
@@ -221,6 +319,7 @@ class SharedPart:
             image=QPixmap(*size);image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent);images.append(image)
         self.buffers=((ratio,size),images);self.buffer_builds+=1
     def geometry(self,f):return mix_rect(self.rects[0],self.rects[1],f)
+    def corner_at(self,f):return self.corners[0]+(self.corners[1]-self.corners[0])*f
     def _draw(self,p,image,rect):
         if self.fit=='stretch':p.drawPixmap(rect,image,QRectF(image.rect()));return
         width=image.deviceIndependentSize().width()
@@ -229,14 +328,27 @@ class SharedPart:
     def paint(self,p,f,canvas):
         target=self.geometry(f).translated(-canvas.x(),-canvas.y())
         p.save();p.setOpacity(1.);p.setClipRect(target,Qt.ClipOperation.IntersectClip)
+        p.setClipRect(mix_rect(*self.clips,f).translated(-canvas.x(),-canvas.y()),Qt.ClipOperation.IntersectClip)
+        if self.detail_direction is not None:
+            # Keep the tab labels anchored; travel only the selected paragraph.
+            # Crossfading two differently wrapped pages produces ghost text.
+            for image,opacity in ((self.frames[0],1.-f),(self.frames[1],f)):
+                p.save();p.setClipRect(target.adjusted(0,0,0,-max(0,target.height()-29)),Qt.ClipOperation.IntersectClip)
+                p.setOpacity(opacity);p.drawPixmap(target.topLeft(),image);p.restore()
+            p.setOpacity(1.);p.setClipRect(target.adjusted(0,29,0,0),Qt.ClipOperation.IntersectClip)
+            p.fillRect(target,QColor(theme_color(SURFACE)))
+            for image,shift in ((self.frames[0],-target.width()*f*self.detail_direction),
+                                (self.frames[1],target.width()*(1.-f)*self.detail_direction)):
+                p.drawPixmap(target.topLeft()+QPointF(shift,0),image)
+            p.restore();return
         if self.background_painter:
             self.background_painter(p,target);p.restore();return
         source=QRectF(self.frames[0].rect())
         if self.backgrounds:
-            color=QColor(*[round(a+(z-a)*f) for a,z in zip(self.backgrounds[0].getRgb(),self.backgrounds[1].getRgb())])
+            color=mix_color(*self.backgrounds,f)
             p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color(color))
             if self.corner:
-                path=QPainterPath();path.addRoundedRect(target,self.corner,self.corner);p.setClipPath(path,Qt.ClipOperation.IntersectClip);p.drawPath(path)
+                radius=self.corner_at(f);path=QPainterPath();path.addRoundedRect(target,radius,radius);p.setClipPath(path,Qt.ClipOperation.IntersectClip);p.drawPath(path)
             else:p.fillRect(target,color)
         if (self.single and f<=.7) or self.same or f<=0:
             self._draw(p,self.frames[0],target);p.restore();return
@@ -252,6 +364,46 @@ class SharedPart:
         p.drawPixmap(target.topLeft(),mixed);p.restore()
 
 
+class ExclusivePart:
+    """One-endpoint content, revealed at its layout anchor without text scaling."""
+    def __init__(self,state,key,index,shared_parts):
+        from PySide6.QtCore import QRect
+        self.index=index;self.key=key;self.overlay=key in state.shared_bounds
+        local=state.shared_bounds[key] if self.overlay else state.exclusive_bounds[key]
+        ratio=state.content.devicePixelRatioF()
+        x,y=pixel_size(local.x(),ratio),pixel_size(local.y(),ratio)
+        w,h=pixel_size(local.right(),ratio)-x,pixel_size(local.bottom(),ratio)-y
+        self.image=state.content.copy(QRect(x,y,max(1,w),max(1,h)));self.image.setDevicePixelRatio(ratio)
+        self.local=QRectF(x/ratio,y/ratio,self.image.width()/ratio,self.image.height()/ratio)
+        self.clip=state.visible_bounds.get(key,QRectF(QPointF(),state.rect.size()))
+        clear_outside(self.image,self.clip.translated(-self.local.x(),-self.local.y()))
+        self.state_rect=QRectF(state.rect);self.anchor=None
+        if self.overlay:
+            parent=shared_parent(key)
+            while parent and parent not in shared_parts:parent=shared_parent(parent)
+            self.anchor=shared_parts.get(parent)
+    def geometry(self,rect,f):
+        if self.anchor:
+            base=self.anchor.rects[self.index];now=self.anchor.geometry(f)
+            relative=self.local.translated(self.state_rect.topLeft()).topLeft()-base.topLeft()
+            x=now.x()+relative.x()*now.width()/max(1,base.width())
+            y=now.y()+relative.y()*now.height()/max(1,base.height())
+            return QRectF(QPointF(x,y),self.local.size())
+        # The outer frame clips the natural-size incoming content until it
+        # has room. Labels never stretch and the last position is the live
+        # layout's position, including small-screen constrained details.
+        x=rect.center().x()+self.local.x()-self.state_rect.width()/2
+        return QRectF(x,rect.y()+self.local.y(),self.local.width(),self.local.height())
+    def paint(self,p,time,rect,f,canvas):
+        opacity=stage(time,.22,.78) if self.index else 1.-stage(time,0.,.28)
+        if opacity<=0:return
+        target=self.geometry(rect,f).translated(-canvas.x(),-canvas.y())
+        p.save();p.setOpacity(opacity);p.setClipRect(target,Qt.ClipOperation.IntersectClip)
+        clip=self.clip.translated(rect.center().x()-self.state_rect.width()/2,rect.y())
+        p.setClipRect(clip.translated(-canvas.x(),-canvas.y()),Qt.ClipOperation.IntersectClip)
+        p.drawPixmap(target.topLeft(),self.image);p.restore()
+
+
 class SurfaceMorph:
     def translate(self,delta):
         """Move prepared geometry only; reuse every raster and blend buffer."""
@@ -259,14 +411,26 @@ class SurfaceMorph:
             state.rect.translate(delta);state.icon_rect.translate(delta)
             if state.frame_origin is not None:state.frame_origin+=delta
             state.satellites=[(rect.translated(delta),image) for rect,image in state.satellites]
-        for part in self.shared_parts.values():part.rects=[rect.translated(delta) for rect in part.rects]
+        for part in self.shared_parts.values():
+            part.rects=[rect.translated(delta) for rect in part.rects]
+            part.clips=[rect.translated(delta) for rect in part.clips]
+        for part in self.exclusive_parts:part.state_rect.translate(delta)
         if self._landing:
             key,*rest=self._landing;self._landing=((key[0]+delta.x(),key[1]+delta.y(),*key[2:]),*rest)
     def __init__(self,start,end):
         self.start=start;self.end=end;self._landing=None
         self.shrinking=end.rect.width()*end.rect.height()<start.rect.width()*start.rect.height()
-        self.shared_parts={};self.body_frames=(start.content,end.content)
-        if start.page==end.page=='status' and start.expanded!=end.expanded and not start.island and not end.island and start.radius==end.radius==PANEL_RADIUS:
+        self.page_switch=bool(start.expanded and end.expanded and start.page!=end.page and not start.island and not end.island)
+        self.shared_parts={};self.exclusive_parts=[];self.body_frames=(start.content,end.content)
+        if start.page==end.page=='status' and start.expanded and end.expanded:
+            # Both endpoints already own this chrome. Keep it continuously
+            # visible instead of replaying the normal-to-expanded reveal.
+            common=start.exclusive_bounds.keys()&end.exclusive_bounds.keys()
+            def promote(state):
+                return replace(state,shared_bounds={**state.shared_bounds,**{k:state.exclusive_bounds[k] for k in common}},
+                               exclusive_bounds={k:v for k,v in state.exclusive_bounds.items() if k not in common})
+            start,end=promote(start),promote(end);self.start,self.end=start,end
+        if start.page==end.page=='status' and (start.expanded or end.expanded) and not start.island and not end.island and start.radius==end.radius==PANEL_RADIUS:
             keys=start.shared_bounds.keys()&end.shared_bounds.keys()
             # Composite containers before their text/controls. Alphabetical
             # order put `conversations` after `conversation_detail_*`, so the
@@ -275,6 +439,9 @@ class SurfaceMorph:
                 return max(state.shared_bounds[key].width()*state.shared_bounds[key].height() for state in (start,end))
             self.shared_parts={key:SharedPart(start,end,key) for key in sorted(keys,key=lambda key:(-layer_size(key),key))}
             if self.shared_parts:
+                for index,state in enumerate((start,end)):
+                    unique=(state.shared_bounds.keys()-keys)|state.exclusive_bounds.keys()
+                    self.exclusive_parts.extend(ExclusivePart(state,key,index,self.shared_parts) for key in sorted(unique))
                 images=[]
                 for index,state in enumerate((start,end)):
                     image=state.content.copy();q=QPainter(image);q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
@@ -356,18 +523,39 @@ class SurfaceMorph:
         p.save();p.setPen(QPen(border,1));p.setBrush(theme_color(color));p.drawRoundedRect(inset,radius,radius);p.setClipPath(path)
         outgoing,incoming=self.content_opacities(time)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        for state,image,opacity,scale in ((a,self.body_frames[0],outgoing,1.-.025*stage(time,0.,.18)),(z,self.body_frames[1],incoming,.975+.025*incoming)):
-            if opacity<=0:continue
-            size=state.content.deviceIndependentSize();w=size.width()*scale;h=size.height()*scale
-            target=QRectF(rect.center().x()-w/2,rect.center().y()-h/2,w,h)
-            p.setOpacity(opacity);p.drawPixmap(target,image,QRectF(image.rect()))
+        if self.page_switch:
+            # Height follows the container clock; text stays at native size.
+            # Anchor the chrome at the top and slide only the body, rather than
+            # scaling/recentring two entire cards through each other.
+            order=('status','chat','settings','help')
+            direction=1 if order.index(z.page)>order.index(a.page) else -1
+            travel=stage(time,.04,.84)
+            for state,opacity in ((a,1.-travel),(z,travel)):
+                p.setOpacity(opacity);size=state.content.deviceIndependentSize()
+                p.drawPixmap(QRectF(rect.x(),rect.y(),size.width(),83),state.content,
+                             QRectF(0,0,state.content.width(),pixel_size(83,state.content.devicePixelRatioF())))
+            p.setOpacity(1.);p.save();p.setClipRect(rect.adjusted(0,83,0,-11),Qt.ClipOperation.IntersectClip)
+            for state,shift in ((a,-rect.width()*travel*direction),(z,rect.width()*(1.-travel)*direction)):
+                p.drawPixmap(QPointF(rect.x()+shift,rect.y()),state.content)
+            p.restore()
+        elif self.shared_parts:
+            for part in self.exclusive_parts:
+                if not part.overlay:part.paint(p,time,self.geometry(time),f,canvas)
+        else:
+            for state,image,opacity,scale in ((a,self.body_frames[0],outgoing,1.-.025*stage(time,0.,.18)),(z,self.body_frames[1],incoming,.975+.025*incoming)):
+                if opacity<=0:continue
+                size=state.content.deviceIndependentSize();w=size.width()*scale;h=size.height()*scale
+                target=QRectF(rect.center().x()-w/2,rect.center().y()-h/2,w,h)
+                p.setOpacity(opacity);p.drawPixmap(target,image,QRectF(image.rect()))
         for part in self.shared_parts.values():part.paint(p,f,canvas)
+        for part in self.exclusive_parts:
+            if part.overlay:part.paint(p,time,self.geometry(time),f,canvas)
         # Same semantic icon, moving once between the corresponding positions.
         start_icon=a.icon_rect.translated(-a.rect.x(),-a.rect.y());end_icon=z.icon_rect.translated(-z.rect.x(),-z.rect.y())
         nx=start_icon.center().x()/a.rect.width()+(end_icon.center().x()/z.rect.width()-start_icon.center().x()/a.rect.width())*f
         ny=start_icon.center().y()/a.rect.height()+(end_icon.center().y()/z.rect.height()-start_icon.center().y()/a.rect.height())*f
         icon=mix_rect(start_icon,end_icon,f);icon.moveCenter(QPointF(rect.x()+rect.width()*nx,rect.y()+rect.height()*ny))
-        if self.shared_parts:icon=mix_rect(a.icon_rect,z.icon_rect,f).translated(-canvas.x(),-canvas.y())
+        if self.shared_parts or self.page_switch:icon=mix_rect(a.icon_rect,z.icon_rect,f).translated(-canvas.x(),-canvas.y())
         for image,opacity in ((a.icon,1.-blend),(z.icon,blend)):
             if opacity>0:p.setOpacity(opacity);p.drawPixmap(icon,image,QRectF(image.rect()))
         p.restore();p.setOpacity(1.)

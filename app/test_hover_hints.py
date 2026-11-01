@@ -31,6 +31,12 @@ class HoverHintTests(unittest.TestCase):
         QTest.mouseMove(self.b._header_actions[index],QPoint(5,5));APP.processEvents()
     def outside(self):
         QTest.mouseMove(self.b,QPoint(3,self.b.height()-3));APP.processEvents()
+    def test_style_events_do_not_traverse_hover_ancestry(self):
+        with patch.object(self.b,'isAncestorOf',side_effect=AssertionError('irrelevant ancestry')):
+            self.assertFalse(self.h.eventFilter(self.b._header_actions[0],QEvent(QEvent.Type.StyleChange)))
+    def test_deleted_optional_event_target_is_ignored(self):
+        target=QWidget();target.deleteLater();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+        self.assertFalse(self.h.eventFilter(target,QEvent(QEvent.Type.Enter)))
     def test_opaque_hint_repaints_changed_text_without_geometry_or_alpha_change(self):
         paints=[]
         class ObservedHint(HintBubble):
@@ -78,6 +84,18 @@ class HoverHintTests(unittest.TestCase):
             self.b.redraw();APP.processEvents()
             self.assertTrue(surface.isVisible());self.assertEqual(surface.title,'详情')
         self.outside();self.assertTrue(wait_for(lambda:not surface.isVisible()))
+    def test_expanded_pin_and_move_share_delay_and_survive_refresh(self):
+        from PySide6.QtWidgets import QToolButton
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();self.outside()
+        def control(label):return next(w for w in self.b.findChildren(QToolButton) if w.isVisible() and w.accessibleName()==label)
+        pin=control('置顶');QTest.mouseMove(pin,QPoint(5,5));APP.processEvents();QTest.qWait(150)
+        self.assertFalse(self.h.popup.isVisible());self.assertTrue(wait_for(self.h.popup.isVisible));self.assertEqual(self.h.popup.title,'置顶')
+        moving=control('移动');QTest.mouseMove(moving,QPoint(5,5));APP.processEvents();QTest.qWait(30)
+        self.assertTrue(self.h.popup.isVisible());self.assertEqual(self.h.popup.title,'移动')
+        point=moving.mapToGlobal(QPoint(5,5))
+        with patch('hover_hints.QCursor.pos',return_value=point):
+            self.b.redraw();APP.processEvents();self.assertTrue(self.h.popup.isVisible());self.assertEqual(self.h.popup.title,'移动')
+        self.outside();self.assertTrue(wait_for(lambda:not self.h.popup.isVisible()))
     def test_hide_during_delay_or_visible_never_leaves_a_popup(self):
         self.outside();self.hover(0);self.b.hide();QTest.qWait(HOVER_DELAY_MS+80)
         self.assertFalse(self.h.delay.isActive());self.assertFalse(self.h.popup.isVisible())

@@ -41,8 +41,8 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
     def chart_rect(self):
         # Both the title and the mixed Chinese/numeric axis use the shared
         # small-text font. Reserve its actual height instead of a 12px strip.
-        line_height=QFontMetrics(font(11)).height()
-        top=4;bottom=line_height+3
+        expanded=getattr(self,'expanded',False);line_height=QFontMetrics(font(10 if expanded else 11)).height()
+        top=3 if expanded else 4;bottom=13 if expanded else line_height+3
         return QRectF(2,top,max(1,self.width()-4),max(5,self.height()-top-bottom))
     def chart_mode(self):return 'combo'
     trace_color='#8d76ab'
@@ -58,7 +58,7 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         self.combo_layers(p,dynamic,bins,items,plot,s['available'])
         self.hits=[(record['rect'],b) for record,b in zip(self._combo_records,bins)]
         self.points=[QPointF(record['rect'].center().x(),plot.bottom()) for record,b in zip(self._combo_records,bins) if not b.get('future') and s['available']]
-        p.setFont(font(11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2
+        p.setFont(font(10 if getattr(self,'expanded',False) else 11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2
         for x,label,align in [(0,left,Qt.AlignmentFlag.AlignLeft),(self.width()/2,right,Qt.AlignmentFlag.AlignRight)]:
             p.drawText(QRectF(x,top,self.width()/2,QFontMetrics(p.font()).height()+2),align|Qt.AlignmentFlag.AlignVCenter,label)
         if s['mode']=='line':p.drawText(QRectF(self.width()/2-14,top,28,QFontMetrics(p.font()).height()+2),Qt.AlignmentFlag.AlignCenter,'12')
@@ -89,7 +89,7 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
 
 class TokenChartCard(QWidget):
     rangeChanged=Signal(str)
-    def __init__(self,snapshot=None,parent=None,period='all',now=None):
+    def __init__(self,snapshot=None,parent=None,period='all',now=None,expanded=False):
         super().__init__(parent);self.setMinimumWidth(0)
         self.period=period if period in TOKEN_RANGES else 'all';self.range_buttons={}
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
@@ -102,6 +102,7 @@ class TokenChartCard(QWidget):
             set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:11px;font-weight:500;color:#76638c;border:0;padding:0;background:transparent;border-radius:4px;}QToolButton:checked{background:#e8def0;color:#514360;}QToolButton:hover{background:#eee7f5;}')
             button.clicked.connect(lambda checked=False,k=key:self.rangeChanged.emit(k));row.addWidget(button,1);self.range_buttons[key]=button
         layout.addWidget(tabs);self.plot=TokenPlot(snapshot,self.period,self,now);layout.addWidget(self.plot,1)
+        if expanded:tabs.hide();self.plot.expanded=True;self.plot.invalidate_layers()
         self.setAccessibleName(self.plot.accessibleName());self.setAccessibleDescription(self.plot.accessibleDescription())
 
     def set_period(self,period):

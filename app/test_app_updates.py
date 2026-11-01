@@ -48,6 +48,16 @@ class ReleaseTests(unittest.TestCase):
         for code,kind in ((403,UpdateError),(429,UpdateError),(404,NoRelease),(500,UpdateError)):
             with patch('app_updates.read_small',side_effect=urllib.error.HTTPError(API,code,'test',{},None)), patch('app_updates.release_without_api',side_effect=UpdateError('offline fallback')):
                 with self.assertRaises(kind):check_release('0.7.2')
+    def test_existing_release_missing_attachment_is_not_reported_as_no_release(self):
+        data=payload(digest='');data['assets'].append(dict(name='SHA256SUMS.txt',state='uploaded',size=100,browser_download_url=f'https://github.com/{REPOSITORY}/releases/download/v0.7.3/SHA256SUMS.txt'))
+        for code in (403,404,429):
+            def fetch(url,headers=None):
+                if url==API:return Response(json.dumps(data).encode())
+                raise urllib.error.HTTPError(url,code,'attachment unavailable',{},None)
+            with self.subTest(code=code),patch('app_updates.release_without_api') as fallback:
+                with self.assertRaises(UpdateError) as result:check_release('0.7.2',fetch)
+                self.assertNotIsInstance(result.exception,NoRelease)
+                self.assertIn('附件',str(result.exception));fallback.assert_not_called()
     def test_redirects_only_to_https_github_storage(self):
         self.assertTrue(allowed_redirect('https://release-assets.githubusercontent.com/file'))
         for url in ('http://github.com/file','https://github.com.evil.test/file','https://user:pass@github.com/file','https://localhost/file','file:///C:/payload.exe'):
@@ -82,6 +92,52 @@ class StagingTests(unittest.TestCase):
     def test_server_ignoring_range_restarts_cleanly(self):
         cache_paths(self.cache,'0.7.3')['part'].write_bytes(self.bytes[:20])
         path=stage_installer(self.release,self.cache,opener=lambda *args:Response(self.bytes));self.assertEqual(path.read_bytes(),self.exe)
+    def test_resume_rejected_by_server_retries_one_full_verified_download(self):
+        for code in (400,405,416):
+            cache=self.root/str(code);paths=cache_paths(cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);calls=[]
+            def fetch(url,headers=None):
+                calls.append(dict(headers or {}))
+                if headers and headers.get('Range'):raise urllib.error.HTTPError(url,code,'no ranges',{},None)
+                return Response(self.bytes)
+            with self.subTest(code=code):
+                path=stage_installer(self.release,cache,opener=fetch)
+                self.assertEqual(path.read_bytes(),self.exe);self.assertEqual(calls,[{'Range':'bytes=20-'},{}])
+    def test_invalid_range_end_is_rejected_without_changing_partial(self):
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20])
+        with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=lambda *args:Response(self.bytes[20:],206,{'Content-Range':f'bytes 20-21/{len(self.bytes)}'}))
+        self.assertEqual(paths['part'].read_bytes(),self.bytes[:20])
+    def test_failed_full_retry_keeps_partial_and_stops_after_one_retry(self):
+        """续传和完整请求都失败时保留原片段，重复 HTTP 错误不能形成重试循环"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);calls=[]
+        def rejected(url,headers=None):
+            """两次请求均失败，检查回退仍绑定同一发布地址"""
+            self.assertEqual(url,self.release.download_url);calls.append(dict(headers or {}))
+            raise urllib.error.HTTPError(url,416,'unavailable',{},None)
+        with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=rejected)
+        self.assertEqual(calls,[{'Range':'bytes=20-'},{}])
+        self.assertEqual(paths['part'].read_bytes(),self.bytes[:20]);self.assertFalse(paths['installer'].exists())
+    def test_cancel_after_range_rejection_keeps_partial_without_full_request(self):
+        """服务器拒绝续传时若已取消，不再发完整请求或清空已有片段"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);cancelled=threading.Event();calls=[]
+        def rejected(url,headers=None):
+            """在首个响应失败时模拟用户取消"""
+            calls.append(dict(headers or {}));cancelled.set()
+            raise urllib.error.HTTPError(url,405,'no ranges',{},None)
+        with self.assertRaises(UpdateCancelled):stage_installer(self.release,self.cache,cancel=cancelled.is_set,opener=rejected)
+        self.assertEqual(calls,[{'Range':'bytes=20-'}]);self.assertEqual(paths['part'].read_bytes(),self.bytes[:20])
+        self.assertFalse(paths['installer'].exists())
+    def test_full_retry_rejects_same_size_corrupt_archive(self):
+        """完整回退仍需 SHA-256 相符，等长坏包不能被暂存为可安装程序"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);calls=[]
+        corrupted=bytes([self.bytes[0]^1])+self.bytes[1:]
+        def fetch(url,headers=None):
+            """模拟拒绝续传后返回等长但被篡改的归档"""
+            self.assertEqual(url,self.release.download_url);calls.append(dict(headers or {}))
+            if headers and headers.get('Range'):raise urllib.error.HTTPError(url,400,'no ranges',{},None)
+            return Response(corrupted)
+        with self.assertRaisesRegex(UpdateError,'校验未通过'):stage_installer(self.release,self.cache,opener=fetch)
+        self.assertEqual(calls,[{'Range':'bytes=20-'},{}])
+        for name in ('part','archive','installer','receipt'):self.assertFalse(paths[name].exists())
     def test_invalid_content_range_does_not_append_wrong_bytes(self):
         paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20])
         with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=lambda *args:Response(self.bytes,206,{'Content-Range':'bytes 0-4/5'}))

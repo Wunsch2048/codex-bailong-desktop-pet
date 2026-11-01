@@ -51,6 +51,17 @@ class RecoveryTests(unittest.TestCase):
             self.assertIsNone(self.store.recover_local('light'))
         self.assertIsNone(self.store.current);self.assertFalse(self.store.available('light'))
         self.assertEqual((self.old/'idle.webp').read_bytes(),self.payload['idle.webp'])
+    def test_all_names_present_but_truncated_embedded_light_repairs_in_cache(self):
+        embedded=self.app/'outputs/白龙桌宠素材';self.populate(embedded)
+        (embedded/'idle.webp').write_bytes(b'truncated')
+        self.store=MaterialStore(self.app,self.state)
+        self.assertIsNone(self.store.current);self.assertFalse(self.store.known_available('light'))
+        root=self.store.ensure('light',opener=self.transport)
+        self.assertNotEqual(root,embedded);self.store.verify(root,'light')
+        self.store.activate('light',root)
+        self.assertEqual((embedded/'idle.webp').read_bytes(),b'truncated')
+        restored=MaterialStore(self.app,self.state)
+        self.assertEqual(restored.current,'light');self.assertEqual(restored.root,root)
     def test_complete_cache_without_receipt_recovers_and_retains_old_directory(self):
         root=self.store.tier_root('light');self.populate(root)
         self.assertFalse(self.store.available('light'))

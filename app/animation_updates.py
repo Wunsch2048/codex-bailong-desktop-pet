@@ -43,6 +43,21 @@ def read_descriptor(release,program_version,opener,cancel):
     catalog=validate_catalog(data.get('catalog'),release.version)
     return catalog,minimum,checked_release.sha256
 
+
+def validate_program_catalog(catalog,program_version):
+    """An optional-animation program must carry a complete download contract.
+
+    File identities alone allow local reuse but cannot provision a fresh or
+    incomplete installation. Never silently ship computed materials-* URLs.
+    Public availability is verified separately against the actual release.
+    """
+    version=catalog.get('releaseVersion') if isinstance(catalog,dict) else None
+    if not version:raise UpdateError('人物素材缺少发布下载目录，请先关联对应动画包')
+    validate_catalog(catalog,version)
+    if version_tuple(version)>version_tuple(program_version):
+        raise UpdateError('人物素材发布版本高于程序版本')
+    return catalog
+
 def prepare(release,program_version,state_dir,opener,cancel):
     catalog,minimum,sha=read_descriptor(release,program_version,opener,cancel)
     release=replace(release,animation_catalog=catalog,minimum_program_version=minimum,animation_info_sha=sha)

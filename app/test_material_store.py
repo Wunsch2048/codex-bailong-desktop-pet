@@ -102,9 +102,10 @@ class MaterialStoreTests(unittest.TestCase):
             self.store.ensure('hd',opener=lambda *a:urlopen('http://127.0.0.1:'+str(server.server_port),timeout=3))
             self.assertTrue(self.store.available('hd'))
         finally:server.shutdown();server.server_close();thread.join()
-    def test_unpublished_error_does_not_change_preference(self):
+    def test_missing_download_address_does_not_claim_unpublished_or_change_preference(self):
         def missing(*a):raise HTTPError('fixture',404,'missing',{},None)
-        with self.assertRaisesRegex(MaterialError,'尚未公开发布'):self.store.ensure('hd',opener=missing)
+        with self.assertRaisesRegex(MaterialError,'下载地址暂不可用') as failure:self.store.ensure('hd',opener=missing)
+        self.assertNotIn('尚未公开',str(failure.exception))
         self.assertEqual(self.store.current,'light');self.assertFalse(self.store.preference.exists())
     def test_bad_hash_never_activates(self):
         wrong=dict(self.payload);wrong['quality/action.webp']=b'X'*len(wrong['quality/action.webp'])

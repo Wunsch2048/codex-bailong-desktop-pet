@@ -42,6 +42,16 @@ class MaterialControllerTests(unittest.TestCase):
     def test_settings_offer_cache_switch_and_do_not_commit_draft_selection(self):
         self.panel.choice.setCurrentIndex(1);self.assertEqual(self.panel.action.text(),'切换画质');self.assertTrue(self.panel.action.isEnabled())
         self.assertEqual(self.store.current,'light');self.assertFalse(self.store.preference.exists())
+    def test_unready_or_card_only_panel_defaults_to_saved_hd_without_saving(self):
+        for card_only in (False,True):
+            with self.subTest(cardOnly=card_only):
+                self.store.current=None;self.store.preferred='hd';self.store.card_only=card_only
+                panel=MaterialPanel(self.c)
+                try:
+                    self.assertEqual(panel.choice.currentData(),'hd')
+                    self.assertTrue(panel.action.isEnabled())
+                    self.assertFalse(self.store.preference.exists())
+                finally:panel.close();panel.deleteLater();APP.processEvents()
     def test_material_location_move_cleans_old_cache_and_survives_restart(self):
         from material_store import MaterialStore
         old=self.store.cache;target=self.fixture.root/'external/BailongMaterials'

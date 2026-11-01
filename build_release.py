@@ -77,6 +77,8 @@ def build(legacy_formats=False,application_only=True):
     validate_new_version(VERSION)
     from build_materials import build as build_materials,DEST
     catalog=build_materials()
+    from animation_updates import validate_program_catalog
+    validate_program_catalog(catalog,VERSION)
     tls_data=ssl_runtime_data()
     (ROOT/'build').mkdir(exist_ok=True)
     version_info=ROOT/'build/windows-version-info.txt';version_info.write_text(windows_version_resource(VERSION),encoding='utf-8')

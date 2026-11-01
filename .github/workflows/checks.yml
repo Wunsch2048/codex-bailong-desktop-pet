@@ -26,3 +26,4 @@ jobs:
       # one process and leaking theme/motion preferences between modules.
       - run: python tools/check_source.py
       - run: python tools/check_program_bootstrap.py
+      - run: python tools/check_program_download.py

@@ -14,11 +14,9 @@ from test_app_updates import Response,payload
 class ProgramUpdateTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.source=self.root/'new';self.old=self.root/'old';self.cache=self.root/'data/updates'
-        self.light=dict(id='0123456789abcdef01234567',resolution=512,bytes=0,files=[])
         self.media={'idle.webp':b'light-asset-content','素材清单.json':b'{"fixture":true}'}
-        for n,b in self.media.items():self.light['files'].append(dict(path=n,bytes=len(b),sha256=hashlib.sha256(b).hexdigest()))
-        self.light['bytes']=sum(f['bytes'] for f in self.light['files'])
-        self.catalog=dict(schema=1,default='light',tiers=dict(light=self.light,hd=dict(id='hd-cache-kept')))
+        from test_material_publication import fixture_catalog
+        self.catalog=fixture_catalog(self.media);self.light=self.catalog['tiers']['light']
         self.files={'BailongEnhanced.exe':b'MZnew-program','_internal/runtime.dll':os.urandom(700000),'app/material_catalog.json':json.dumps(self.catalog).encode(),**{'outputs/白龙桌宠素材/'+n:b for n,b in self.media.items()}}
         for n,b in self.files.items():
             p=self.source/n;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b)
@@ -42,6 +40,17 @@ class ProgramUpdateTests(unittest.TestCase):
     def test_package_contains_all_program_files_and_no_animations(self):
         with zipfile.ZipFile(io.BytesIO(self.bytes)) as z:
             self.assertIn('BailongEnhanced.exe',z.namelist());self.assertIn('_internal/runtime.dll',z.namelist());self.assertFalse(any(n.startswith('outputs/') for n in z.namelist()))
+    def test_program_packaging_refuses_catalog_without_download_contract(self):
+        catalog=dict(self.catalog);catalog.pop('releaseVersion')
+        data=json.dumps(catalog).encode();(self.source/'app/material_catalog.json').write_bytes(data)
+        self.manifest['files']['app/material_catalog.json']=dict(bytes=len(data),sha256=hashlib.sha256(data).hexdigest())
+        (self.source/'payload-manifest.json').write_text(json.dumps(self.manifest),encoding='utf-8')
+        destination=self.root/'refused'
+        with self.assertRaisesRegex(UpdateError,'缺少发布下载目录'):package(self.source,destination)
+        self.assertFalse(destination.exists())
+        from build_card_only import prepare
+        with self.assertRaisesRegex(UpdateError,'缺少发布下载目录'):prepare(self.source,destination)
+        self.assertFalse(destination.exists())
     def test_preflight_selects_program_without_downloading_it_and_keeps_notes(self):
         calls=[]
         def fetch(url,*a):calls.append(url);return Response(json.dumps(self.release_data()).encode() if url==API else self.info)

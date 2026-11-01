@@ -98,8 +98,12 @@ internal sealed class ProgramDownload {
         var relative=target.Version+"/"+target.Sha256+".zip";var ready=Safe(cache,relative);
         Directory.CreateDirectory(Path.GetDirectoryName(ready));
         if(File.Exists(ready)) {
-            if(new FileInfo(ready).Length!=target.Bytes || Hash(ready)!=target.Sha256) throw new InvalidDataException("程序下载缓存校验失败，请反馈此错误");
-            progress(target.Bytes,target.Bytes);return ready;
+            if(new FileInfo(ready).Length==target.Bytes && Hash(ready)==target.Sha256) {
+                progress(target.Bytes,target.Bytes);return ready;
+            }
+            // Only this owned, invalid download cache is removed. Retrying
+            // fetches the same pinned archive; installed files are untouched.
+            Check();File.Delete(ready);
         }
         var pending=Safe(cache,relative+".part");long count=0;
         // One bounded partial per version/hash. Retrying overwrites only this

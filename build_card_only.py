@@ -11,6 +11,8 @@ def prepare(source,destination):
     source=Path(source);destination=Path(destination)
     manifest=json.loads((source/'payload-manifest.json').read_text(encoding='utf-8'))
     inspect_source(source,manifest['version'])
+    from animation_updates import validate_program_catalog
+    validate_program_catalog(json.loads((source/'app/material_catalog.json').read_text(encoding='utf-8')),manifest['version'])
     if destination.exists():raise FileExistsError(destination)
     destination.mkdir(parents=True)
     files={n:f for n,f in manifest['files'].items() if not n.startswith(PREFIX)}

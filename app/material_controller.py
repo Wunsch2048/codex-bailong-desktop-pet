@@ -182,7 +182,8 @@ class MaterialPanel(QWidget):
         note=QLabel('动画按需下载，升级可复用；移除后可重新下载。');note.setWordWrap(True);set_theme_style(note,'font-size:11px;font-weight:500;color:#706879;');layout.addWidget(note)
         location=QHBoxLayout();self.storage_path=QLabel();self.storage_path.setWordWrap(True);self.storage_path.setMinimumWidth(0);self.storage_path.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Preferred);self.storage_path.setAccessibleName('动画资源存储位置');location.addWidget(self.storage_path,1)
         self.storage_button=QPushButton('更改位置');self.storage_button.clicked.connect(self.choose_location);location.addWidget(self.storage_button);layout.addLayout(location)
-        self.choice.setCurrentIndex(max(0,self.choice.findData(controller.store.current)))
+        selected=controller.store.current or getattr(controller.store,'preferred','light')
+        self.choice.setCurrentIndex(max(0,self.choice.findData(selected)))
         self.choice.currentIndexChanged.connect(lambda:self.refresh(controller.snapshot()));self.action.clicked.connect(lambda:controller.request(self.choice.currentData()));self.cancel_button.clicked.connect(controller.cancel)
         controller.changed.connect(self.refresh);self.refresh(controller.snapshot())
     def choose_location(self):

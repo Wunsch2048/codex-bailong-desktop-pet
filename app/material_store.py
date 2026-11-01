@@ -78,7 +78,13 @@ class MaterialStore:
         if tier=='light':
             embedded=self.app_root/'build/materials/light' if self.development else self.base
             spec=self.catalog['tiers']['light'] if self.catalog else None
-            if spec and spec['id']==self.embedded_light_id and all(checked(embedded,f['path']).is_file() for f in spec['files']):return embedded
+            if spec and spec['id']==self.embedded_light_id:
+                try:
+                    for f in spec['files']:
+                        status=checked(embedded,f['path']).stat()
+                        if not stat.S_ISREG(status.st_mode) or status.st_size!=f['bytes']:break
+                    else:return embedded
+                except OSError:pass
         return checked(self.cache,tier+'/'+self.catalog['tiers'][tier]['id'])
 
     def available(self,tier):
@@ -219,7 +225,7 @@ class MaterialStore:
                         output.write(data);progress(done,total,'downloading')
                     if total and done!=total:raise MaterialError('素材下载不完整，请重试')
             except HTTPError as exc:
-                if exc.code==404:raise MaterialError('这套素材尚未公开发布；本机已有素材和卡片功能仍可使用') from exc
+                if exc.code==404:raise MaterialError('素材下载地址暂不可用，请检查程序更新后重试；已有素材保持不变') from exc
                 raise MaterialError('素材服务暂时不可用，请稍后重试') from exc
             except (URLError,TimeoutError,OSError) as exc:raise MaterialError('素材下载连接失败，请稍后重试') from exc
             except (zipfile.BadZipFile,RuntimeError) as exc:raise MaterialError('素材压缩包无效') from exc

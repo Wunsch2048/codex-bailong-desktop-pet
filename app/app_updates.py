@@ -197,10 +197,13 @@ def prepare_release(release,current,opener,cancel,app_root,state_dir=None,progra
     return release
 
 def check_release(current,opener=open_url,cancel=lambda:False,app_root=None,state_dir=None,program_version=None):
+    phase='release'
     try:
         release=parse_release(json.loads(read_small(API,2_000_000,opener,cancel)))
+        phase='attachments'
         return prepare_release(release,current,opener,cancel,app_root,state_dir,program_version)
     except urllib.error.HTTPError as exc:
+        if phase=='attachments':raise UpdateError('版本已公开，但更新附件暂不可用；请稍后重试或在 GitHub 查看') from None
         if exc.code==404:raise NoRelease('暂无公开稳定版本') from None
         if exc.code in (403,429):
             try:return prepare_release(release_without_api(opener,cancel),current,opener,cancel,app_root,state_dir,program_version)
@@ -236,11 +239,18 @@ def download_archive(release,paths,progress=lambda *a:None,cancel=lambda:False,o
         if offset>release.size:part.unlink();offset=0
         if offset<release.size:
             check_cancel(cancel);progress(offset,release.size,'downloading')
-            with opener(release.download_url,{'Range':f'bytes={offset}-'} if offset else {}) as response:
+            try:response=opener(release.download_url,{'Range':f'bytes={offset}-'} if offset else {})
+            except urllib.error.HTTPError as exc:
+                if not offset or exc.code not in (400,405,416):raise
+                # Some proxies reject Range rather than returning an ordinary
+                # 200 response. Retry once from zero, with the same pinned URL
+                # and final size/SHA checks; leave the partial if opening fails.
+                check_cancel(cancel);response=opener(release.download_url,{});offset=0
+            with response:
                 status=getattr(response,'status',200)
                 if offset and status==206:
                     match=re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)',response.headers.get('Content-Range',''))
-                    if not match or int(match[1])!=offset or int(match[3])!=release.size:raise UpdateError('续传响应异常，请稍后重试')
+                    if not match or int(match[1])!=offset or int(match[2])!=release.size-1 or int(match[3])!=release.size:raise UpdateError('续传响应异常，请稍后重试')
                 elif status==200:offset=0
                 else:raise UpdateError('下载响应异常，请稍后重试')
                 mode='ab' if offset else 'wb';last=0.;progress(offset,release.size,'downloading')

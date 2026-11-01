@@ -10,6 +10,8 @@ def package(source,destination):
     source=Path(source);destination=Path(destination);manifest=json.loads((source/'payload-manifest.json').read_text(encoding='utf-8'))
     version=manifest['version'];inspect_source(source,version)
     catalog=json.loads((source/'app/material_catalog.json').read_text(encoding='utf-8'));tier=catalog['tiers']['light']
+    from animation_updates import validate_program_catalog
+    validate_program_catalog(catalog,version)
     animation_info=destination/f'bailong-desktop-pet-{version}-animation.json'
     if animation_info.exists() and json.loads(animation_info.read_text(encoding='utf-8'))['catalog']!=catalog:raise ValueError('同批程序包与动画补丁目录不一致')
     media={PREFIX+f['path']:dict(bytes=f['bytes'],sha256=f['sha256']) for f in tier['files']}

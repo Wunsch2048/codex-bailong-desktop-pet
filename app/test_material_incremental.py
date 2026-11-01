@@ -74,6 +74,21 @@ class IncrementalTests(unittest.TestCase):
         (self.old_root/'quality/action.webp').write_bytes(b'damage')
         self.store.verify(root,'hd')
 
+    def test_incomplete_old_materials_download_missing_entries_from_versioned_release(self):
+        self.catalog['releaseVersion']='1.3.0'
+        url='https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-hd.zip'
+        self.catalog['tiers']['hd']['url']=url
+        self.store=MaterialStore(self.fixture.app,self.fixture.state,catalog_override=self.catalog)
+        calls=[]
+        def published(address,headers):
+            self.assertEqual(address,url);calls.append(address)
+            return self.transport(address,headers)
+        root=self.run_download(opener=published)
+        self.assertTrue(calls);self.store.verify(root,'hd')
+        self.assertEqual((root/'added.webp').read_bytes(),self.payload['added.webp'])
+        self.assertLess(self.transferred,len(self.archive)//4)
+        self.assertTrue(self.old_root.exists())
+
     def test_range_ignored_falls_back_to_same_full_zip(self):
         def ignored(url,headers): return self.transport(url,{})
         root = self.run_download(opener=ignored)

@@ -56,7 +56,31 @@ def clean_dll_search():
         finally:
             if not api.SetDllDirectoryW(previous):raise OSError('无法恢复当前程序DLL搜索目录')
 
-def launch_own(command,**options):
+def independent_creationflags(flags=0):
+    """Leave a host-owned job only when Windows explicitly permits it."""
+    if sys.platform!='win32':return flags
+    import ctypes
+    from ctypes import wintypes
+    class Limits(ctypes.Structure):
+        _fields_=[('process_time',ctypes.c_longlong),('job_time',ctypes.c_longlong),
+                  ('flags',wintypes.DWORD),('minimum_ws',ctypes.c_size_t),('maximum_ws',ctypes.c_size_t),
+                  ('active_processes',wintypes.DWORD),('affinity',ctypes.c_size_t),
+                  ('priority',wintypes.DWORD),('scheduling',wintypes.DWORD)]
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    query=kernel.QueryInformationJobObject
+    query.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]
+    query.restype=wintypes.BOOL
+    limits=Limits()
+    if query(None,2,ctypes.byref(limits),ctypes.sizeof(limits),None) and limits.flags&0x800:
+        return flags|0x01000000 # CREATE_BREAKAWAY_FROM_JOB
+    return flags
+
+
+def launch_own(command,*,independent=False,remove_environment=(),**options):
     options.setdefault('cwd',str(Path(command[0]).resolve().parent))
+    if independent:options['creationflags']=independent_creationflags(options.get('creationflags',0))
     options['env']=own_environment(options.pop('env',None))
+    # A cleaned overlay does not delete keys inherited from os.environ.
+    # Apply explicit removals after the final environment has been assembled.
+    for key in remove_environment:options['env'].pop(key,None)
     with clean_dll_search():return subprocess.Popen(command,**options)

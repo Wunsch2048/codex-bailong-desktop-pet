@@ -117,6 +117,7 @@ class SettingsDialog(QDialog):
         self.save_shortcut=QShortcut(QKeySequence('Ctrl+S'),self);self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);self.save_shortcut.activated.connect(self.apply)
         self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         outer.addWidget(footer);self.tabs.currentChanged.connect(self.activate_page);self.activate_page(0);self.reload()
+        if hasattr(pet,'materials'):pet.materials.changed.connect(self.refresh_character_material_hint)
         if hasattr(pet,'settingsChanged'):pet.settingsChanged.connect(self.sync_from_pet)
         pet.bubble.dataBusyChanged.connect(self.update_refresh_state)
         for key in self.refresh_buttons:self.update_refresh_state(key,getattr(pet.bubble,key+'_busy'))
@@ -181,6 +182,10 @@ class SettingsDialog(QDialog):
             if index:layout_group.addSpacing(1)
             control=SettingsSwitchRow(title);control.setFixedHeight(31);control.setProperty('separated',bool(index));layout_group.addWidget(control)
             self.fields[key]=control;self.field_tabs[key]=0;self.field_titles[key]=title;control.toggled.connect(lambda checked,key=key:self.edited(key))
+            if key=='character_visible':
+                self.character_material_hint=QPushButton('动画待补齐 ›');self.character_material_hint.setFixedHeight(24)
+                self.character_material_hint.clicked.connect(lambda:self.tabs.setCurrentIndex(3));layout_group.addWidget(self.character_material_hint)
+                self.character_material_hint.hide()
         appearance.addRow(front)
         spacer=QWidget();spacer.setFixedHeight(10);appearance.addRow(spacer)
         advanced=appearance
@@ -515,8 +520,16 @@ class SettingsDialog(QDialog):
         self.draft.set(key,value);self.status.clear();self.update_draft_state()
         from theme_registry import THEME_KEYS
         if key in THEME_KEYS:self.preview_theme_draft()
+    def refresh_character_material_hint(self,*args):
+        if not hasattr(self,'character_material_hint'):return
+        store=getattr(self.pet,'material_store',None)
+        missing=store is not None and store.current is None and self.pet.settings.get('character','builtin')=='builtin'
+        self.character_material_hint.setText('启用人物动画 ›' if store and getattr(store,'card_only',False) else '动画待补齐 ›')
+        self.character_material_hint.setVisible(missing and self.fields['character_visible'].isChecked())
+
     def update_draft_state(self,*args):
         if self.draft is None:return
+        self.refresh_character_material_hint()
         self.website.setEnabled(self.shortcut.currentData()=='website')
         count=len(self.draft.dirty);self.apply_button.setEnabled(bool(count));self.discard_button.setEnabled(bool(count))
         if hasattr(self,'roaming_editor'):

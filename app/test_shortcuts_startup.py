@@ -128,7 +128,8 @@ class StartupTests(unittest.TestCase):
     def test_launch_drops_stale_installer_nonce(self):
         with patch.dict(os.environ,BAILONG_DEPLOY_TOKEN='private',BAILONG_DEPLOY_RECEIPT='old'),patch.object(cs.subprocess,'Popen') as launch:
             cs.spawn(['pet.exe','--from-codex'])
-        self.assertNotIn('BAILONG_DEPLOY_TOKEN',launch.call_args.kwargs['env']);self.assertNotIn('BAILONG_DEPLOY_RECEIPT',launch.call_args.kwargs['env'])
+        self.assertFalse('BAILONG_DEPLOY_TOKEN' in launch.call_args.kwargs['env'],'监听不应继承安装交接参数')
+        self.assertFalse('BAILONG_DEPLOY_RECEIPT' in launch.call_args.kwargs['env'],'监听不应继承安装交接回执')
     def test_corrupt_preference_does_not_crash_startup_or_enable_it(self):
         cs.atomic(cs.preference_path(),['enabled'])
         self.assertFalse(cs.enabled())

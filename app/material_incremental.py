@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import zipfile
+from pathlib import Path
 from urllib.error import HTTPError
 
 from material_store import MaterialError, checked, cancelled, hash_file
@@ -90,22 +91,39 @@ class RangeZip(io.RawIOBase):
         super().close()
 
 
-def reuse_files(store, tier, stage, cancel, progress):
-    """Read only bounded catalog/receipt paths, hash bytes before copying them."""
-    files = store.catalog['tiers'][tier]['files']
-    wanted = {(f['bytes'], f['sha256']): [] for f in files}
-    for f in files: wanted[(f['bytes'], f['sha256'])].append(f)
+def candidate_roots(store,tier):
+    """Only known cache paths and registered older versions; never scan a drive."""
+    files=store.catalog['tiers'][tier]['files']
     roots = []
     bundled = (store.bundled_catalog or {}).get('tiers', {}).get(tier)
     if tier == 'light' and bundled:
         root = store.app_root / 'build/materials/light' if store.development else store.base
         roots.append((root, [f['path'] for f in bundled['files']]))
+    # A missing/stale receipt must not make otherwise intact current bytes
+    # unreachable. The target catalog still authorizes every copied byte.
+    roots.append((checked(store.cache,tier+'/'+store.catalog['tiers'][tier]['id']),[f['path'] for f in files]))
+    versions=store.app_root.parent
+    if versions.name=='versions' and not versions.is_symlink() and not versions.is_junction():
+        try:
+            manifest=checked(versions.parent,'installations.json')
+            if manifest.stat().st_size>8*1024*1024:raise ValueError('安装清单过大')
+            names=json.loads(manifest.read_text('utf-8')).get('versions',[])
+            if not isinstance(names,list):raise ValueError('安装清单无效')
+            count=0
+            for name in names[:32]:
+                if not isinstance(name,str) or Path(name).name!=name or name in ('.','..'):continue
+                old=checked(versions,name)
+                if old==store.app_root or not old.is_dir():continue
+                oldroot=checked(old,'outputs/白龙桌宠素材')
+                if oldroot.is_dir():roots.append((oldroot,[f['path'] for f in files]))
+                count+=1
+                if count>=8:break
+        except (OSError,ValueError,KeyError,TypeError):pass
     parent = store.cache / tier
     if parent.is_dir() and not parent.is_symlink() and not getattr(parent, 'is_junction', lambda: False)():
         # Avoid scanning obsolete caches indefinitely. Newest complete receipts first.
         candidates = [p for p in parent.iterdir() if p.name.isalnum() and not p.is_symlink() and not getattr(p, 'is_junction', lambda: False)()]
         for root in sorted(candidates, key=lambda p: p.stat().st_mtime_ns, reverse=True)[:16]:
-            cancelled(cancel)
             try:
                 receipt_path = checked(root, '.verified.json')
                 if receipt_path.stat().st_size > 128 * 1024: continue
@@ -114,6 +132,15 @@ def reuse_files(store, tier, stage, cancel, progress):
                 if receipt['id'] != root.name or not isinstance(names, dict) or len(names) > 128: continue
                 roots.append((root, list(names)))
             except (OSError, ValueError, KeyError, TypeError): continue
+    return roots
+
+
+def reuse_files(store, tier, stage, cancel, progress, candidates=None):
+    """Read bounded candidates; target SHA-256 authorizes copying, not metadata."""
+    files=store.catalog['tiers'][tier]['files']
+    wanted={(f['bytes'],f['sha256']):[] for f in files}
+    for f in files:wanted[(f['bytes'],f['sha256'])].append(f)
+    roots=candidate_roots(store,tier) if candidates is None else candidates
     reused = set()
     total = sum(f['bytes'] for f in files)
     done = 0

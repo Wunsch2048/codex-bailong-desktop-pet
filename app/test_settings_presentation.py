@@ -46,6 +46,20 @@ class SettingsPet(PetStub):
 
 
 class SettingsPresentationTests(unittest.TestCase):
+    def test_missing_character_hint_opens_materials_and_clears_after_recovery(self):
+        from PySide6.QtTest import QTest
+        self.pet.material_store=SimpleNamespace(current=None,card_only=False)
+        self.page(0);self.editor.fields['character_visible'].setChecked(True);self.editor.refresh_character_material_hint()
+        hint=self.editor.character_material_hint
+        self.assertTrue(hint.isVisible());self.assertIn('待补齐',hint.text())
+        QTest.mouseClick(hint,Qt.MouseButton.LeftButton);APP.processEvents();self.assertEqual(self.editor.tabs.currentIndex(),3)
+        self.pet.material_store.current='light';self.pet.materials.changed.emit(self.pet.materials.snapshot());APP.processEvents()
+        self.assertTrue(hint.isHidden())
+    def test_explicit_card_only_hint_offers_enable_without_changing_choice(self):
+        self.pet.material_store=SimpleNamespace(current=None,card_only=True)
+        self.page(0);self.editor.fields['character_visible'].setChecked(True);self.editor.refresh_character_material_hint()
+        self.assertIn('启用人物动画',self.editor.character_material_hint.text())
+        self.assertTrue(self.pet.material_store.card_only)
     def setUp(self):
         install_ui_font(APP)
         for target,value in [('desktop_settings.autostart_enabled',False),('codex_startup.enabled',False),

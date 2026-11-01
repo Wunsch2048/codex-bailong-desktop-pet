@@ -117,7 +117,7 @@ def recover(root,system=False):
         old=owned_destination(root,journal['old_running'])/'BailongEnhanced.exe'
         if old.is_file():
             from process_launch import launch_own
-            launch_own([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+            launch_own([str(old)],independent=True,cwd=str(old.parent),creationflags=0x08000000)
     return True
 
 def verify_payload(dest,version):

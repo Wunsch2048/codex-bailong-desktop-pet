@@ -152,7 +152,7 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
         env=dict(BAILONG_DEPLOY_TOKEN=token,BAILONG_DEPLOY_RECEIPT=str(ready_receipt))
         progress('正在确认新版窗口与本地服务就绪…')
         from process_launch import launch_own
-        process=launch_own([str(exe)],cwd=str(exe.parent),env=env,creationflags=0x08000000)
+        process=launch_own([str(exe)],independent=True,cwd=str(exe.parent),env=env,creationflags=0x08000000)
         journal['pid']=process.pid;atomic(root/'deployment-journal.json',journal)
         ready=wait_ready(process,exe,ready_receipt,token,VERSION)
         ready_receipt.unlink(missing_ok=True)
@@ -174,7 +174,7 @@ def deploy(payload,startup,root=ROOT,progress=lambda text:None,populate=None,aft
         if old and not restarted:
             try:
                 from process_launch import launch_own
-                launch_own([str(old)],cwd=str(old.parent),creationflags=0x08000000)
+                launch_own([str(old)],independent=True,cwd=str(old.parent),creationflags=0x08000000)
             except OSError:raise OSError(str(error)+'；旧版未能自动恢复，请从安装目录启动旧版。') from error
         raise
 

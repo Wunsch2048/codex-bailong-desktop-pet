@@ -24,12 +24,14 @@
 
 | 平台 | 入口与维护者 | 当前说明的支持范围 |
 | --- | --- | --- |
-| Linux / Niri / KDE | [helantianshen 的社区仓库](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 与 KDE Plasma X11 / XWayland 社区预览版，环境要求与验收范围见说明 |
+| Linux / Niri / KDE | [Linux预览版（社区维护，源码已合入）](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 与 KDE Plasma X11 / XWayland 社区预览版，环境要求与验收范围见说明 |
 | macOS / Apple Silicon | [Kki1ds 的社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet) / [下载页面](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases) | Apple Silicon 的 DMG 社区版；未公证，无应用内更新，最新版本、支持范围与限制以作者仓库说明为准 |
 
-社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
+Linux适配源码已合入本仓库，Linux预览包及macOS社区版仍由对应作者维护、测试和发布；下载、安装说明与平台问题反馈请前往对应社区仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
 
 ## Linux / niri / KDE
+
+Linux适配源码已合入主分支；下列预览包继续由社区作者维护和发布。
 
 当前社区预览版为 **v1.4.2-linux-preview.5**，程序基于上游 **1.4.2**。本版包含 KDE 动画换帧后的鼠标命中修复、niri 卡片绘制与拖动定位修复，以及完整轻量人物素材（45 个文件、35 个动作）。
 

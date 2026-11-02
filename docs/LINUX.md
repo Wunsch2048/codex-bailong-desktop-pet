@@ -23,9 +23,9 @@ niri 保留临时收纳、贴边和跟随画布，并接入新版状态/聊天/�
 
 KDE 的人物命中区域现在随当前动画帧及动作的渲染缩放、偏移更新，保留同帧缓存。用户于 2026-11-02 确认维护者已完成 KDE 实机测试；具体环境和逐项记录未随本次反馈提供，不能将历史环境或新包测试归入这次反馈。源码、包体与人工测试范围分别记录在 [HANDOFF](../HANDOFF.md)和[本版发布说明](releases/v1.4.2-linux-preview.5.md)。
 
-## Linux 包体与历史记录
+## 当前发布：v1.4.2-linux-preview.5
 
-正在准备基于当前源码的 `v1.4.2-linux-preview.5`，包含完整轻量素材（45 个文件、35 个动作）。当前公开入口继续保留 [v1.2.1-linux-preview.4](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.2.1-linux-preview.4)，待新附件公开并通过匿名下载核验后更新。
+[v1.4.2-linux-preview.5](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5) 已公开，包含 AppImage、便携 tar.zst 和 SHA-256 校验文件。包内提供完整轻量素材（45 个文件、35 个动作）。本版在 CachyOS x86_64 本机构建，要求 glibc 2.44 或更高版本；安装方式及验证范围见[包体说明](LINUX_PACKAGE.md)和[本版说明](releases/v1.4.2-linux-preview.5.md)。
 
 ## 历史发布：v1.2.1-linux-preview.4
 

@@ -1,3 +1,9 @@
+# Linux preview.5 已公开（2026-11-02）
+
+已公开 [v1.4.2-linux-preview.5](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5)，发布目标提交为 `65983b2fa4fb7d8e185f17dd81f688d9cb03a2e5`，附件来自本次已验证的 CachyOS 本机构建。AppImage、便携 tar.zst 和 SHA256SUMS.txt 三附件的远端大小及摘要与最终候选一致。公开页匿名请求返回 200；三附件均已无 GitHub 登录凭据完整下载，并重新计算 SHA-256 一致。完整下载与发布元数据保存在本地 `work/linux-release-1.4.2-preview.5/`。
+
+匿名校验完成后更新 README 的 Linux 下载链接、社区 Linux 行和 Linux/KDE 当前版本说明。Windows 代码、版本、CI 配置、安装链接与历史说明未改，`.idea` 未纳入提交。本版要求 glibc 2.44，仍为社区预览版；KDE 源码实测、新包 niri 验收及 Token 部分日志状态分别记在发布说明中。未修改本机已安装版本或自启动服务。
+
 # Linux preview.5 最终候选验证（2026-11-02）
 
 最终公开候选回到既有的 CachyOS 本机构建、验收后上传流程，版本 `v1.4.2-linux-preview.5`，程序内版本 `1.4.2`。运行库要求 glibc 2.44，支持范围按本轮 Linux 说明明确列出。Windows 版本、入口、构建脚本和发布说明未改；`.idea` 保留原有暂存及工作区状态。

@@ -4,7 +4,7 @@
 
 当前源码同步上游 **1.4.2**，并合入维护者 FarnaHerry 的 [PR #3](https://github.com/helantianshen/codex-bailong-desktop-pet/pull/3)，修复动画换帧后鼠标命中区域仍停留在旧轮廓的问题。程序需手动更新，维护页只提供兼容动画更新和 Linux 下载入口；已保存的行为开关不因升级被开启。
 
-用户于 **2026-11-02** 确认维护者已完成 KDE 实机测试。本次反馈没有附会话类型、缩放和逐项记录；下方历史测试矩阵不算本轮新增验收。本轮 Linux 包为 `v1.4.2-linux-preview.5`，准备状态、包体验证及剩余限制见[发布说明](releases/v1.4.2-linux-preview.5.md)。新包的 KDE 安装验收与维护者对修复源码的测试分别记录。
+用户于 **2026-11-02** 确认维护者已完成 KDE 实机测试。本次反馈没有附会话类型、缩放和逐项记录；下方历史测试矩阵不算本轮新增验收。当前公开 Linux 包为 [v1.4.2-linux-preview.5](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5)，包体要求 glibc 2.44 或更高版本。包体验证及剩余限制见[发布说明](releases/v1.4.2-linux-preview.5.md)。新包的 KDE 安装验收与维护者对修复源码的测试分别记录。
 
 ## 启动
 

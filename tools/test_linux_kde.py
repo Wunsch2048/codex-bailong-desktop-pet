@@ -31,8 +31,8 @@ class InputTests(unittest.TestCase):
         pet = SimpleNamespace(isVisible=widget.isVisible, windowHandle=widget.windowHandle, rect=widget.rect,
                               winId=Mock(side_effect=AssertionError('QWidget native ID may be stale')),
                               devicePixelRatioF=lambda: 1., size=widget.size, width=widget.width, height=widget.height,
-                              frame_transform=lambda rect: QTransform(), frames=[QPixmap.fromImage(source)], settings={},
-                              draw_frame=lambda p, rect: p.drawImage(0, 0, source))
+                              frame_transform=lambda rect: QTransform(), frames=[QPixmap.fromImage(source)], index=0,
+                              current={}, settings={}, draw_frame=lambda p, rect: p.drawImage(0, 0, source))
         try:
             shape.update(pet)
             args = shape.x11.XCreateBitmapFromData.call_args.args
@@ -125,3 +125,57 @@ class InputTests(unittest.TestCase):
                         self.assertTrue(widget.mask().isEmpty())
                     finally:
                         widget.close()
+
+    def test_current_frame_scale_and_offset_refresh_input_shape(self):
+        from pet import Pet
+        widget = QWidget()
+        widget.resize(16, 16)
+        widget.show()
+        frames = []
+        for left in (0, 8):
+            image = QImage(16, 16, QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(image)
+            painter.fillRect(left, 0, 8, 16, Qt.GlobalColor.white)
+            painter.end()
+            frames.append(QPixmap.fromImage(image))
+        pet = SimpleNamespace(isVisible=widget.isVisible, windowHandle=widget.windowHandle,
+            devicePixelRatioF=lambda: 1., rect=widget.rect, size=widget.size,
+            width=widget.width, height=widget.height, frames=frames, index=0,
+            current={'renderScale': 1., 'renderOffset': [0, 0]}, settings={},
+            frame_transform=lambda rect: QTransform())
+        pet.frame_target = lambda rect: Pet.frame_target(pet, rect)
+        pet.draw_frame = lambda painter, rect: Pet.draw_frame(pet, painter, rect)
+        shape = InputShape.__new__(InputShape)
+        shape.display, shape.last = 1, None
+        shape.x11, shape.xext = Mock(), Mock()
+        shape.x11.XCreateBitmapFromData.return_value = 42
+
+        def hit(x, y):
+            _, _, bits, width, height = shape.x11.XCreateBitmapFromData.call_args.args
+            stride = (width + 7) // 8
+            return bool(bits[y * stride + x // 8] & (1 << (x % 8)))
+
+        try:
+            shape.update(pet)
+            self.assertTrue(hit(2, 8))
+            self.assertFalse(hit(12, 8))
+            pet.index = 1
+            shape.update(pet)
+            self.assertTrue(hit(12, 8))
+            self.assertFalse(hit(2, 8))
+            self.assertEqual(shape.x11.XCreateBitmapFromData.call_count, 2)
+            shape.update(pet)
+            self.assertEqual(shape.x11.XCreateBitmapFromData.call_count, 2)
+            pet.current['renderScale'] = .5
+            shape.update(pet)
+            self.assertTrue(hit(10, 12))
+            self.assertFalse(hit(14, 14))
+            self.assertEqual(shape.x11.XCreateBitmapFromData.call_count, 3)
+            pet.current['renderOffset'] = [.25, -.25]
+            shape.update(pet)
+            self.assertTrue(hit(14, 6))
+            self.assertFalse(hit(10, 12))
+            self.assertEqual(shape.x11.XCreateBitmapFromData.call_count, 4)
+        finally:
+            widget.close()

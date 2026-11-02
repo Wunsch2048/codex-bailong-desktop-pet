@@ -53,9 +53,11 @@ class InputShape:
         window = int(handle.winId())
         ratio = pet.devicePixelRatioF()
         transform = pet.frame_transform(QRectF(pet.rect()))
-        frame = pet.frames[0].cacheKey() if pet.frames else None
+        frame = pet.frames[pet.index].cacheKey() if pet.frames else None
+        current = pet.current or {}
         key = (window, frame, pet.size().width(), pet.size().height(), ratio,
-               pet.settings.get('mouse_through'), transform.m11(), transform.m22(), transform.dx(), transform.dy())
+               pet.settings.get('mouse_through'), transform.m11(), transform.m22(), transform.dx(), transform.dy(),
+               current.get('renderScale'), tuple(current.get('renderOffset', [])))
         if key == self.last:
             return
         image = QImage(round(pet.width() * ratio), round(pet.height() * ratio), QImage.Format.Format_ARGB32_Premultiplied)

@@ -62,6 +62,10 @@ def main():
     shutil.copy2(ROOT / 'configs/niri-probe.kdl', bundle / 'configs/bailong-linux.kdl')
     for name in ('NOTICE.md',):
         shutil.copy2(ROOT / name, bundle / name)
+    # 随包保留 NOTICE 引用的原素材声明，便于离线查阅授权边界
+    (bundle / 'docs/upstream').mkdir(parents=True)
+    for name in ('ASSETS.md', 'ASSETS-v0.4.1.md'):
+        shutil.copy2(ROOT / 'docs/upstream' / name, bundle / 'docs/upstream' / name)
     shutil.copy2(ROOT / 'docs/LINUX_PACKAGE.md', bundle / 'README.md')
     (bundle / 'AppRun').write_text('#!/bin/sh\nset -eu\nAPP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$APP_DIR/bailong-linux" "$@"\n')
     (bundle / 'AppRun').chmod(0o755)

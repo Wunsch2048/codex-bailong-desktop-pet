@@ -2,7 +2,9 @@
 
 本分支在 [helantianshen 的 Linux/niri 适配](https://github.com/helantianshen/codex-bailong-desktop-pet/tree/3144a6769b1590f4e2665077d907b92bb7d4c4d7)上增加 KDE 支持。KDE 最初适配的 Windows 基线为 v1.0.0，linux-preview.2 起包含 KDE 后端；早期 linux-preview.1 下载包只支持 niri。按[上游 Linux issue 的审阅建议](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/2#issuecomment-6392931998)隔离平台代码、说明实机环境与功能边界。
 
-当前源码同步上游 1.4.1，合并内容和待验项目见 [HANDOFF](../HANDOFF.md)。程序需手动更新，维护页只提供兼容动画更新和 Linux 下载入口；已保存的行为开关不因升级被开启。上一轮 1.3.0 审阅修复后，用户在 KDE 做过基本操作并反馈正常；本轮 1.4.1 的新版页面与素材恢复尚未在 KDE 复验。当前公开包仍为基于上游 v1.2.1 的 v1.2.1-linux-preview.4，详见 [发布说明](releases/v1.2.1-linux-preview.4.md)。
+当前源码同步上游 **1.4.2**，并合入维护者 FarnaHerry 的 [PR #3](https://github.com/helantianshen/codex-bailong-desktop-pet/pull/3)，修复动画换帧后鼠标命中区域仍停留在旧轮廓的问题。程序需手动更新，维护页只提供兼容动画更新和 Linux 下载入口；已保存的行为开关不因升级被开启。
+
+用户于 **2026-11-02** 确认维护者已完成 KDE 实机测试。本次反馈没有附会话类型、缩放和逐项记录；下方历史测试矩阵不算本轮新增验收。本轮 Linux 包为 `v1.4.2-linux-preview.5`，准备状态、包体验证及剩余限制见[发布说明](releases/v1.4.2-linux-preview.5.md)。新包的 KDE 安装验收与维护者对修复源码的测试分别记录。
 
 ## 启动
 
@@ -44,7 +46,7 @@ CLI 优先使用 `--codex-cli`，其次是 `BAILONG_CODEX`、PATH 中的 `codex`
 
 CLI 始终在其原路径执行，未被遮蔽的安装保持原样；若 CLI 位于 CODEX_HOME 内，则将其所在的顶层安装子树（如 `packages/`，包括相邻脚本、模块、资源）只读挂回原位置。安装的完整依赖须在该子树内或其他未遮蔽的系统路径；CODEX_HOME 根目录仍是私有可写运行空间，根层 config/auth 单独只读挂载。`/tmp` 内的临时安装也按完整子目录保留原路径。直接放在 CODEX_HOME 或 `/tmp` 根目录的独立启动器会明确拒绝，请将完整安装放进子目录或外部；不会把单个文件重定位到 `/tmp/bailong-codex`。
 
-## 历史 KDE 验证记录（不含当前 1.4.1 源码）
+## 历史 KDE 验证记录（不代表当前 1.4.2 包体）
 
 本机环境为 Evernight Vista 44.0.1（Fedora 44 衍生）、x86_64、KDE Plasma / KWin 6.7.5、Wayland 会话、Qt xcb 经 XWayland 显示、200% 缩放；Python 3.12.15、PySide6 / Qt 6.9.2。已核对实际 X11 窗口坐标与物理尺寸，覆盖人物程序化移动、设置/聊天页、日报、分离面板、胶囊往返、人物 1.0/1.4 倍大小及关闭置顶；已观察真实额度、Token 和 IPC 健康状态。素材和 TLS 自检入口（已有日常实例时指定独立数据目录）：
 

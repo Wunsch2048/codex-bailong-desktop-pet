@@ -1,10 +1,10 @@
 # 白龙桌宠 Linux 便携版
 
-本文安装说明对应已公开的 preview.4 包。当前源码已同步上游 1.3.0，尚未构建或发布新 Linux 包；不能将下方旧版包体记录用于本次 PR 验收。当前源码的更新入口和设置保留规则见 [Linux 说明](LINUX.md)。
+本文对应 **v1.4.2-linux-preview.5**，程序基于上游 1.4.2，包含 KDE 动画换帧命中区域修复和 niri 卡片绘制、拖动定位修复。程序内显示的版本为 `1.4.2`；`linux-preview.5` 标识第五次 Linux 预览交付。功能、验证范围与限制见[本版说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/releases/v1.4.2-linux-preview.5.md)。
 
-v1.2.1-linux-preview.4 包含 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端，启动时自动识别。KDE 源码验收与限制详见 [KDE 说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/KDE.md)；本次包体实测环境为 CachyOS/niri，未做 KDE 安装包实机验收。
+包内提供 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端，启动时自动识别，也可指定 `--desktop niri` 或 `--desktop kde`。KDE 维护者已完成合并修复后的实机测试；本次新包在 CachyOS/niri 验证，维护者反馈不等同于新包的 KDE 安装验收。KDE 的环境要求见 [KDE 说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/KDE.md)。
 
-本构建面向 CachyOS/Arch x86_64、niri 原生 Wayland。包含 Python 3.12、Qt 与轻量素材，不需要激活虚拟环境或安装系统 Python 包。不是所有 Linux 发行版通用包。
+本版在 Ubuntu 22.04 构建，包体运行验收环境为 CachyOS/Arch x86_64。包含 Python 3.12、Qt 与完整轻量素材（45 个文件、35 个动作，含独立走路动画），不需要激活虚拟环境或安装系统 Python 包。其他发行版仍须验证运行库兼容性。
 
 便携包解压后执行 `./AppRun`；AppImage 先 `chmod +x 文件名.AppImage`，再执行它。也可使用 `--appimage-extract-and-run` 绕过 FUSE 挂载，但会产生临时解压开销。
 
@@ -20,13 +20,15 @@ v1.2.1-linux-preview.4 包含 niri 原生 Wayland 与 KDE Plasma X11/XWayland �
 
 niri 窗口规则需放在稳定位置。将包内 `configs/bailong-linux.kdl` 复制至 `~/.config/niri/bailong-linux.kdl`，在实际加载的 niri 配置中添加该文件的绝对路径 include。已有相同规则则无需重复添加。AppImage 用户可通过 `--appimage-extract` 取得规则文件。不要 include AppImage 临时挂载目录。规则使用本机 niri 的 background-effect 扩展，其他版本需先验证兼容性；本包不会自动修改全局主题或 niri 配置。
 
-读取真实 Codex 数据；额度查询通过 bubblewrap 只读访问原配置与认证文件。不写入 Codex 配置。设置中的“开机启动”和“随 Codex 启动”分别登记独立的 systemd 用户服务，互不依赖。启用前请把 AppImage 或便携目录放在固定位置；AppImage 登记外部文件路径，移动后需重新关闭并开启开关。已接入随 Codex 关闭与会话跳转，跳转需 xdg-utils 和 codex:// 协议处理器；聊天密钥及 Windows 更新入口尚未适配，勿使用 Windows 安装器更新此包。获取新 Linux 包后替换程序文件即可，保留用户数据目录。
+读取真实 Codex 数据；额度查询通过 bubblewrap 只读访问原配置与认证文件。不写入 Codex 配置。设置中的“开机启动”和“随 Codex 启动”分别登记独立的 systemd 用户服务，互不依赖。启用前请把 AppImage 或便携目录放在固定位置；AppImage 登记外部文件路径，移动后需重新关闭并开启开关。已接入随 Codex 关闭与会话跳转，跳转需 xdg-utils 和 codex:// 协议处理器。
+
+Linux 程序通过手动替换 AppImage 或便携目录更新，保留用户数据目录。维护页只提供 Linux 下载入口和兼容动画更新，动画继续校验最低程序版本与 SHA-256；Windows 程序安装、目录迁移和历史版本清理不可用。升级保留随机动作、回复摘要、自主走动、画质及人物可见性等已有选择。聊天密钥安全保存和完整联网聊天仍未适配，声音保持关闭。
 
 素材来源与使用边界见 NOTICE.md 和 app/licenses；字体授权随 app/fonts 提供。
 
 ## 构建
 
-构建环境独立于开发 `.venv`，所有依赖只装入仓库忽略目录：
+构建环境独立于开发 `.venv`，所有依赖只装入仓库忽略目录。先检查 `command -v ldd`，确保打包器使用宿主系统工具；自定义工具链中的 `ldd` 可能漏识别 Qt 运行库。如本机工具链覆盖了系统工具，可仅为构建命令设置 `PATH=/usr/bin:/bin`，不修改全局 PATH。公开交付使用下方 Ubuntu 22.04 工作流，避免绑定构建主机过新的 glibc。
 
 ```sh
 uv venv --python 3.12 work/linux-build/venv
@@ -43,7 +45,8 @@ work/linux-build/venv/bin/python tools/package_linux.py \
   --bundle work/linux-build/build-new/dist/bailong-linux \
   --destination work/linux-build/packages-new \
   --appimagetool /绝对路径/appimagetool-x86_64.AppImage \
-  --runtime /绝对路径/runtime-x86_64
+  --runtime /绝对路径/runtime-x86_64 \
+  --name Bailong-1.4.2-linux-preview.5-x86_64
 ```
 
 两个构建命令均拒绝覆盖已有目标目录。打包过程不会安装到系统或调用 Windows 构建脚本。

@@ -4,7 +4,7 @@
 
 包内提供 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端，启动时自动识别，也可指定 `--desktop niri` 或 `--desktop kde`。KDE 维护者已完成合并修复后的实机测试；本次新包在 CachyOS/niri 验证，维护者反馈不等同于新包的 KDE 安装验收。KDE 的环境要求见 [KDE 说明](https://github.com/helantianshen/codex-bailong-desktop-pet/blob/main/docs/KDE.md)。
 
-本版在 Ubuntu 22.04 构建，包体运行验收环境为 CachyOS/Arch x86_64。包含 Python 3.12、Qt 与完整轻量素材（45 个文件、35 个动作，含独立走路动画），不需要激活虚拟环境或安装系统 Python 包。其他发行版仍须验证运行库兼容性。
+本版在 CachyOS x86_64 本机构建并验收，面向已更新的 CachyOS/Arch 系统。包内运行库要求 **glibc 2.44 或更高版本**；可用 `getconf GNU_LIBC_VERSION` 检查宿主版本。包含 Python 3.12、Qt 与完整轻量素材（45 个文件、35 个动作，含独立走路动画），不需要激活虚拟环境或安装系统 Python 包。其他发行版仍须验证运行库兼容性。
 
 便携包解压后执行 `./AppRun`；AppImage 先 `chmod +x 文件名.AppImage`，再执行它。也可使用 `--appimage-extract-and-run` 绕过 FUSE 挂载，但会产生临时解压开销。
 
@@ -28,7 +28,7 @@ Linux 程序通过手动替换 AppImage 或便携目录更新，保留用户数�
 
 ## 构建
 
-构建环境独立于开发 `.venv`，所有依赖只装入仓库忽略目录。先检查 `command -v ldd`，确保打包器使用宿主系统工具；自定义工具链中的 `ldd` 可能漏识别 Qt 运行库。如本机工具链覆盖了系统工具，可仅为构建命令设置 `PATH=/usr/bin:/bin`，不修改全局 PATH。公开交付使用下方 Ubuntu 22.04 工作流，避免绑定构建主机过新的 glibc。
+构建环境独立于开发 `.venv`，所有依赖只装入仓库忽略目录。先检查 `command -v ldd`，确保打包器使用宿主系统工具；自定义工具链中的 `ldd` 可能漏识别 Qt 运行库。如本机工具链覆盖了系统工具，可仅为构建命令设置 `PATH=/usr/bin:/bin`，不修改全局 PATH。本版公开交付沿用本机构建与上传流程；下方 CI 构建用于独立验证，其产物不等同于本版 Release 附件。
 
 ```sh
 uv venv --python 3.12 work/linux-build/venv
@@ -59,4 +59,4 @@ work/linux-build/venv/bin/python tools/package_linux.py \
 
 在 Actions 中选择 `Build Linux packages` → `Run workflow`，选定分支后手动构建。工作流按素材清单下载并逐文件验证轻量素材，按锁文件验证 AppImage 工具，然后生成便携 tar.zst、AppImage 和 SHA256SUMS.txt。文件名包含源码提交的前 12 位，成功后从该次运行的 Artifacts 下载，保留 7 天；下载 AppImage 后需赋予执行权限。此工作流只保存 CI 产物，不创建或覆盖 Release。
 
-CI 会验证归档载荷，在源码目录外执行两种包的 `--help`，并用 Xvfb 和空 Codex 目录检查冻结程序的 xcb 窗口启动与正常退出。Ubuntu runner 没有真实 niri 会话与 Codex 账户，这些检查不能替代拖动、走动、面板定位及真实数据接入验收。采用 Ubuntu 22.04 构建基线也不代表已经支持 GNOME 或所有 Linux 发行版。
+CI 会验证归档载荷，在源码目录外执行两种包的 `--help`，并用 Xvfb 和空 Codex 目录检查冻结程序的 xcb 窗口启动与正常退出。Ubuntu runner 没有真实 niri 会话与 Codex 账户，这些检查不能替代拖动、走动、面板定位及真实数据接入验收。CI 的 Ubuntu 22.04 产物还需在目标发行版检查外部程序启动及证书路径；不能只凭构建成功就作为跨发行版交付。

@@ -76,7 +76,7 @@ uv pip install --python .venv/bin/python -r requirements-linux.txt
 
 系统需有 niri/Wayland（niri 后端）或 KDE/XWayland（KDE 后端），以及 bubblewrap 的 `bwrap`。没有 bwrap 时拒绝启动，不回退到无隔离的额度查询。数据读取继续使用真实 Unix IPC、只读 SQLite 和会话日志；额度 app-server 只能读取真实配置和认证文件，运行时写入临时挂载，代码位于 `linux_app/codex_readonly`。
 
-当前 1.4.1 沿用 1.3.0 的匹配素材，旧版 32 文件素材包不能用于人物验收。首次启动可先使用卡片，在设置的“动画待补齐”或“素材”页主动下载；程序不会自动下载大体积动画。也可下载[1.3.0 轻量动画](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)（约 1.04 GB）后导入独立验证目录：
+当前 1.4.2 沿用 1.3.0 的匹配素材，旧版 32 文件素材包不能用于人物验收。首次启动可先使用卡片，在设置的“动画待补齐”或“素材”页主动下载；程序不会自动下载大体积动画。也可下载[1.3.0 轻量动画](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.3.0/bailong-desktop-pet-1.3.0-animation-light.zip)（约 1.04 GB）后导入独立验证目录：
 
 ```sh
 .venv/bin/python tools/linux_probe.py materials /绝对路径/bailong-desktop-pet-1.3.0-animation-light.zip

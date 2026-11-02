@@ -25,7 +25,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 bubblewrap zstd squashfs-tools
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 bubblewrap zstd squashfs-tools \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-shape0 libxcb-util1 libxcb-xkb1 xvfb
           python -m pip install -r tools/requirements-linux-build.txt
       - name: Check Linux adapters and shared data handling
         run: python tools/check_source.py test_source_checks test_linux_updates test_linux_drag_panel test_linux_ui test_linux_codex_integration test_soft_curves_navigation.NavigationTests test_conversation_navigation.NameNavigationTests.test_clicking_each_name_emits_exact_id_without_expanding_or_marking_read test_linux_codex_watch test_linux_autostart test_linux_wayland_input test_linux_entrypoints test_linux_launcher test_linux_backends test_linux_kde test_linux_readonly test_linux_placement test_linux_surfaces test_linux_walk test_linux_niri test_reset_watch test_reset_recovery test_reset_presentation test_refresh_flow test_material_recovery test_codex_close test_runtime_activity test_transition_recovery test_large_card_layout test_large_card_morph test_large_chat_ui test_settings_presentation test_live_rate_hover test_locomotion test_upgrade_settings test_app_updates test_animation_updates test_update_integration test_material_publication test_material_store test_material_controller test_material_incremental test_program_updates
@@ -87,6 +89,44 @@ jobs:
                   actual = hashlib.file_digest(stream, 'sha256').hexdigest()
               if actual != expected:
                   raise ValueError('归档载荷 SHA256 不匹配：' + name)
+          PY
+          xvfb-run -a python - <<'PY'
+          import json
+          from pathlib import Path
+          import subprocess
+          import time
+
+          # 使用空 Codex 目录验证冻结程序的 xcb 库装载，不访问真实账号
+          home = Path('empty-codex').resolve()
+          home.mkdir()
+          state = Path('smoke-state').resolve()
+          with Path('xcb-smoke.log').open('w+') as log:
+              child = subprocess.Popen(['./bailong-linux/AppRun', '--desktop', 'kde',
+                  '--codex-home', str(home), '--codex-cli', '/bin/true', '--data-dir', str(state)],
+                  stdout=log, stderr=subprocess.STDOUT)
+              try:
+                  deadline = time.monotonic() + 40
+                  runtime = state / 'BailongEnhanced/runtime.json'
+                  while time.monotonic() < deadline:
+                      if child.poll() is not None:
+                          raise RuntimeError('冻结程序在 xcb 初始化期间退出')
+                      if runtime.exists() and json.loads(runtime.read_text()).get('visible'):
+                          break
+                      time.sleep(.5)
+                  else:
+                      raise RuntimeError('冻结程序未显示人物窗口')
+              finally:
+                  child.terminate()
+                  try:
+                      child.wait(timeout=20)
+                  except subprocess.TimeoutExpired:
+                      child.kill()
+                      child.wait(timeout=5)
+              log.seek(0)
+              output = log.read()
+              print(output)
+              if child.returncode or '（kde/xcb）' not in output or 'Traceback' in output:
+                  raise RuntimeError('冻结程序 xcb 启动或退出异常')
           PY
       - uses: actions/upload-artifact@v4
         with:

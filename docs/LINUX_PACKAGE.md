@@ -59,4 +59,4 @@ work/linux-build/venv/bin/python tools/package_linux.py \
 
 在 Actions 中选择 `Build Linux packages` → `Run workflow`，选定分支后手动构建。工作流按素材清单下载并逐文件验证轻量素材，按锁文件验证 AppImage 工具，然后生成便携 tar.zst、AppImage 和 SHA256SUMS.txt。文件名包含源码提交的前 12 位，成功后从该次运行的 Artifacts 下载，保留 7 天；下载 AppImage 后需赋予执行权限。此工作流只保存 CI 产物，不创建或覆盖 Release。
 
-CI 会验证归档载荷，并在源码目录外执行两种包的 `--help`。Ubuntu runner 没有真实 niri 会话与 Codex 账户，这些检查不能替代拖动、走动、面板定位及真实数据接入验收。采用 Ubuntu 22.04 构建基线也不代表已经支持 GNOME 或所有 Linux 发行版。
+CI 会验证归档载荷，在源码目录外执行两种包的 `--help`，并用 Xvfb 和空 Codex 目录检查冻结程序的 xcb 窗口启动与正常退出。Ubuntu runner 没有真实 niri 会话与 Codex 账户，这些检查不能替代拖动、走动、面板定位及真实数据接入验收。采用 Ubuntu 22.04 构建基线也不代表已经支持 GNOME 或所有 Linux 发行版。

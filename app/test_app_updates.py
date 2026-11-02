@@ -106,6 +106,38 @@ class StagingTests(unittest.TestCase):
         paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20])
         with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=lambda *args:Response(self.bytes[20:],206,{'Content-Range':f'bytes 20-21/{len(self.bytes)}'}))
         self.assertEqual(paths['part'].read_bytes(),self.bytes[:20])
+    def test_failed_full_retry_keeps_partial_and_stops_after_one_retry(self):
+        """续传和完整请求都失败时保留原片段，重复 HTTP 错误不能形成重试循环"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);calls=[]
+        def rejected(url,headers=None):
+            """两次请求均失败，检查回退仍绑定同一发布地址"""
+            self.assertEqual(url,self.release.download_url);calls.append(dict(headers or {}))
+            raise urllib.error.HTTPError(url,416,'unavailable',{},None)
+        with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=rejected)
+        self.assertEqual(calls,[{'Range':'bytes=20-'},{}])
+        self.assertEqual(paths['part'].read_bytes(),self.bytes[:20]);self.assertFalse(paths['installer'].exists())
+    def test_cancel_after_range_rejection_keeps_partial_without_full_request(self):
+        """服务器拒绝续传时若已取消，不再发完整请求或清空已有片段"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);cancelled=threading.Event();calls=[]
+        def rejected(url,headers=None):
+            """在首个响应失败时模拟用户取消"""
+            calls.append(dict(headers or {}));cancelled.set()
+            raise urllib.error.HTTPError(url,405,'no ranges',{},None)
+        with self.assertRaises(UpdateCancelled):stage_installer(self.release,self.cache,cancel=cancelled.is_set,opener=rejected)
+        self.assertEqual(calls,[{'Range':'bytes=20-'}]);self.assertEqual(paths['part'].read_bytes(),self.bytes[:20])
+        self.assertFalse(paths['installer'].exists())
+    def test_full_retry_rejects_same_size_corrupt_archive(self):
+        """完整回退仍需 SHA-256 相符，等长坏包不能被暂存为可安装程序"""
+        paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20]);calls=[]
+        corrupted=bytes([self.bytes[0]^1])+self.bytes[1:]
+        def fetch(url,headers=None):
+            """模拟拒绝续传后返回等长但被篡改的归档"""
+            self.assertEqual(url,self.release.download_url);calls.append(dict(headers or {}))
+            if headers and headers.get('Range'):raise urllib.error.HTTPError(url,400,'no ranges',{},None)
+            return Response(corrupted)
+        with self.assertRaisesRegex(UpdateError,'校验未通过'):stage_installer(self.release,self.cache,opener=fetch)
+        self.assertEqual(calls,[{'Range':'bytes=20-'},{}])
+        for name in ('part','archive','installer','receipt'):self.assertFalse(paths[name].exists())
     def test_invalid_content_range_does_not_append_wrong_bytes(self):
         paths=cache_paths(self.cache,'0.7.3');paths['part'].write_bytes(self.bytes[:20])
         with self.assertRaises(UpdateError):stage_installer(self.release,self.cache,opener=lambda *args:Response(self.bytes,206,{'Content-Range':'bytes 0-4/5'}))
@@ -141,6 +173,10 @@ class StagingTests(unittest.TestCase):
         prune_completed(self.cache,'0.7.3');self.assertFalse(paths['receipt'].parent.exists())
 
 class ControllerTests(unittest.TestCase):
+    def setUp(self):
+        """Windows 程序更新场景显式提供平台能力，不依赖执行测试的系统"""
+        support=patch('app_updates.program_updates_supported',return_value=True)
+        support.start();self.addCleanup(support.stop)
     def wait(self,condition):
         deadline=time.monotonic()+3
         while not condition():APP.processEvents();time.sleep(.003);self.assertLess(time.monotonic(),deadline)

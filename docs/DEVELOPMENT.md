@@ -2,6 +2,8 @@
 
 开工先阅读 [维护与防错规范](../维护与防错规范.md)；涉及界面或人物动效时同时阅读 [动画制作规范](../动画制作规范.md)。[验证入口索引](维护规范验证入口.md)列出公开测试与需要开发素材的边界。
 
+Linux 使用独立入口：niri 为 `run_niri.py`，KDE Plasma 为 `run_kde.py`，`run_linux.py` 自动选择后端；平台适配位于 `linux_app/`。安装 `requirements-linux.txt`，按 [Linux 说明](LINUX.md)准备匹配当前源码目录的素材；[KDE 说明](KDE.md)和[Linux 包体说明](LINUX_PACKAGE.md)分别记录桌面与已发布包体的边界。下文的 Windows 安装、迁移和程序更新流程不适用于 Linux。
+
 Windows x64，Python 3.12（当前本地冻结环境为3.12.14）。先安装 requirements-enhanced.txt，所有命令从仓库根目录执行。原项目与授权边界见根目录 NOTICE.md。
 
 ## 准备动画

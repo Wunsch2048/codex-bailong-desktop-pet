@@ -1,0 +1,13 @@
+// 仅桌宠原始透明画布免于合成器装饰，其他应用外观不受影响
+window-rule {
+    match app-id="^bailong-linux(-probe)?$"
+    open-floating true
+    opacity 1.0
+    geometry-corner-radius 0
+    clip-to-geometry false
+    draw-border-with-background false
+    focus-ring { off; }
+    border { off; }
+    shadow { off; }
+    background-effect { blur false; xray false; }
+}

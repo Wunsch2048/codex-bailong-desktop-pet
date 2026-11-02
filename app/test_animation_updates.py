@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from PIL import Image
-from app_updates import API,REPOSITORY,UpdateError,UpdateCancelled,check_release,parse_release
+from app_updates import API,REPOSITORY,NoRelease,UpdateError,UpdateCancelled,check_release,parse_release
 from animation_updates import commit,effective_version,load_override,stage,validate_catalog
 from material_store import MaterialStore
 
@@ -40,6 +40,53 @@ class AnimationUpdateTests(unittest.TestCase):
         if url.endswith('/latest/download/SHA256SUMS.txt'):return Response((self.dest/'SHA256SUMS.txt').read_bytes())
         return Response((self.dest/url.rsplit('/',1)[-1]).read_bytes())
     def release(self):return check_release('1.0.5',self.opener,app_root=self.app,state_dir=self.state)
+    def test_animation_capability_ignores_joint_program_assets_in_both_channels(self):
+        """联合发布在动画模式下不读取 Windows 程序描述或载荷"""
+        for suffix in ('program.json','program.zip','windows-x64.zip'):
+            name=f'bailong-desktop-pet-{self.version}-{suffix}'
+            raw=b'Windows package must not be read'
+            self.payload['assets'].append(dict(name=name,state='uploaded',size=len(raw),digest='sha256:'+hashlib.sha256(raw).hexdigest(),browser_download_url=self.url(name)))
+            with (self.dest/'SHA256SUMS.txt').open('a') as sums:sums.write(hashlib.sha256(raw).hexdigest()+'  '+name+'\n')
+        for limited in (False,True):
+            with self.subTest(limited=limited):
+                calls=[]
+                def opener(url,headers=None):
+                    """模拟 API 限流并拒绝任何 Windows 载荷访问"""
+                    calls.append(url)
+                    self.assertNotIn('-program.',url);self.assertNotIn('-windows-x64.zip',url)
+                    if limited and url==API:raise HTTPError(url,429,'limited',{},None)
+                    return self.opener(url,headers)
+                release=check_release('1.0.5',opener,app_root=self.app,state_dir=self.state,program_version='1.0.5',allow_program=False)
+                self.assertEqual(release.kind,'animation');self.assertIsNone(release.fallback)
+                self.assertEqual(release.minimum_program_version,'1.0.5')
+                self.assertTrue(release.asset_name.endswith('-animation-light.zip'))
+                with self.assertRaisesRegex(UpdateError,'先更新程序'):
+                    check_release('1.0.4',opener,app_root=self.app,state_dir=self.state,program_version='1.0.4',allow_program=False)
+
+    def test_animation_attachment_error_keeps_linux_filter_and_does_not_retry_release(self):
+        """动画描述或校验清单不可用时报告附件错误，联合发布中的程序附件仍不可读取"""
+        for suffix in ('program.json','program.zip','windows-x64.zip'):
+            name=f'bailong-desktop-pet-{self.version}-{suffix}'
+            self.payload['assets'].append(dict(name=name,state='uploaded',size=100,digest='sha256:'+'a'*64,browser_download_url=self.url(name)))
+        animation=next(a for a in self.payload['assets'] if a['name'].endswith('-animation.json'))
+        for missing in ('descriptor','checksum'):
+            for code in (403,404,429):
+                animation['digest']='' if missing=='checksum' else 'sha256:'+hashlib.sha256((self.dest/animation['name']).read_bytes()).hexdigest()
+                expected=self.url('SHA256SUMS.txt' if missing=='checksum' else animation['name']);calls=[]
+                def unavailable(url,headers=None):
+                    """仅 API 和预期的动画附件可被请求，拒绝绕到程序或备用通道"""
+                    calls.append(url)
+                    if url==API:return self.opener(url,headers)
+                    self.assertEqual(url,expected)
+                    raise HTTPError(url,code,'attachment unavailable',{},None)
+                with self.subTest(missing=missing,code=code),patch('app_updates.release_without_api') as fallback:
+                    with self.assertRaises(UpdateError) as failure:
+                        check_release('1.0.5',unavailable,app_root=self.app,state_dir=self.state,program_version='1.0.5',allow_program=False)
+                    self.assertNotIsInstance(failure.exception,NoRelease)
+                    self.assertIn('附件',str(failure.exception));fallback.assert_not_called()
+                    self.assertEqual(calls,[API,expected])
+        self.assertFalse((self.state/'animation-release.json').exists())
+
     def test_pure_animation_staging_commit_restart_and_rollback_retains_old_files(self):
         release=self.release();self.assertEqual(release.kind,'animation')
         self.assertTrue(release.asset_name.endswith('-animation-light.zip'))

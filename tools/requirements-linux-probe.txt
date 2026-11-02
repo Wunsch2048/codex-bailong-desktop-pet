@@ -1,0 +1,2 @@
+# 验证入口与正式 Linux 入口共用依赖
+-r ../requirements-linux.txt

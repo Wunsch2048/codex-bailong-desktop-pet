@@ -22,12 +22,13 @@ class LaunchTests(unittest.TestCase):
             with self.subTest(policy=policy,success=success),patch('ctypes.WinDLL',return_value=api):
                 self.assertEqual(independent_creationflags(0x08000000),expected)
     def test_codex_listener_launch_is_independent_and_drops_install_nonce(self):
+        """监听独立启动且不继承安装交接参数，失败时不输出完整环境"""
         import codex_startup
         with patch.dict(os.environ,BAILONG_DEPLOY_TOKEN='test-nonce',BAILONG_DEPLOY_RECEIPT='test-receipt'),patch('process_launch.launch_own') as start:
             codex_startup.spawn(['pet.exe','--watch-codex'])
         self.assertTrue(start.call_args.kwargs['independent'])
-        self.assertNotIn('BAILONG_DEPLOY_TOKEN',start.call_args.kwargs['env'])
-        self.assertNotIn('BAILONG_DEPLOY_RECEIPT',start.call_args.kwargs['env'])
+        for key in ('BAILONG_DEPLOY_TOKEN','BAILONG_DEPLOY_RECEIPT'):
+            self.assertFalse(key in start.call_args.kwargs['env'],key)
     def test_independent_launch_preserves_existing_flags_and_environment(self):
         with patch('process_launch.independent_creationflags',return_value=0x09000000) as flags,patch('subprocess.Popen') as start:
             launch_own(['pet.exe','--watch-codex'],independent=True,creationflags=0x08000000)
@@ -39,10 +40,11 @@ class LaunchTests(unittest.TestCase):
             launch_own(['helper.exe'],creationflags=0x08000000)
         flags.assert_not_called()
     def test_first_upgrade_repairs_legacy_parent_qt_plugin_paths(self):
+        """Windows 冻结环境必须移除旧 Qt 插件路径，失败只报告变量名"""
         from process_launch import configure_frozen_qt
         with patch.object(sys,'frozen',True,create=True),patch.object(sys,'_MEIPASS',str(Path.cwd()/'new-runtime'),create=True),patch.dict(os.environ,{'QT_QPA_PLATFORM_PLUGIN_PATH':'old-runtime','QT_PLUGIN_PATH':'old-runtime'}),patch('PySide6.QtCore.QCoreApplication.setLibraryPaths') as set_paths:
             configure_frozen_qt()
-            self.assertNotIn('QT_QPA_PLATFORM_PLUGIN_PATH',os.environ)
+            self.assertFalse('QT_QPA_PLATFORM_PLUGIN_PATH' in os.environ,'QT_QPA_PLATFORM_PLUGIN_PATH')
             self.assertEqual(os.environ['QT_PLUGIN_PATH'],str(Path(sys._MEIPASS)/'PySide6/plugins'))
             set_paths.assert_called_once_with([os.environ['QT_PLUGIN_PATH']])
     def test_clean_environment_does_not_drop_account_network_or_receipt(self):

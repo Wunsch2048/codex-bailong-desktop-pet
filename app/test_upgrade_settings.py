@@ -22,7 +22,8 @@ def preferences(mode='minimal',action='website',theme='cyber'):
 
 class UpgradeSettingsTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        """使用规范临时路径，避免 Windows 短目录名影响备份恢复校验"""
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
     def tearDown(self):self.temp.cleanup()
     def assert_preferences(self,raw,value):
         for key in KEYS:self.assertEqual(value.get(key),raw.get(key),key)
@@ -71,6 +72,36 @@ class UpgradeSettingsTests(unittest.TestCase):
         self.assertEqual(config.read_bytes(),before)
     def test_public_zip_upgrade_and_backup_preserve_other_machine_settings(self):self.deploy()
     def test_program_directory_upgrade_and_backup_preserve_other_machine_settings(self):self.deploy(True)
+    def test_restore_rejects_traversal_outside_backup_and_corrupt_bytes(self):
+        """路径别名兼容不能放过越界或摘要错误，拒绝时保留当前设置"""
+        from directory_deploy import backup_data,restore_data
+        install=self.root/'install';install.mkdir()
+        data=self.root/'data';data.mkdir();settings=data/'settings.json'
+        settings.write_text('{"theme":"cyber"}',encoding='utf-8')
+        backup=backup_data(data,install,'previous')
+        settings.write_text('{"theme":"teal"}',encoding='utf-8');before=settings.read_bytes()
+        for path in (backup/'..'/backup.name,self.root,backup.parent):
+            with self.subTest(path=path),self.assertRaises(ValueError):restore_data(data,path,install)
+            self.assertEqual(settings.read_bytes(),before)
+        (backup/'settings.json').write_bytes(b'x'*len((backup/'settings.json').read_bytes()))
+        with self.assertRaisesRegex(ValueError,'校验失败'):restore_data(data,backup,install)
+        self.assertEqual(settings.read_bytes(),before)
+
+    @unittest.skipIf(os.name=='nt','POSIX symbolic links')
+    def test_restore_rejects_symbolic_backup_and_linked_parent(self):
+        """解析规范路径前拒绝备份及父目录链接，不能借链接进入合法目录"""
+        from directory_deploy import backup_data,restore_data
+        install=self.root/'install';install.mkdir()
+        data=self.root/'data';data.mkdir();settings=data/'settings.json'
+        settings.write_text('{"theme":"cyber"}',encoding='utf-8')
+        backup=backup_data(data,install,'previous')
+        direct=backup.parent/'alias';direct.symlink_to(backup,target_is_directory=True)
+        parent=self.root/'linked-install';parent.symlink_to(install,target_is_directory=True)
+        settings.write_text('{"theme":"teal"}',encoding='utf-8');before=settings.read_bytes()
+        for path in (direct,parent/'deployment-backups'/backup.name):
+            with self.subTest(path=path),self.assertRaises(ValueError):restore_data(data,path,install)
+            self.assertEqual(settings.read_bytes(),before)
+
     @unittest.skipUnless(os.name=='nt','Windows short path aliases')
     def test_verified_backup_restores_through_windows_short_path_alias(self):
         import ctypes,directory_deploy

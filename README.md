@@ -24,10 +24,29 @@
 
 | 平台 | 入口与维护者 | 当前说明的支持范围 |
 | --- | --- | --- |
-| Linux / Niri / KDE | [helantianshen 的社区仓库](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 预览版；KDE Plasma X11 / XWayland 源码支持，限制见作者说明 |
+| Linux / Niri / KDE | [helantianshen 的社区仓库](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 与 KDE Plasma X11 / XWayland 社区预览版，环境要求与验收范围见说明 |
 | macOS / Apple Silicon | [Kki1ds 的社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet) / [下载页面](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases) | Apple Silicon 的 DMG 社区版；未公证，无应用内更新，最新版本、支持范围与限制以作者仓库说明为准 |
 
 社区版本由对应作者独立维护、测试和发布，安装说明与平台问题反馈请前往对应仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
+
+## Linux / niri / KDE
+
+当前社区预览版为 **v1.4.2-linux-preview.5**，程序基于上游 **1.4.2**。本版包含 KDE 动画换帧后的鼠标命中修复、niri 卡片绘制与拖动定位修复，以及完整轻量人物素材（45 个文件、35 个动作）。
+
+下载：[AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/Bailong-1.4.2-linux-preview.5-x86_64.AppImage)、[便携 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/Bailong-1.4.2-linux-preview.5-x86_64.tar.zst)、[SHA-256](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/SHA256SUMS.txt)。更新内容、验证范围及限制见[本版说明](docs/releases/v1.4.2-linux-preview.5.md)和[Release 页面](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5)。
+
+本版在 CachyOS x86_64 本机构建并验收，面向已更新的 CachyOS/Arch 系统，要求 **glibc 2.44 或更高版本**。提供 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端。KDE 修复已由维护者实测；新包的运行检查在 niri 完成，其他发行版及 KDE 新包实装范围见说明。
+
+| 桌面 | 源码入口 |
+| --- | --- |
+| niri 原生 Wayland | `.venv/bin/python run_niri.py` |
+| KDE Plasma X11 / XWayland | `.venv/bin/python run_kde.py` |
+
+`run_linux.py` 自动选择后端，也可显式指定。依赖、素材及运行步骤见 [Linux 说明](docs/LINUX.md)、[KDE 说明](docs/KDE.md)和[包体说明](docs/LINUX_PACKAGE.md)。当前适配不代表支持所有 Linux 桌面或发行版。
+
+Linux 程序通过手动替换 AppImage 或便携目录更新，切换前退出旧实例。设置和统计保存在 `${XDG_DATA_HOME:-~/.local/share}/codex-bailong/BailongEnhanced`，已有用户选择保留。动画可在维护页独立更新；上游 Windows 安装器和程序更新附件不适用于 Linux。声音、聊天密钥保存、原生 KDE Wayland 及全屏让位等限制见各桌面说明。
+
+## Windows 当前版本与历史更新
 
 ### v1.4.2 下载与人物素材补齐修复
 

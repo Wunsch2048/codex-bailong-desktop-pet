@@ -1,242 +1,81 @@
 # Codex&GPT桌宠数据中心 | 你桌面的龙娘小助手
 
-![文章海报](docs/media/cover.png)
+在桌面查看 Codex 任务状态、完成提醒、账户额度和 Token 用量，也可以让白龙陪你一起工作。支持仅卡片使用，人物动画按需下载。
 
-一只陪你使用 Codex 的 Windows 白龙桌宠：在桌面查看任务状态、接收完成提醒、追踪账户额度和 Token 用量。基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 持续改造，当前公开版本 **v1.4.2**。
+**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.4.2/bailong-desktop-pet-1.4.2-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
 
-**[首次安装：在线安装器 1.4.2](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.4.2/bailong-desktop-pet-1.4.2-setup.exe)** | [程序更新包](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest) | [快速部署](docs/快速部署说明.txt) | [全部新增功能](docs/新增功能说明.txt) | [开发说明](docs/DEVELOPMENT.md) | [迭代历史](docs/迭代历史.txt)
+Windows 当前公开版 **v1.4.2**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
 
-在线安装器直接下载并校验最新累计程序，不必先安装旧基础版。程序不含人物动画，可在设置中按需下载轻量或高清资源；升级保留设置、统计和素材偏好。
+## 主要功能
 
-## 安全反馈进展
+- **任务联动**：查看思考、编辑、命令执行等状态，接收完成提醒，点击会话名跳转。
+- **额度与统计**：额度环、重置倒计时、Token 柱线图、实时速率、日报和项目成本估算。
+- **桌宠与卡片**：胶囊、正常卡片和大卡片切换；35 个动作、贴边收纳、四种走动方式及八套主题。
+- **日常使用**：托盘找回、全屏让位、集成闲聊、连接诊断、应用内更新和版本回退。
 
-**2026 年 11 月 1 日更新：微软复核已完成，已移除本次提交样本的检测。**
+<details>
+<summary>查看界面与动效</summary>
 
-此前 Microsoft Defender 将所提交的 `bailongenhanced-1.2.1.exe` 检测为 `Trojan:Win32/Bearfoos.A!ml`。提交记录现已显示 **Completed**；微软分析意见说明，该文件不符合其对恶意软件或潜在不需要应用的判定标准，并已移除检测。
+![状态卡片](docs/media/update-1.4.0/status-bailong.png)
 
-<img src="docs/media/security/defender-1.2.1-review-redacted.png" alt="微软对1.2.1提交样本的复核结果，敏感字段已遮挡" width="560">
-
-*用户提供的复核结果截图，经 AI 脱敏及版面整理；邮箱、提交编号和精确提交时间已遮挡，判定文字已对照原图核对。*
-
-这个结论针对本次提交的 1.2.1 文件，不自动适用于后续版本、其他文件或卡巴斯基的检测。卡巴斯基反馈仍在跟进。若 Defender 仍显示旧检测，请先更新安全情报，并保留新的检测详情；不以关闭防护或添加排除项作为安装要求。相关记录见 [#19](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/19) 和 [#1](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/1)。
-
-## 社区版本
-
-| 平台 | 入口与维护者 | 当前说明的支持范围 |
-| --- | --- | --- |
-| Linux / Niri / KDE | [Linux预览版（社区维护，源码已合入）](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) | niri 原生 Wayland 与 KDE Plasma X11 / XWayland 社区预览版，环境要求与验收范围见说明 |
-| macOS / Apple Silicon | [Kki1ds 的社区仓库](https://github.com/Kki1ds/codex-bailong-desktop-pet) / [下载页面](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases) | Apple Silicon 的 DMG 社区版；未公证，无应用内更新，最新版本、支持范围与限制以作者仓库说明为准 |
-
-Linux适配源码已合入本仓库，Linux预览包及macOS社区版仍由对应作者维护、测试和发布；下载、安装说明与平台问题反馈请前往对应社区仓库。主仓库发布的安装包和更新补丁适用于 Windows x64。
-
-## Linux / niri / KDE
-
-Linux适配源码已合入主分支；下列预览包继续由社区作者维护和发布。
-
-当前社区预览版为 **v1.4.2-linux-preview.5**，程序基于上游 **1.4.2**。本版包含 KDE 动画换帧后的鼠标命中修复、niri 卡片绘制与拖动定位修复，以及完整轻量人物素材（45 个文件、35 个动作）。
-
-下载：[AppImage](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/Bailong-1.4.2-linux-preview.5-x86_64.AppImage)、[便携 tar.zst](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/Bailong-1.4.2-linux-preview.5-x86_64.tar.zst)、[SHA-256](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/download/v1.4.2-linux-preview.5/SHA256SUMS.txt)。更新内容、验证范围及限制见[本版说明](docs/releases/v1.4.2-linux-preview.5.md)和[Release 页面](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5)。
-
-本版在 CachyOS x86_64 本机构建并验收，面向已更新的 CachyOS/Arch 系统，要求 **glibc 2.44 或更高版本**。提供 niri 原生 Wayland 与 KDE Plasma X11/XWayland 后端。KDE 修复已由维护者实测；新包的运行检查在 niri 完成，其他发行版及 KDE 新包实装范围见说明。
-
-| 桌面 | 源码入口 |
-| --- | --- |
-| niri 原生 Wayland | `.venv/bin/python run_niri.py` |
-| KDE Plasma X11 / XWayland | `.venv/bin/python run_kde.py` |
-
-`run_linux.py` 自动选择后端，也可显式指定。依赖、素材及运行步骤见 [Linux 说明](docs/LINUX.md)、[KDE 说明](docs/KDE.md)和[包体说明](docs/LINUX_PACKAGE.md)。当前适配不代表支持所有 Linux 桌面或发行版。
-
-Linux 程序通过手动替换 AppImage 或便携目录更新，切换前退出旧实例。设置和统计保存在 `${XDG_DATA_HOME:-~/.local/share}/codex-bailong/BailongEnhanced`，已有用户选择保留。动画可在维护页独立更新；上游 Windows 安装器和程序更新附件不适用于 Linux。声音、聊天密钥保存、原生 KDE Wayland 及全屏让位等限制见各桌面说明。
-
-## Windows 当前版本与历史更新
-
-### v1.4.2 下载与人物素材补齐修复
-
-- 修复 #24：素材页不再指向失效旧标签，恢复已公开动画地址与归档校验信息；完整动画无需重下。
-- 修复截断轻量文件误判就绪，缺资源时沿用已保存的画质。
-- 改善程序续传被拒后的重试及附件错误提示，重新生成支持坏下载缓存重试的在线安装器。
-
-[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.4.2) | [版本文档](docs/releases/v1.4.2.md)
-
-程序为累计更新，人物资源仍沿用 v1.3.0；先更新程序，再到素材页补齐缺项。
-
-### v1.4.1 人物资源恢复与启动联动修复（历史）
-
-- 修复人物开启但资源未就绪的兼容路径：完整旧资源本地校验恢复；缺文件时提供“动画待补齐”入口，复用已有文件再补齐。
-- 不自动下载大动画包，保留旧资源、主动仅卡片、画质与隐藏面板选择。
-- 修复桌宠/监听随宿主回收，以及切换开关或WSL后旧结果误触发跟随关闭的问题。
-
-[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.4.1) | [版本文档](docs/releases/v1.4.1.md)
-
-累计程序更新，现有完整动画继续使用。修复说明与验证范围见版本文档，安全软件反馈仍单独跟进。
-
-![动画待补齐入口](docs/media/update-1.4.1/material-hint.png)
-
-配图使用隔离合成配置。
-
-### v1.4.0 大卡片改版与稳定性更新（历史）
-
-- 状态、聊天、设置统一整理，设置分类、按钮与说明更清楚。
-- 额度详情、Token 明细及重置公告局部切换，高度随内容平滑变化；聊天与设置保持固定布局。
-- 修复 #22 的失效控件捕获卡住，以及关闭面板后托盘设置/聊天入口无反应。
-- 改善实时速率悬停、任务状态与人物联动、页面切换和异常交接恢复。
-- 复用稳定界面内容、精简 Qt 可选依赖；修正长距离左右行走中夹入回正的循环片段。
-
-[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.4.0) | [版本文档](docs/releases/v1.4.0.md)
-
-这是累计程序更新。已有动画继续使用，无需重新下载；首次安装可使用顶部在线安装器，人物动画仍为可选。
-
-![新版状态卡片](docs/media/update-1.4.0/status-bailong.png)
-
-配图使用合成示例数据。
-
-### v1.3.0 程序与动画联合更新（历史）
-
-- 正常卡片实时速率、分会话悬停、用量与回合均速柱线图；历史悬停新增回合中位速率，缺样虚线和有效回合数区分未知与零。
-- 项目成本、会话迁移归属、昨日成本及明细页；修复旧索引膨胀并自动分批整理，保留统计和回退副本。
-- 八套主题、统一卡片与图表、贴边收纳、拖动收起及四种自主走动方式。
-- 轻量与高清资源均覆盖35个动作；一份完整动画包支持新下载和已校验文件的增量复用。
-- 新用户可直接取得最新程序；升级保留自定义按钮、胶囊形态、主题、统计与素材偏好。
-
-[下载与完整更新说明](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.3.0) | [版本文档](docs/releases/v1.3.0.md)
-
-这是累计程序更新，无需逐个安装历史补丁。已有用户先更新配套程序，再按需更新动画；仅卡片用户不需要动画。资源包最低程序版本为1.3.0。
-
-![实时速率与分会话悬停](docs/media/update-1.3.0/02-live-rate.png)
-
-配图使用合成示例数据，不含真实账号或会话记录。回合均速包含思考、工具与等待，不能单凭曲线判断服务端限速。
-
-### v1.2.1 程序补丁（历史）
-
-- 改善远控或屏幕缩放恢复后的角色清晰度，避免放大后仍使用低分辨率动画帧。
-- 顶栏按钮和托盘额度使用自定义悬停气泡，延迟显示、不抢焦点，数据面板不会遮挡按钮提示。
-- 正常卡片与详情中的共有模块连续移动，保留图表进度；修复多会话文字在过渡途中消失。
-- 减少重复快照绘制和隐藏页面的布局准备，保留原有防闪烁交接与高清素材。
-- 升级后的自启与 Codex 联动入口使用标准 Windows 快捷方式。旧安装器未更新，杀软反馈仍需进一步核实。
-
-[下载累计程序补丁 1.2.1](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.2.1) | [完整更新说明](docs/releases/v1.2.1.md)
-
-以上是历史版安装方式。当前安装与升级请使用页面顶部的最新入口。
-
-![卡片展开与收回](docs/media/card-transition-1.2.1.gif)
-
-动图使用隔离合成数据，不作为屏幕帧率证明。
-
-### v1.2.0 程序补丁（历史）
-
-- 新增可自定义的额度涨跌提醒，默认下降 10%、上涨 15%；周额度角标显示实际变化。
-- 修复程序目录迁移就绪回执不一致，以及重启后误拆额度周期、观察量和推测总量重新开始。
-- 托盘使用无数字额度环，升级继承常驻选择；可选同屏游戏或视频全屏时只留托盘。
-- 改善正常卡片与大卡片的首帧交接，Windows 设置历史托盘列表仍可能缓存残留。
-
-[下载累计程序补丁 1.2.0](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.2.0) | [完整更新说明](docs/releases/v1.2.0.md)
-
-以上是历史版本说明，当前安装请使用页面顶部的最新入口。
-
-![卡片切换演示](docs/media/card-transition-1.2.0.gif)
-
-动图使用隔离演示数据，不作为屏幕帧率证明。
-
-### v1.1.1 程序补丁（历史）
-
-- 修复长时间未打开后展开卡片、数据面板和胶囊展开正常卡片时的提前露帧。
-- 修复自动台词和点击台词被会话状态覆盖，并保留未读完成提醒。
-- 这是累计程序补丁，不含动画素材。
-
-[查看 v1.1.1 发布说明](docs/releases/v1.1.1.md)
-
-### v1.1.0 程序补丁（历史）
-
-- 首次安装可选程序目录，已有程序和已下载动画可分别迁移，升级与启动入口沿用新位置。
-- 修复重启后日志恢复误报“记录受限”、画质配置结构异常导致启动失败，以及孤立额度回升导致整轮暂停估算。
-- 改善久未打开卡片及内部切页时的跳闪，工作三球的最外层旋转调整为 2.5 倍，内部动作节拍不变。
-
-这是累计程序补丁，只需最新一份，无需逐个安装旧补丁；已有有效动画继续复用。详见[完整更新说明](docs/releases/v1.1.0.md)。
-
-| 工作状态动效 | 数据面板切换 |
-| --- | --- |
-| ![三球工作状态](docs/media/status-orbit-1.1.0.gif) | ![数据面板切换](docs/media/data-pages-1.1.0.gif) |
-
-动图为原生矢量合成时间及隔离窗口演示，不作为屏幕帧率证明。
-
-### v1.0.1 程序补丁（历史）
-
-- 额度对比按用量、总量变化和历史图分区，区分 5 个百分点估算门槛与 20 个百分点对比条件，完整规则按需展开。
-- 新增 [WSL Codex 接入](docs/WSL.md)，支持 Linux 日志、Token 与 CLI 额度查询；真实 WSL 实机验证仍待反馈。
-- 补齐程序与动画补丁的独立更新流程，修复额度对比切回概览时面板变短。
-
-[该历史版更新说明](docs/releases/v1.0.1.md)。当前安装请使用页面顶部的最新入口。
-
-![额度对比新排版](docs/media/quota-compare-1.0.1.png)
-
-### v1.0.0 更新
-
-- 加入历史额度周期对比，显示周期已用 Token 与按剩余额度推测的总量，并区分套餐切换和数据不足。
-- 桌宠自主移动衔接落地动画，水平范围可到屏幕两侧，减少在中间停留。
-- 优化设置控件、数据面板导航与窗口过渡，改善按钮描边和展开闪烁。
-- 支持仅安装卡片；动画可单独下载、启用或移除。
-- 提供完整 Windows 安装包、应用内程序更新包、仅卡片安装包和独立轻量动画资源。
-
-完整变化与安装方式见 [v1.0.0 更新说明](docs/releases/v1.0.0.md)。主仓库提供 Windows x64 版本；Linux 社区版和 macOS 移植信息见上方入口。
-## 桌面上可以做什么
-
-| 功能 | 实际表现 |
-| --- | --- |
-| Codex 实时状态 | 思考、编辑文件、运行命令、等待输入或审批、压缩上下文及完成；最多同时显示两个会话，更多会话轮换展示 |
-| 不容易错过的完成提醒 | 完成后感叹号轻晃，再静止保留；点击确认或在 Codex 实际查看回复后消除；子会话不会重复冒充主会话提醒 |
-| 会话跳转 | 点击气泡里的会话名，直接进入对应 Codex 对话 |
-| 胶囊与卡片 | 闲置自动缩小，也可保持小胶囊；点击展开正常卡片，详情、聊天和设置集成在面板内 |
-| 仅卡片安装 | 可不下载人物动画；之后可单独下载轻量或高清素材，也可移除动画保留卡片 |
-| 额度与重置 | 真实账户提供的 5 小时和周剩余额度、重置倒计时；胶囊显示一个开口弧额度圆 |
-| Token 统计 | 全部、30 天、7 天柱线图；今日 Token 可查看24小时，悬停查看用量、回合均速与样本 |
-| 独立日报 | 累计与昨日指标分组、昨日小时曲线、按模型筛选；27 本书的等量比较使用累计 Token 与真实文本计数估算 |
-| 额外重置公告 | 接入 Codex Resets 公告；网站公告与账户实际重置分别显示 |
-| 龙娘互动 | 35 段动作，两档资源都包含当前动作集；工作动作持续跟随稳定的 Codex 状态并自然收尾，自动动作静音 |
-| 全屏让位 | 可选视频让位，或同屏游戏/视频全屏时只留托盘；后者不会因完成提醒抢回显示，离开全屏恢复原偏好 |
-| 应用内更新 | 设置 → 维护 → 软件更新；自动只检查，手动下载安装，支持暂停续传与SHA-256校验 |
-| 日常使用 | 登录自启、托盘找回、连接诊断、自定义角色、集成闲聊、一键安装升级与回退 |
-
-### 实际界面与动效
-
-| 胶囊展开正常面板 | 日报展开与收回 |
+| 胶囊展开 | 日报展开与收回 |
 | --- | --- |
 | ![胶囊展开](docs/report/assets/胶囊展开正常.gif) | ![日报动效](docs/report/assets/日报展开收回.gif) |
 
-历史变化见[迭代历史](docs/迭代历史.txt)和[版本记录](docs/releases)。其中旧版包名与界面属于当时版本，安装请使用页面顶部的当前公开版本入口。
+配图使用合成示例数据，历史界面与当前版本可能略有区别。
 
-## 安装与首次连接
+</details>
 
-1. 下载页面顶部的在线安装器，运行后直接下载并校验当前最新程序。需要离线安装时，可从 [v1.4.0 发布页](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.4.0) 下载 `windows-x64.zip`，解压后运行其中的一键部署程序；其中不含人物动画。
-2. 安装器为当前 Windows 用户安装、校验并启动，无需 Python 或管理员权限。
-3. 在本机安装并登录 Codex，发送一次消息。桌宠会自动发现本机数据，通常不需要重启 Codex。
-4. 若没有数据，在“设置 → Codex → 检测连接与额度”检查各项能力；支持手动指定连接路径。
+[完整功能与使用说明](docs/使用说明.md) | [v1.4.2 更新说明](docs/releases/v1.4.2.md) | [全部版本记录](docs/releases)
 
-适用 **Windows x64**。新电脑必须使用自己的 Codex 登录；闲聊需要自行配置模型服务和密钥。新安装默认开启登录自启，可在设置关闭；升级保留原偏好。
+## 安装与连接
 
-安装目录：`%LOCALAPPDATA%\Programs\BailongEnhanced`。设置、聊天和统计目录：`%LOCALAPPDATA%\BailongEnhanced`。升级保留用户数据，安装管理提供回退及卸载入口。
+1. 运行顶部的 Windows 在线安装器，无需 Python 或管理员权限。
+2. 在本机安装并登录 Codex，发送一次消息，桌宠会自动发现本机数据。
+3. 需要人物时，在设置的素材页下载轻量或高清动画；只用卡片可以跳过。
+4. 没有数据时，打开“设置 → Codex → 检测连接与额度”。
 
-## 数据和能力的范围
+仅支持 Windows x64。离线安装、程序位置和数据目录见[快速部署](docs/快速部署说明.txt)；WSL 用户见 [WSL 接入](docs/WSL.md)。闲聊需要自行配置模型服务。
 
-- 额度来自本机登录的 Codex 账户，不代表 ChatGPT 网页全部模型的额度；未知数据不会当作 0%。
-- Token 图表只覆盖本机可读取的 Codex 日志，不能汇总其他电脑或未记录的消耗。缓存输入可能包含在总量中，不等于计费金额。
-- Codex Resets 是第三方公告来源，公告不代表你的账户已落实重置。
-- 会话状态、已读及压缩识别依赖 Codex 本机文件和实时通道；Codex 更新可能影响兼容性。
-- Firefox + B 站有真实全屏播放验证；其他浏览器和播放器依赖系统可访问性与窗口识别，尚未逐一实测。普通网页 F11 不应触发让位。
-- 原视频让位模式保留未读完成提醒优先；同屏游戏/视频隐藏模式只留托盘，完成提醒不会抢回人物或面板。手动关闭置顶后，提醒不会自动打开置顶。
-- 已接入走路、小跑、飞行与贴边动作；人物按动作匹配位移，长距离重复中段后接收尾。动画效果仍受原素材与显示环境影响。
-- 本地统计读取本机数据；额度、公告、闲聊分别访问相应服务。安装包不携带开发者的登录、API 密钥、会话记录或 Token 数据库。
+Token 与速率统计覆盖本机可读取的记录；项目成本是 API 等价估算，不是订阅实际扣费。更多口径见[使用说明](docs/使用说明.md#数据和能力的范围)。
 
-## 开发、报告与反馈
+## 其他平台
 
-- [从源码运行与构建](docs/DEVELOPMENT.md)：Python 3.12、PySide6、角色素材准备、验证和打包。
-- [通俗开发报告](docs/report/index.html)：下载仓库后用浏览器打开，可离线查看配图和 GIF；GitHub 页面展示 HTML 源码。
-- [新增功能说明](docs/新增功能说明.txt) 和 [完整迭代历史](docs/迭代历史.txt)：当前能力与已被替换方案分别记录。
-- 遇到问题请 [提交 Issue](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/new/choose)，附版本、系统缩放、操作步骤；请先去掉截图和日志里的私密信息。
+### Linux / niri / KDE
+
+Linux 适配源码已合入主分支，预览包由 [helantianshen](https://github.com/helantianshen/codex-bailong-desktop-pet#linux--niri--kde) 社区维护。当前预览 **v1.4.2-linux-preview.5** 面向 CachyOS/Arch x86_64，要求 **glibc ≥ 2.44**；支持 niri 原生 Wayland 与 KDE Plasma X11/XWayland，不代表覆盖所有发行版。
+
+[下载预览包](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5) | [Linux 运行说明](docs/LINUX.md) | [KDE 说明](docs/KDE.md) | [包体与限制](docs/LINUX_PACKAGE.md)
+
+### macOS
+
+[Kki1ds 社区版](https://github.com/Kki1ds/codex-bailong-desktop-pet)提供 Apple Silicon DMG，未公证、无应用内更新。[下载与安装说明](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases)以维护者仓库为准。
+
+社区包由对应作者测试和发布，平台问题请前往对应仓库反馈；Windows 安装器和程序补丁不适用于 Linux 或 macOS。
+
+## 安全反馈
+
+微软已完成对提交的 **1.2.1 样本**的复核并移除该样本检测。结论限于该文件；其他版本、文件及卡巴斯基反馈仍需分别核查。[详细进展与处理建议](docs/安全反馈.md)
+
+<details>
+<summary>微软复核结果（已脱敏）</summary>
+
+<img src="docs/media/security/defender-1.2.1-review-redacted.png" alt="微软对1.2.1提交样本的复核结果，敏感字段已遮挡" width="560">
+
+用户提供的截图已脱敏并整理版面，邮箱、提交编号和精确提交时间已遮挡。判定文字已对照原图核对。
+
+</details>
+
+## 文档与反馈
+
+[使用说明](docs/使用说明.md) | [开发与构建](docs/DEVELOPMENT.md) | [维护规范](docs/维护规范验证入口.md) | [迭代历史](docs/迭代历史.txt) | [提交问题](https://github.com/Wunsch2048/codex-bailong-desktop-pet/issues/new/choose)
+
+反馈请附版本、系统缩放和复现步骤，并去掉截图、日志中的私密信息。
 
 ## 来源与许可
 
-原项目：[jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet)，本地改造基线为 v0.3.3，已合入上游 v0.4.1 的十段新动作。角色形象、原有动作及基础程序来自原项目；本仓库记录其上的界面、Codex 联动、数据统计、交互和部署增强。
+基于 [jingh12312-rgb/bailong-desktop-pet](https://github.com/jingh12312-rgb/bailong-desktop-pet) 改造。角色形象、原有动作及基础程序来自原项目，增强内容见版本记录。
 
-发布者已确认取得本次源码、角色素材和安装包公开再分发授权。这不自动授予访问者商业使用、再分发或其他许可。原项目未随基线提供统一代码 LICENSE；本仓库不擅自将整项目标为 MIT。详见 [来源与授权说明](NOTICE.md)、保留的 [原素材说明](docs/upstream/ASSETS.md) 及各依赖许可证。
+本项目未统一采用 MIT 许可。发布者获得的公开再分发授权不自动授予访问者商业使用或再分发权；详见 [NOTICE](NOTICE.md)、[原素材说明](docs/upstream/ASSETS.md)及各依赖许可证。
 
-本项目是独立第三方桌面程序，与 OpenAI、Codex 官方无隶属关系。
+本项目为独立第三方程序，与 OpenAI、Codex 官方无隶属关系。

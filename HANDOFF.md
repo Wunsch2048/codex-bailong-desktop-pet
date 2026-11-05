@@ -1,3 +1,7 @@
+# v1.5.0 已公开交付
+
+Windows 当前公开版为 v1.5.0，详见 [版本说明](docs/releases/v1.5.0.md)。Linux 社区预览与 macOS 社区版独立维护。
+
 # Linux preview.5 已公开（2026-11-02）
 
 已公开 [v1.4.2-linux-preview.5](https://github.com/helantianshen/codex-bailong-desktop-pet/releases/tag/v1.4.2-linux-preview.5)，发布目标提交为 `65983b2fa4fb7d8e185f17dd81f688d9cb03a2e5`，附件来自本次已验证的 CachyOS 本机构建。AppImage、便携 tar.zst 和 SHA256SUMS.txt 三附件的远端大小及摘要与最终候选一致。公开页匿名请求返回 200；三附件均已无 GitHub 登录凭据完整下载，并重新计算 SHA-256 一致。完整下载与发布元数据保存在本地 `work/linux-release-1.4.2-preview.5/`。

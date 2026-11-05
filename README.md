@@ -2,11 +2,22 @@
 
 在桌面查看 Codex 任务状态、完成提醒、账户额度和 Token 用量，也可以让白龙陪你一起工作。支持仅卡片使用，人物动画按需下载。
 
-**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.4.2/bailong-desktop-pet-1.4.2-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
+**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.5.0/bailong-desktop-pet-1.5.0-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
 
-Windows 当前公开版 **v1.4.2**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
+Windows 当前公开版 **v1.5.0**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
 
 ![白龙桌宠封面](docs/media/cover.png)
+
+## 最近更新
+
+### v1.5.0 · 数据面板与桌宠交互
+
+- **项目成本**支持按项目、会话和回合查看，计价设置可搜索模型、分别编辑三类单价。
+- **统计图表**统一悬停窗，额度页并列显示两轮的容量估算；条件接近时显示涨跌。
+- **桌宠交互**改善拖拽跟手、随行胶囊层级和实时服务窗口的打开表现。
+- **性能**减少日报和设置重开的准备工作，缓存动画段复用读取线程。
+
+[查看 v1.5.0 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.5.0)
 
 ## 主要功能
 
@@ -28,7 +39,7 @@ Windows 当前公开版 **v1.4.2**。在线安装器直接获取最新累计程�
 
 </details>
 
-[完整功能与使用说明](docs/使用说明.md) | [v1.4.2 更新说明](docs/releases/v1.4.2.md) | [全部版本记录](docs/releases)
+[完整功能与使用说明](docs/使用说明.md) | [全部版本记录](docs/releases)
 
 ## 安装与连接
 

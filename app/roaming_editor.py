@@ -10,7 +10,7 @@ from typography import FONT_CSS,ui_font
 from ui_theme import hide_scrollbars
 from roaming import LABELS,clean_zone,plan,center_rect
 
-DESCRIPTIONS={'edge':'沿边缘活动，绕开中间区域','side':'在同一侧小范围活动，停留更久','zone':'拖动框内移动，拖动四角调整范围','window':'按前台窗口位置绕行，最大化时回到边缘'}
+DESCRIPTIONS={'edge':'四周均可停留，可斜向绕开中间区域','side':'在同一侧小范围活动，停留更久','zone':'拖动框内移动，拖动四角调整范围','window':'按前台窗口位置绕行，最大化时回到边缘'}
 
 class RouteDiagram(QWidget):
     valueChanged=Signal()

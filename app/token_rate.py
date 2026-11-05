@@ -119,20 +119,34 @@ class MetadataCollector:
         state=self.streams.setdefault(key,dict(water=None,turn=None,base=None))
         kind=payload.get('type')
         if kind=='token_count':
+            # Some clients attach a turn ID to usage. Never apply a delayed
+            # response from another turn to the active turn's baseline.
+            if payload.get('turn_id') and state['turn'] is not None and payload['turn_id']!=state['turn']:
+                return dict(recorded=False,reason='mismatched_usage_turn')
             usage=(payload.get('info') or {}).get('total_token_usage') or {}
             values=tuple(usage.get(k) for k in ('input_tokens','output_tokens','reasoning_output_tokens'))
-            if all(type(v) is int and v>=0 for v in values):
+            if all(type(v) is int and 0<=v<2**53 for v in values) and values[2]<=values[1]:
                 old=state['water']
                 if old and any(v<prior for v,prior in zip(values,old)):state['base']=None
                 state['water']=values
+            else:
+                state['base']=None
         elif kind in ('task_started','turn_started'):
             turn=payload.get('turn_id')
             if turn and turn!=state['turn']:state.update(turn=turn,base=state['water'])
+        elif kind in ('task_aborted','turn_aborted','task_failed','turn_failed','task_cancelled','turn_cancelled','task_canceled','turn_canceled'):
+            if not payload.get('turn_id') or payload['turn_id']==state['turn']:
+                state.update(turn=None,base=None)
+            return dict(recorded=False,reason='turn_terminated')
         elif kind=='task_complete':
             if payload.get('turn_id')!=state['turn'] or state['base'] is None or state['water'] is None:
+                if payload.get('turn_id')==state['turn']:state.update(turn=None,base=None)
                 return dict(recorded=False,reason='missing_turn_baseline')
             counts=tuple(a-b for a,b in zip(state['water'],state['base']))
             usage=dict(zip(('input_tokens','output_tokens','reasoning_output_tokens'),counts))
+            # Retire before parsing/storing: a duplicate completion arriving
+            # after another usage event must not attempt to rewrite this turn.
+            state.update(turn=None,base=None)
             record=completion(payload,usage,source=source,session=session,stamp=stamp)
             if record is None:return dict(recorded=False,reason='missing_usage')
             inserted=self.store.put(record)

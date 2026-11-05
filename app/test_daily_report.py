@@ -82,6 +82,14 @@ def sample():
              for day,value in [(12,1200),(13,30000),(14,12000),(15,56000),(16,78000),(17,30000)] for m in ('gpt-6.1-sol','gpt-6-sol')]))
 
 class ReportUiTests(unittest.TestCase):
+    def test_cost_more_is_three_dot_control_in_navigation_not_footer(self):
+        self.r.open();self.complete();self.r.set_page('projects');APP.processEvents()
+        more=self.r.cost_more_button
+        self.assertTrue(more.isVisible());self.assertEqual(more.size().width(),22);self.assertFalse(more.text())
+        point=more.mapTo(self.r.nav_panel,QPoint());self.assertLess(point.y(),27);self.assertGreater(point.x(),self.r.page_buttons['projects'].mapTo(self.r.nav_panel,QPoint()).x())
+        self.assertIs(self.r.project_view.more_anchor,more);self.assertTrue(self.r.project_view.info_button.isHidden())
+        more.click();APP.processEvents();menu=APP.activePopupWidget();self.assertIsNotNone(menu);self.assertEqual([a.text() for a in menu.actions()],['导出统计','计价设置','估算说明']);menu.close()
+
     def test_daily_cost_scope_and_unknown_do_not_reuse_stale_day(self):
         data=sample();row=dict(id='archived',name='归档项目',path='D:/p',cost=2.,parts=[1.,.2,.8],tokens=1000,pending_tokens=0,models=[],sessions=1,archived=True)
         data['projects']=dict(yesterday=data['report']['day'],ranges={'yesterday':[row],'all':[row]})
@@ -207,7 +215,7 @@ class ReportUiTests(unittest.TestCase):
         self.r.set_page('projects');APP.processEvents();search=self.r.scope_project_search
         self.assertTrue(search.isVisible());self.assertEqual(search.mapTo(row,search.rect().center()).y(),period.mapTo(row,period.rect().center()).y())
         self.assertLessEqual(search.mapTo(row,search.rect().bottomRight()).x(),period.mapTo(row,period.rect().topLeft()).x())
-        self.assertIs(self.r.project_view.search,search.edit);self.assertEqual(self.r.project_view.list.verticalScrollBar().width(),6)
+        self.assertIs(self.r.project_view.search,search.edit);self.assertEqual(self.r.project_view.list.verticalScrollBar().width(),3)
         self.assertFalse(search.button.grab().isNull())
         self.r.set_page('models');self.r.set_page('projects');APP.processEvents();self.assertIs(self.r.project_view.search,search.edit)
     def test_page_motion_keeps_an_opaque_background_without_text_crossfade(self):

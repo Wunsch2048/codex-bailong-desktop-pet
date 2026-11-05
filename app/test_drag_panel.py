@@ -28,6 +28,8 @@ class DragPanelTests(unittest.TestCase):
             self.release();self.assertTrue(self.pet.bubble.is_compact());self.assertEqual(self.pet.settings['bubble_mode'],before['bubble_mode'])
     def test_drag_out_of_edge_builds_capsule_once_and_release_keeps_same_ring(self):
         from island_widgets import QuotaSatellite
+        # Count only redraws owned by the drag, without a wall-clock quota tick.
+        self.pet.status_timer.stop()
         for mode in ('auto','mini'):
             self.pet.edge_dock.clear(immediate=True);self.settle();self.prepare(mode)
             p=self.pet;b=p.bubble;area=p.screen().availableGeometry();p.move(area.left(),area.top()+200)

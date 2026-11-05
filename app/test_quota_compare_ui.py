@@ -26,7 +26,23 @@ class QuotaComparePresentationTests(unittest.TestCase):
  def test_workload_block_preserves_capacity_and_does_not_show_old_change(self):
   c=row(drop=35,change=-25,comparison_block='使用条件记录不完整，暂不判断涨跌')
   m=cycle_messages(c,{})
-  self.assertEqual(m['title'],'使用条件不可比');self.assertIn('仍按本轮用法保留',m['reason']);self.assertIsNotNone(c['estimated_total'])
+  self.assertEqual(m['title'],'同条件变化待校准');self.assertIn('记录不完整',m['reason']);self.assertIsNotNone(c['estimated_total'])
+ def test_mixed_workload_shows_both_estimates_without_percentage(self):
+  v=QuotaCompareView()
+  v.set_snapshot({'quota_history':{'cycles':[
+   row(drop=35,comparison_block='模型使用结构不同，暂不判断涨跌'),
+   row(id='old',closed=True,estimated_total=120000000,start=1791695200),
+   row(id='older',closed=True,estimated_total=140000000,start=1791090400),
+  ]}})
+  self.assertEqual(v.current_capacity.text(),'100.00M')
+  self.assertEqual(v.previous_capacity.text(),'120.00M')
+  self.assertEqual(v.comparison.text(),'同条件变化待校准')
+  v.previous.click()
+  self.assertEqual(v.current_capacity.text(),'120.00M')
+  self.assertEqual(v.previous_capacity.text(),'140.00M')
+  v.previous.click()
+  self.assertTrue(v.capacity_pair.isHidden())
+  v.close()
  def test_disclosure_selection_and_hover_preserve_view_geometry(self):
   v=QuotaCompareView();v.setFixedWidth(246);v.set_snapshot({'quota_history':{'cycles':[row(),row(id='old',closed=True,start=1791695200)]}});v.show();APP.processEvents()
   try:

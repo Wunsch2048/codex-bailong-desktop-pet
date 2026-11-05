@@ -70,6 +70,33 @@ class StreamPlayer:
         self.first=OrderedDict();self.deadline=0;self.ended=False;self.error=None;self.path=None
         self.frame_index=0;self.playhead=0.;self.frame_start=0.;self.next_time=0.;self.last_clock=0.
         self.loop_cache=DecodedLoopCache();self.cache_loop=False
+        self._cache_condition=threading.Condition()
+        self._cache_job=None
+        self._cache_worker=None
+
+    def _read_cached(self):
+        condition=self._cache_condition
+        while True:
+            with condition:
+                if not condition.wait_for(lambda:self._cache_job is not None,timeout=.75):
+                    self._cache_worker=None
+                    return
+                decode=self._cache_job
+                self._cache_job=None
+            decode()
+
+    def _submit_cached(self,decode):
+        with self._cache_condition:
+            # The old stream was cancelled by start(). Only the latest queued
+            # segment is useful after rapid switches or a resize.
+            self._cache_job=decode
+            if self._cache_worker is None:
+                self._cache_worker=STATS.start(self._read_cached,'pet-cached-frame-reader')
+                STATS.add('cache_worker_starts')
+            else:
+                STATS.add('cache_worker_reuses')
+            self._cache_condition.notify()
+            return self._cache_worker
     @staticmethod
     def pixmap(raw,size):
         return QPixmap.fromImage(QImage(raw,size,size,size*4,QImage.Format.Format_RGBA8888).copy())
@@ -159,7 +186,7 @@ class StreamPlayer:
             except Exception as error:
                 if not stop.is_set():
                     emit((None,0,type(error).__name__))
-        self.thread=STATS.start(decode,'pet-frame-reader')
+        self.thread=self._submit_cached(decode) if cached is not None else STATS.start(decode,'pet-frame-reader')
         return first
     def advance(self,size,speed=1):
         if self.ended:return None,False

@@ -3,7 +3,7 @@ import os
 os.environ['QT_QPA_PLATFORM']='offscreen'
 import unittest
 from unittest.mock import patch
-from PySide6.QtCore import QPoint,QEvent,QCoreApplication,QObject
+from PySide6.QtCore import QPoint,QEvent,QCoreApplication,QObject,Qt,QRect
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from compact_bubble import CompactBubble
@@ -32,6 +32,22 @@ class LiveRateHoverTests(unittest.TestCase):
         self.position=card.mapToGlobal(card.rect().center());card._show_hint();APP.processEvents()
         self.assertTrue(card.popup.isVisible())
 
+    def test_hover_first_visible_frame_is_opaque(self):
+        card=self.card();levels=[]
+        class FirstShow(QObject):
+            def eventFilter(self,obj,event):
+                if event.type()==QEvent.Type.Show:levels.append(obj.level)
+                return False
+        observer=FirstShow();card.popup.installEventFilter(observer);self.show_hint(card)
+        self.assertEqual(levels,[1.]);self.assertEqual(card.popup.level,1.)
+        card.set_data(dict(rate=15,details=[dict(name='updated',rate=15)]));self.assertEqual(card.popup.level,1.)
+    def test_trace_is_bounded_and_omits_session_content(self):
+        card=self.card();card.set_data(dict(rate=30,details=[dict(session='private-id',name='private-title',rate=30)]));self.show_hint(card)
+        for i in range(300):card._trace_hover('sample')
+        trace=card.hover_diagnostics();self.assertEqual(len(trace['events']),240);self.assertEqual(trace['capacity'],240)
+        text=__import__('json').dumps(trace);self.assertNotIn('private-title',text);self.assertNotIn('private-id',text)
+        with patch.object(card,'_inside_hint',return_value=False):card._dismiss_if_outside()
+        self.assertTrue(any(e['event']=='dismiss' and e['caller']=='_dismiss_if_outside' for e in card.hover_diagnostics()['events']))
     def test_small_layout_change_keeps_popup_while_pointer_is_inside(self):
         card=self.card();self.show_hint(card)
         card.move(card.x()+1,card.y());card.resize(card.width()+1,20);APP.processEvents()
@@ -40,6 +56,26 @@ class LiveRateHoverTests(unittest.TestCase):
     def test_delayed_callback_rechecks_pointer_before_opening(self):
         card=self.card();self.position=QPoint(700,500);card._show_hint()
         self.assertFalse(card.popup.isVisible())
+
+    def test_stale_show_callback_does_not_close_visible_popup_under_pointer(self):
+        card=self.card();self.show_hint(card)
+        self.position=card.popup.geometry().center();card._show_hint()
+        self.assertTrue(card.popup.isVisible());self.assertTrue(card.hint_watch.isActive())
+
+    def test_rebuild_boundary_shift_uses_leave_grace_instead_of_immediate_hide(self):
+        card=self.card();self.show_hint(card)
+        self.position=card.mapToGlobal(QPoint(1,card.height()//2));original=card.pos()
+        card.begin_rebuild(True);card.move(card.x()+3,card.y());APP.processEvents()
+        self.assertTrue(card.popup.isVisible());self.assertTrue(card.hint_leave.isActive())
+        card.move(original);APP.processEvents();card._watch_hint();QTest.qWait(220)
+        self.assertTrue(card.popup.isVisible());self.assertFalse(card.hint_leave.isActive())
+
+    def test_rebuild_does_not_extend_a_real_pointer_leave_forever(self):
+        card=self.card();self.show_hint(card);self.position=QPoint(900,800)
+        card._watch_hint();QTest.qWait(110)
+        for _ in range(4):
+            card.begin_rebuild(True);APP.processEvents();QTest.qWait(35)
+        self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive())
 
     def test_data_refresh_updates_rows_without_restarting_popup_fade(self):
         card=self.card();self.show_hint(card);card.popup.animation.setCurrentTime(160)
@@ -114,6 +150,38 @@ class LiveRateHoverTests(unittest.TestCase):
         bubble.show_quota=False;bubble.redraw();APP.processEvents()
         self.assertFalse(card.isVisible());self.assertFalse(card.popup.isVisible())
         self.assertFalse(card.hint_watch.isActive())
+
+    def test_visible_reposition_never_visits_old_anchor_formula(self):
+        card=self.card();self.show_hint(card);popup=card.popup;old=QRect(popup.geometry())
+        calls=[];original=popup.setGeometry
+        def record(*args):
+            rect=QRect(*args) if len(args)>1 else QRect(args[0]);calls.append(rect);return original(*args)
+        with patch.object(popup,'setGeometry',side_effect=record):
+            card.move(card.x()+1,card.y());popup.inspect(card.value,card)
+        target=popup._placement[0]
+        self.assertTrue(all(r==old or r==target for r in calls),calls)
+
+    def test_visible_hover_keeps_native_owner_when_topmost_changes(self):
+        card=self.card();self.show_hint(card);popup=card.popup
+        popup.animation.setCurrentTime(160);owner=popup._placement[1:]
+        with patch.object(popup,'present',wraps=popup.present) as present:
+            card.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,not bool(card.windowFlags()&Qt.WindowType.WindowStaysOnTopHint));card.show()
+            popup.inspect(card.value,card)
+            self.assertEqual(present.call_count,0)
+            self.assertEqual(popup._placement[1:],owner)
+            self.assertEqual(popup.level,1.)
+
+    def test_click_opens_service_directly_and_pointer_leave_does_not_close_it(self):
+        card=self.card();self.show_hint(card)
+        QTest.mouseClick(card,Qt.MouseButton.LeftButton)
+        panel=card.service_panel
+        self.assertTrue(panel.isVisible());self.assertEqual(panel.page,'service');self.assertFalse(card.popup.isVisible());self.assertEqual(panel.level,1.)
+        self.position=QPoint(900,800);card._watch_hint();QTest.qWait(250)
+        self.assertTrue(panel.isVisible())
+
+    def test_service_panel_deactivate_closes_only_service_panel(self):
+        card=self.card();QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel
+        APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate));self.assertFalse(panel.isVisible())
 
 
 if __name__=='__main__':unittest.main()

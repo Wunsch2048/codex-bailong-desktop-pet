@@ -99,7 +99,7 @@ def scan(db,path,stop,deadline,parse_line):
                 db.execute('UPDATE cost_source_active SET checked=?,fingerprint=?,archived=? WHERE path=?',(verified_at,json.dumps(current),archived,key));return False
             append=valid and stat.st_size>active[2]
         revision=uuid.uuid4().hex
-        offset,state=(active[2],json.loads(active[3])) if append else (0,{'parser_revision':2})
+        offset,state=(active[2],json.loads(active[3])) if append else (0,{'parser_revision':3})
         state['_cost_full_checked']=verified_at
         # Work holds only the appended delta. The confirmed revision stays
         # readable until the new complete-line prefix has passed verification.
@@ -147,26 +147,44 @@ def scan(db,path,stop,deadline,parse_line):
     return partial or path.stat().st_size>offset
 
 
-def active_events(db):
-    """Choose one canonical complete source per session, then deduplicate events."""
-    migrate(db);sources=list(db.execute('SELECT path,revision,session,state,fingerprint FROM cost_source_active'))
+def active_event_stream(db,prepare=True):
+    """Stream canonical rows; keep event IDs and historical rows out of Python RAM.
+
+    The connection belongs to the serial index worker. The temporary selection is
+    scoped to this read and never changes the persistent accounting tables.
+    Consume/close the iterator before starting another projection on this DB.
+    """
+    if prepare:migrate(db)
+    sources=list(db.execute('SELECT path,revision,session,state,fingerprint FROM cost_source_active'))
     candidates={};conflicts=0
     for path,revision,sid,state,fp in sources:
         state=json.loads(state);fp=json.loads(fp)
         rank=(state.get('last_stamp',0),fp['mtime'],path)
         candidates.setdefault(sid,[]).append((rank,path,revision))
-    ids=set();covered=set(candidates)
+    db.execute('CREATE TEMP TABLE IF NOT EXISTS cost_selected_source(session TEXT PRIMARY KEY,path TEXT,revision TEXT)')
+    db.execute('DELETE FROM temp.cost_selected_source')
     for sid,items in candidates.items():
         items.sort(reverse=True);_,path,rev=items[0]
-        chosen={r[0] for r in db.execute('SELECT event FROM cost_source_events WHERE path=? AND revision=?',(path,rev))}
+        db.execute('INSERT INTO temp.cost_selected_source VALUES(?,?,?)',(sid,path,rev))
         for _,other,version in items[1:]:
-            other_ids={r[0] for r in db.execute('SELECT event FROM cost_source_events WHERE path=? AND revision=?',(other,version))}
-            if not other_ids<=chosen:conflicts+=1
-        ids.update(chosen)
+            if db.execute('''SELECT 1 FROM cost_source_events o WHERE o.path=? AND o.revision=?
+                AND NOT EXISTS(SELECT 1 FROM cost_source_events c WHERE c.path=? AND c.revision=? AND c.event=o.event) LIMIT 1''',
+                (other,version,path,rev)).fetchone():conflicts+=1
     # Legacy rows are a fallback until that session has a verified new-parser source.
-    rows=[row for row in db.execute('SELECT * FROM cost_revision_events') if row[0] in ids]
-    rows.extend(row for row in db.execute('SELECT * FROM cost_events') if row[2] not in covered)
-    return rows,conflicts
+    def rows():
+        cursor=db.execute('''SELECT e.* FROM cost_revision_events e WHERE EXISTS(
+            SELECT 1 FROM cost_source_events r JOIN temp.cost_selected_source s
+            ON s.path=r.path AND s.revision=r.revision WHERE r.event=e.id)
+            UNION ALL SELECT e.* FROM cost_events e WHERE NOT EXISTS(
+            SELECT 1 FROM temp.cost_selected_source s WHERE s.session=e.session)''')
+        try:yield from cursor
+        finally:cursor.close()
+    return rows(),conflicts
+
+def active_events(db):
+    """Compatibility list API for callers that explicitly need materialized rows."""
+    rows,conflicts=active_event_stream(db)
+    return list(rows),conflicts
 
 
 def file_metadata(db):

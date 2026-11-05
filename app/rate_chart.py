@@ -43,12 +43,16 @@ def rate_paths(points,known):
 class ChartBubble(HintBubble):
     def __init__(self):super().__init__();self.record=None
     def hint_size(self):
+        if self.record and 'rows' in self.record:return 230,38+21*len(self.record['rows'])
         return 230,161 if ((self.record or {}).get('rate_item') or {}).get('first_token_ms') is not None else 143
     def inspect(self,record,anchor,host):
-        self.record=record;p=palette();owner=host.window()
-        self.present(record['label'],'用量与回合均速',anchor,host.screen(),owner=owner,
+        self.record=record;owner=host.window()
+        self.present(record['label'],record.get('subtitle','用量与回合均速'),anchor,host.screen(),owner=owner,
                      topmost=bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint))
         self.update()
+        if 'rows' in record:
+            self.setAccessibleDescription('；'.join(f'{name} {value}' for name,value,_ in record['rows']))
+            return
         notes=inspection_notes(record)
         self.setAccessibleName(record['label']);self.setAccessibleDescription(f"用量 {record['amount']}；回合均速 {self.rate_value()}；回合中位速率 {self.median_value()}；{notes[0]}；{notes[1]}")
     def rate_value(self):
@@ -64,6 +68,14 @@ class ChartBubble(HintBubble):
         theme,bar,line=colors();body=QRectF(1,5 if self.below else 1,self.width()-2,self.height()-6)
         p.setPen(QPen(QColor(theme['border']),1));p.setBrush(QColor(theme['surface']));p.drawRoundedRect(body,9,9)
         p.setFont(ui_font(10));p.setPen(QColor(theme['muted']));p.drawText(body.adjusted(10,5,-10,-body.height()+23),Qt.AlignmentFlag.AlignVCenter,self.record['label'])
+        if 'rows' in self.record:
+            for i,(label,value,swatch) in enumerate(self.record['rows']):
+                y=body.top()+25+i*21
+                if swatch:
+                    p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(swatch));p.drawRoundedRect(QRectF(11,y+5,5,7),1,1)
+                p.setFont(ui_font(10));p.setPen(QColor(theme['muted']));p.drawText(QRectF(23,y,93,18),Qt.AlignmentFlag.AlignVCenter,p.fontMetrics().elidedText(label,Qt.TextElideMode.ElideRight,91))
+                p.setFont(ui_font(11,True));p.setPen(QColor(theme['ink']));p.drawText(QRectF(116,y,self.width()-127,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,value)
+            return
         rows=[('Token 用量',self.record['amount'],bar),('回合均速',self.rate_value(),line),('回合中位速率',self.median_value(),None)]
         for i,(label,value,color) in enumerate(rows):
             y=body.top()+26+i*21;p.setPen(Qt.PenStyle.NoPen)

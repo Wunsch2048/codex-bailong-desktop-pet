@@ -88,6 +88,6 @@ class LiveRateTests(unittest.TestCase):
             card._show_hint();card.hint_watch.stop();APP.processEvents()
         self.assertTrue(card.popup.isVisible());self.assertEqual(len(card.popup.rows),2);self.assertEqual(card.toolTip(),'')
         card.set_data(dict(rate=25,details=[dict(session='a',name='桌宠',rate=15),dict(session='b',name='代码检查',rate=10)]))
-        self.assertEqual(card.popup.rows[0]['rate'],15);card.hide();self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive());card.close();card.deleteLater();APP.processEvents()
+        self.assertEqual(card.popup.rows[0]['rate'],15);card.hide();APP.processEvents();self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive());card.close();card.deleteLater();APP.processEvents()
 
 if __name__=='__main__':unittest.main()

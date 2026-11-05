@@ -45,22 +45,22 @@ def crosses(a,b,r):
     return hi-lo>1e-8 and hi>0 and lo<1
 
 def path_between(start,target,bounds,obstacles):
-    """Small rectilinear visibility graph; at most two rectangle obstacles."""
+    """Small visibility graph; visible diagonal legs need no artificial turn."""
     if any(contains(target,r) for r in obstacles):return None
+    if all(not crosses(start,target,r) or contains(start,r) for r in obstacles):return [target]
     xs={start[0],target[0],bounds[0],bounds[2]};ys={start[1],target[1],bounds[1],bounds[3]}
     for r in obstacles:
         xs.update((max(bounds[0],r[0]-2),min(bounds[2],r[2]+2)))
         ys.update((max(bounds[1],r[1]-2),min(bounds[3],r[3]+2)))
     nodes={(x,y) for x in xs for y in ys if bounds[0]<=x<=bounds[2] and bounds[1]<=y<=bounds[3] and not any(contains((x,y),r) for r in obstacles)}
     nodes.add(start);nodes.add(target);edges={p:[] for p in nodes}
-    for axis,values in ((0,ys),(1,xs)):
-        for fixed in values:
-            row=sorted((p for p in nodes if p[1-axis]==fixed),key=lambda p:p[axis])
-            for a,b in zip(row,row[1:]):
-                for p,q in ((a,b),(b,a)):
-                    # A manually placed pet may begin in the protected area;
-                    # let its first segment leave, never re-enter or stop there.
-                    if all(not crosses(p,q,r) or p==start and contains(p,r) and not contains(q,r) for r in obstacles):edges[p].append(q)
+    ordered=sorted(nodes)
+    for p in ordered:
+        for q in ordered:
+            if p==q:continue
+            # A manually placed pet may begin in the protected area;
+            # let its first segment leave, never re-enter or stop there.
+            if all(not crosses(p,q,r) or p==start and contains(p,r) and not contains(q,r) for r in obstacles):edges[p].append(q)
     costs={start:0};previous={};queue=[(0,start)]
     while queue:
         cost,p=heapq.heappop(queue)
@@ -127,8 +127,15 @@ def plan(position,home,area,footprint,settings,uniform,foreground=None):
         t=max(t,home[1]-reach_y*.55);b=min(b,home[1]+reach_y*.55)
     candidates=[(l,cy),(r,cy),(cx,t),(cx,b),(l,t),(r,t),(l,b),(r,b),
                 (min(r,cx+reach_x),cy),(max(l,cx-reach_x),cy),(cx,min(b,cy+reach_y)),(cx,max(t,cy-reach_y))]
+    if mode=='edge':
+        # Stops span all four sides, including intermediate points, rather
+        # than repeatedly selecting only the current row/column and corners.
+        candidates=[(l,cy),(r,cy),(cx,t),(cx,b),(l,t),(r,t),(l,b),(r,b)]
+        for _ in range(3):
+            candidates.extend(((uniform(l,r),t),(uniform(l,r),b),(l,uniform(t,b)),(r,uniform(t,b))))
     for left,right in ((l,min(r,protected[0]-2)),(max(l,protected[2]+2),r)):
-        if left<=right:candidates.append(((left+right)/2,cy))
+        if mode!='edge' and left<=right:candidates.append(((left+right)/2,cy))
+    candidates=list(dict.fromkeys(candidates))
     candidates=[p for p in candidates if distance(position,p)>16 and abs(p[0]-position[0])<=reach_x+1 and abs(p[1]-position[1])<=reach_y+1 and not any(contains(p,o) for o in obstacles)]
     # If a manually moved pet starts outside its chosen area, allow one entry
     # journey instead of silently moving the area or teleporting the pet.

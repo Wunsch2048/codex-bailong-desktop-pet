@@ -26,7 +26,7 @@ class HintBubble(QWidget):
         self.animation=QVariantAnimation(self);self.animation.valueChanged.connect(self._advance)
         self.animation.finished.connect(self._finished);self.hide()
 
-    def present(self,title,subtitle,anchor,screen,*,card_top=None,topmost=True,owner=None):
+    def present(self,title,subtitle,anchor,screen,*,card_top=None,topmost=True,owner=None,geometry=None,initial_level=0.):
         self.animation.stop();self.title=str(title);self.subtitle=str(subtitle)
         width,height=self.hint_size()
         if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=bool(topmost):
@@ -44,9 +44,11 @@ class HintBubble(QWidget):
         if self.below:top=anchor.bottom()+2
         top=max(area.top()+2,min(top,area.bottom()-height-1))
         self.tip_x=max(12.,min(float(width-12),float(cx-left)))
-        self.setGeometry(left,top,width,height);self.setAccessibleName(self.title)
+        if geometry is None:self.setGeometry(left,top,width,height)
+        else:self.setGeometry(geometry)
+        self.setAccessibleName(self.title)
         self.setAccessibleDescription(self.subtitle)
-        if not self.isVisible():self.level=0.;self.show()
+        if not self.isVisible():self.level=initial_level;self.show()
         self.raise_()
         self._animate(1.)
         # An already opaque surface has no alpha delta to drive paintEvent.

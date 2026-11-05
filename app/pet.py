@@ -231,8 +231,9 @@ class Pet(QWidget):
                 except RuntimeError:pass
     def choose(self,item):
         self.click_timer.stop();self.last_click=None;self.generation+=1
-        try:self.play_click_sound();self.play(item,'variant');self.say(item.get('line',''),4000)
+        try:self.play_click_sound();self.play(item,'variant');self.say_action_line(item)
         except Exception as error:self.idle();self.say('这段动画暂时无法播放：'+str(error))
+    def say_action_line(self,item):self.say(item.get('line',''),4000)
     def single_click(self):
         self.last_click=None
         if self.variants:self.choose(random.choice(self.variants))
@@ -267,7 +268,8 @@ class Pet(QWidget):
         self.mousePressEvent(event)
     def mouseMoveEvent(self,event):
         if event.buttons()&Qt.MouseButton.LeftButton and hasattr(self,'press_pos'):
-            delta=event.globalPosition().toPoint()-self.press_pos
+            pointer=event.globalPosition().toPoint()
+            delta=pointer-self.press_pos
             if delta.manhattanLength()>8 and not self.dragging:
                 self.dragging=True;self.click_timer.stop();self.last_click=None;self.generation+=1
                 self.bubble_timer.stop()
@@ -275,8 +277,12 @@ class Pet(QWidget):
                 elif not getattr(self,'settings',{}).get('panel_detached'):self.bubble.hide()
                 self.play(self.manifest.get('dragAnimation') or self.idles[0],'drag')
             if self.dragging:
-                self.move(self.constrained_position(self.origin+delta,event.globalPosition().toPoint()))
-                self.position_bubble()
+                self.move_drag_pointer(pointer)
+    def move_drag_pointer(self,pointer):
+        target=self.constrained_position(self.origin+pointer-self.press_pos,pointer)
+        if target!=self.pos():
+            self.move(target)
+            self.position_bubble()
     def mouseReleaseEvent(self,event):
         if event.button()!=Qt.MouseButton.LeftButton:return
         if self.dragging:

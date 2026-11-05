@@ -26,6 +26,12 @@ def read_membership(home,ledger):
         assignments=state.get('thread-project-assignments')
         if not isinstance(projects,dict) or not isinstance(assignments,dict):raise ValueError('Unsupported membership format')
         health['projects']=True
+        projectless=state.get('projectless-thread-ids')
+        health['projectless_ids']=[sid for sid in projectless if isinstance(sid,str)] if isinstance(projectless,list) else []
+        health['projectless_ids'].extend(
+            sid for sid,value in assignments.items()
+            if value is None or isinstance(value,dict) and 'projectId' in value and value['projectId'] is None
+        )
         for key,p in projects.items():
             if not isinstance(p,dict):continue
             roots=p.get('rootPaths') or [];root=next((r for r in roots if isinstance(r,str) and r.strip()),'')
@@ -45,7 +51,7 @@ def read_membership(home,ledger):
     try:
         with closing(sqlite3.connect((home/'state_5.sqlite').resolve().as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
             cols={r[1] for r in db.execute('PRAGMA table_info(threads)')}
-            fields=[k for k in ('id','cwd','archived','source','agent_path','attached_thread_parent_id','project_id') if k in cols]
+            fields=[k for k in ('id','cwd','name','title','archived','source','agent_path','attached_thread_parent_id','project_id') if k in cols]
             if 'id' in fields:
                 health['threads']=True
                 from session_read_state import is_subagent_metadata
@@ -61,6 +67,7 @@ def read_membership(home,ledger):
                         parent=parent_of(m.get('source')) or m.get('attached_thread_parent_id')
                         if isinstance(parent,str) and parent!=sid and parents.get(sid)!=parent:
                             parents[sid]=parent;ledger.execute('INSERT OR REPLACE INTO cost_parent VALUES (?,?)',(sid,parent))
+                health['threads']=True
     except (OSError,sqlite3.Error,ValueError):pass
     return overrides,catalog,parents,metadata,health
 

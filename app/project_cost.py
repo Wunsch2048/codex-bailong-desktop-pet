@@ -16,9 +16,13 @@ RATES={'gpt-6-astra':(10,1,50),'gpt-6.1-sol':(2,.1,10),
 RATE_SOURCES={name:'https://developers.openai.com/api/docs/models/'+name
               for name in ('gpt-6-sol','gpt-5.6-luna')}
 
-def rate(model):
+def rate(model,prices=None):
     name=re.sub(r'-\d{4}-\d{2}-\d{2}$','',model.lower())
-    return RATES.get(name)
+    return (RATES if prices is None else prices).get(name)
+
+def pricing_revision(prices=None):
+    """Bind each projection to the entire price table, not just its label."""
+    return PRICE_VERSION+':'+hashlib.sha256(json.dumps(RATES if prices is None else prices,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:16]
 
 def migrate(db):
     db.execute('CREATE TABLE IF NOT EXISTS cost_files(path TEXT PRIMARY KEY,offset INTEGER,state TEXT,archived INTEGER)')
@@ -38,11 +42,13 @@ def project_path(value):
     return value.rstrip('/') or '/'
 
 def parse_line(line,state,path):
-    if not any(k in line for k in (b'session_meta',b'turn_context',b'token_count')):return None
+    if not any(k in line for k in (b'session_meta',b'turn_context',b'token_count',b'task_started',b'turn_started')):return None
     try:
         obj=json.loads(line);p=obj.get('payload') or {}
         if not isinstance(p,dict):return None
         kind=obj.get('type')
+        if kind=='event_msg' and p.get('type') in ('task_started','turn_started'):
+            state['turn']=str(p.get('turn_id') or p.get('id') or '')[:128];return None
         if kind=='session_meta':
             if state.get('header_seen'):return None  # later headers may be copied parent history
             state['header_seen']=True
@@ -55,6 +61,7 @@ def parse_line(line,state,path):
             state['created']=obj.get('timestamp')
             return None
         if kind=='turn_context':
+            state['turn']=str(p.get('turn_id') or p.get('id') or state.get('turn') or '')[:128]
             state['project']=project_path(p.get('cwd')) or state.get('project','')
             state['model']=p.get('model') or state.get('model','')
             return None
@@ -120,7 +127,9 @@ def update(db,files,stop=lambda:False,budget=.35):
     return dict(pending=pending,initial_pending=initial,syncing=pending and not initial,errors=errors)
 
 def snapshot(db,now,progress,files=None,home=None):
-    statuses={};limited=False;membership_health={};unresolved=0
+    from cost_preferences import prices as saved_prices
+    prices=saved_prices();price_revision=pricing_revision(prices)
+    statuses={};limited=False;membership_health={};unresolved=0;metadata={}
     db.execute('CREATE TABLE IF NOT EXISTS cost_session_assignment(session TEXT PRIMARY KEY,project TEXT,archived INTEGER)')
     assignments={sid:(project,bool(archived)) for sid,project,archived in db.execute('SELECT * FROM cost_session_assignment')}
     archived_meta={sid:v[1] for sid,v in assignments.items()}
@@ -156,19 +165,47 @@ def snapshot(db,now,progress,files=None,home=None):
     limited=limited or bool(parent_conflicts)
     result={}
     current=datetime.fromtimestamp(now);midnight=current.replace(hour=0,minute=0,second=0,microsecond=0)
-    from project_cost_store import active_events
-    events,conflicts=active_events(db);limited=limited or bool(conflicts)
+    from project_cost_store import active_event_stream
+    events,conflicts=active_event_stream(db);limited=limited or bool(conflicts)
+    revisions={}
+    from project_membership import root_session
+    from session_read_state import conversation_display_name
+    for sid,revision,offset,fp in db.execute('SELECT a.session,a.revision,a.offset,a.fingerprint FROM cost_source_active a JOIN temp.cost_selected_source s ON a.path=s.path AND a.revision=s.revision'):
+        revisions.setdefault(root_session(sid,parents),[]).append((sid,offset,json.loads(fp).get('digest','')))
+    revisions={sid:hashlib.sha256(json.dumps(sorted(values),separators=(',',':')).encode()).hexdigest()[:20] for sid,values in revisions.items()}
     buckets={}
     for _,stamp,sid,project,model,tokens,a,c,b,known in events:
         if stamp>now:continue
-        key=(project,model,sid,datetime.fromtimestamp(stamp).strftime('%Y-%m-%d'))
-        sums=buckets.setdefault(key,[0,0,0,0,1]);sums[0]+=tokens
+        # Keep incomplete events separate: one bad record must not turn a
+        # whole otherwise-priced session/model/day into pending usage.
+        key=(project,model,sid,datetime.fromtimestamp(stamp).strftime('%Y-%m-%d'),bool(known))
+        sums=buckets.setdefault(key,[0,0,0,0]);sums[0]+=tokens
         for i,value in enumerate((a,c,b),1):
             if value is not None:sums[i]+=value
-        sums[4]=min(sums[4],known)
-    grouped=[(*key,*values) for key,values in buckets.items()]
-    from project_membership import root_session
-    grouped=[(assignments.get(root_session(row[2],parents),assignments.get(row[2],(project_path(row[0]),False)))[0],row[1],root_session(row[2],parents),*row[3:]) for row in grouped]
+    # A missing thread and missing rollout leave historical usage, but no
+    # current evidence that its old working directory is still its project.
+    # Only apply this when both sources were available for comparison.
+    check_missing = present is not None and membership_health.get('threads')
+    live_roots = {root_session(sid,parents) for sid in metadata.keys() | statuses.keys()} if check_missing else set()
+    unassigned='unassigned:'
+    projectless=set(membership_health.pop('projectless_ids',()))
+    scratch_root=project_path(str(Path.home()/'Documents'/'Codex'))
+    grouped=[]
+    for (project,model,sid,day,known),values in buckets.items():
+        root=root_session(sid,parents)
+        path=assignments.get(root,assignments.get(sid,(project_path(project),False)))[0]
+        original_path=path
+        if check_missing and root not in live_roots:
+            path=''
+        elif path and not path.startswith('project:'):
+            relative=path.removeprefix(scratch_root+'/')
+            date_folder,separator,leaf=relative.partition('/')
+            scratch=(relative!=path and separator and leaf and
+                     len(date_folder)==10 and date_folder[4]==date_folder[7]=='-' and
+                     date_folder.replace('-','').isdigit())
+            if root in projectless or scratch:
+                path=unassigned
+        grouped.append((path,model,root,day,*values,known,original_path,(sid,project)))
     project_archives={}
     for path,model,sid,*_ in grouped:
         archived=archived_meta.get(sid,bool(statuses.get(sid)) and all(statuses[sid]))
@@ -177,30 +214,46 @@ def snapshot(db,now,progress,files=None,home=None):
     for period,days in [('all',None),('30d',30),('7d',7),('yesterday',1)]:
         start=yesterday if period=='yesterday' else (midnight-timedelta(days=days-1)).strftime('%Y-%m-%d') if days else ''
         projects={}
-        for path,model,sid,day,tokens,a,c,b,known in grouped:
+        for path,model,sid,day,tokens,a,c,b,known,original_path,source in grouped:
             if day<start or (period=='yesterday' and day!=yesterday):continue
-            display=catalog.get(path,{})
+            display=dict(name='未归属项目',path='') if path==unassigned else catalog.get(path,{})
             name=display.get('name') or (PureWindowsPath(path).name if path else '未识别项目') or path
-            p=projects.setdefault(path,dict(id=path,name=name,path=display.get('path',path),tokens=0,cost=0.,parts=[0.,0.,0.],pending_tokens=0,sessions=set(),models=set(),archived=True,model_usage={}))
+            p=projects.setdefault(path,dict(id=path,name=name,path=display.get('path',path),tokens=0,cost=0.,parts=[0.,0.,0.],pending_tokens=0,pending_reasons={},sessions=set(),models=set(),archived=True,model_usage={},session_usage={}))
             p['tokens']+=tokens;p['sessions'].add(sid);p['models'].add(model or '未识别模型')
-            m=p['model_usage'].setdefault(model or '未识别模型',dict(model=model or '未识别模型',tokens=0,cost=0.,pending_tokens=0))
+            m=p['model_usage'].setdefault(model or '未识别模型',dict(model=model or '未识别模型',tokens=0,cost=0.,pending_tokens=0,pending_reasons={}))
             m['tokens']+=tokens
+            title=' '.join((conversation_display_name(metadata.get(sid,{})) or ('会话 '+sid[-8:])).split())[:240]
+            session=p['session_usage'].setdefault(sid,dict(id=sid,name=title,tokens=0,cost=0.,pending_tokens=0,detail_revision=revisions.get(sid,'')))
+            if path==unassigned:session['directory']=original_path
+            session['tokens']+=tokens
             p['archived']=project_archives[path]
-            prices=rate(model)
-            if not known or not prices or not path:
-                p['pending_tokens']+=tokens;m['pending_tokens']+=tokens;continue
-            parts=[(a-c)*prices[0]/1e6,c*prices[1]/1e6,b*prices[2]/1e6]
+            model_prices=rate(model,prices)
+            if not path and original_path:
+                p.setdefault('priced_history_sources',set()).add(source)
+            if not known or model_prices is None or not original_path:
+                # Exclusive reasons keep their sum equal to pending_tokens.
+                reason='incomplete_counts' if not known else 'unknown_model' if model_prices is None else 'unknown_project'
+                for row in (p,m):
+                    row['pending_tokens']+=tokens;row['pending_reasons'][reason]=row['pending_reasons'].get(reason,0)+tokens
+                session['pending_tokens']+=tokens
+                continue
+            parts=[(a-c)*model_prices[0]/1e6,c*model_prices[1]/1e6,b*model_prices[2]/1e6]
             p['parts']=[x+y for x,y in zip(p['parts'],parts)];p['cost']+=sum(parts)
             m['cost']+=sum(parts)
+            session['cost']+=sum(parts)
         for p in projects.values():
-            p['sessions']=len(p['sessions']);p['models']=sorted(p['models']);p['cost']=round(p['cost'],6)
+            for row in [p,*p['model_usage'].values()]:
+                row['priced_tokens']=row['tokens']-row['pending_tokens']
+                row['price_coverage']=row['priced_tokens']/row['tokens'] if row['tokens'] else None
+            p['session_ids']=sorted(p['sessions']);p['sessions']=len(p['sessions']);p['models']=sorted(p['models']);p['cost']=round(p['cost'],6)
             p['model_usage']=sorted(p['model_usage'].values(),key=lambda v:-v['cost'])
+            p['session_usage']=sorted(p['session_usage'].values(),key=lambda v:-v['cost'])
         result[period]=sorted(projects.values(),key=lambda p:-p['cost'])
-    return dict(ranges=result,yesterday=yesterday,**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_source=PRICE_SOURCE,checked=now)
+    return dict(ranges=result,yesterday=yesterday,**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_source=PRICE_SOURCE,checked=now)
 
 def search_rows(data,period='all',query='',archive='active'):
     def norm(s):return unicodedata.normalize('NFKC',s).casefold().replace('\\','/')
     words=norm(query).split()
     return [p for p in (data or {}).get('ranges',{}).get(period,[]) if
             (archive=='all' or p['archived']==(archive=='archived')) and
-            all(w in norm(p['name']+' '+p['path']) for w in words)]
+            (not words or all(w in norm(' '.join([p['name'],p['path'],*(s.get('directory','') for s in p.get('session_usage',[]))])) for w in words))]

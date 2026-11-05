@@ -1040,6 +1040,8 @@ class CompactBubble(Bubble):
         self.evaluate_mode()
     def evaluate_mode(self,now=None):
         if getattr(self,'_drag_compact_kind',None):return
+        roaming=getattr(self.owner_pet(),'roaming',None)
+        if roaming and getattr(roaming,'compact_owned',False):return
         now=time.monotonic() if now is None else now
         if self.panel_page!='status' or self.expanded or (self.report and self.report.requested) or self.size_transition.running:return
         if self.bubble_mode=='minimal' or self._edge_compact:

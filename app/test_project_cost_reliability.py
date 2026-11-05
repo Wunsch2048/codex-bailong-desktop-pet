@@ -29,7 +29,7 @@ class ReliabilityTests(unittest.TestCase):
         p=self.write(self.lines());self.membership({'s':{'projectId':'a'}})
         with closing(sqlite3.connect(self.home/'state_5.sqlite')) as db,db:
             db.execute('CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER)');db.execute("INSERT INTO threads VALUES('s','D:/new',0)")
-        for value,expected in [({'s':{'projectId':'a'}},'project:a'),({'s':{'projectId':'b'}},'project:b'),({'s':{'projectId':None}},'d:/new'),({'s':{'projectId':'a'}},'project:a'),({},'d:/new')]:
+        for value,expected in [({'s':{'projectId':'a'}},'project:a'),({'s':{'projectId':'b'}},'project:b'),({'s':{'projectId':None}},'unassigned:'),({'s':{'projectId':'a'}},'project:a'),({},'d:/new')]:
             self.membership(value);r=self.load([p]);self.assertEqual(self.total(r),2000);self.assertEqual(r['ranges']['all'][0]['id'],expected)
             self.db.commit();self.db.close();self.db=sqlite3.connect(self.home/'cost.sqlite')
         self.membership({'s':{'projectId':'a'}},name='改名');r=self.load([p]);self.assertEqual(r['ranges']['all'][0]['name'],'改名');self.assertEqual(self.total(r),2000)

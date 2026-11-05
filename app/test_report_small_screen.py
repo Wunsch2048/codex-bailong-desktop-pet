@@ -2,6 +2,7 @@
 import os,unittest
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from unittest.mock import patch
+from types import SimpleNamespace
 from PySide6.QtCore import QRect,QPoint,QPointF,Qt
 from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QApplication,QScrollArea,QWidget,QVBoxLayout,QLabel
@@ -20,6 +21,24 @@ def wheel(area,delta):
 class SmallReportTests(unittest.TestCase):
     setUp=report_tests.ReportUiTests.setUp
     tearDown=report_tests.ReportUiTests.tearDown
+    def test_visible_edges_align_without_reserving_shadow_padding(self):
+        r=self.r
+        for area in (QRect(0,0,1920,1080),QRect(-1600,-200,1600,900)):
+            screen=SimpleNamespace(availableGeometry=lambda:area)
+            with patch.object(r.bubble,'screen',return_value=screen):
+                for width in (268,360):
+                    for x in (area.left(),area.right()-width+1):
+                        host=QRect(x,area.top()+650,width,160);rect=r.geometry_for_host(host)
+                        self.assertEqual(rect.left(),host.left());self.assertEqual(rect.right(),host.right())
+                        self.assertEqual(rect.bottom()+1,host.top()-r.GAP)
+                tiny=QRect(area.left(),area.top()+650,40,40)
+                rect=r.geometry_for_host(tiny)
+                self.assertEqual(rect.left(),area.left());self.assertEqual(rect.width(),r.MIN_WIDTH)
+    def test_narrow_screen_keeps_visible_body_in_bounds_not_shadow(self):
+        r=self.r;area=QRect(0,0,240,800)
+        with patch.object(r.bubble,'screen',return_value=SimpleNamespace(availableGeometry=lambda:area)):
+            rect=r.geometry_for_host(QRect(0,600,240,160))
+            self.assertEqual(rect.left(),0);self.assertEqual(rect.width(),240)
     def test_overview_cycle_models_scroll_when_compressed_without_showing_bars(self):
         data=report_tests.sample();data['report']['daily_models']=[dict(day='2026-10-17',model='model-'+str(i),total=1000,input=800,output=200,known=True) for i in range(12)]
         self.r.set_snapshot(data)

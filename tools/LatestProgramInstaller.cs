@@ -134,29 +134,31 @@ internal sealed class ProgramDownload {
 }
 
 internal sealed class LatestProgramInstaller : Form {
-    readonly Label status=new Label {AutoSize=false,Left=24,Top=22,Width=360,Height=42};
-    readonly ProgressBar progress=new ProgressBar {Left=24,Top=68,Width=360,Height=12,Style=ProgressBarStyle.Marquee};
-    readonly Button action=new Button {Text="取消",Left=304,Top=99,Width=80,Height=28};
+    readonly Label status=new Label {AutoSize=false,Left=24,Top=22,Width=360,Height=84};
+    readonly ProgressBar progress=new ProgressBar {Left=24,Top=110,Width=360,Height=12,Style=ProgressBarStyle.Marquee};
+    readonly Button action=new Button {Text="取消",Left=304,Top=141,Width=80,Height=28};
+    string stage="初始化安装";
     ProgramDownload transfer;Thread worker;bool handingOff,busy;
     internal LatestProgramInstaller() {
-        Text="白龙桌宠安装";ClientSize=new System.Drawing.Size(408,148);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
+        Text="白龙桌宠安装";ClientSize=new System.Drawing.Size(408,190);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
         Controls.AddRange(new Control[]{status,progress,action});
         action.Click+=delegate {if(busy) Close();else StartDownload();};
         Shown+=delegate {StartDownload();};FormClosing+=delegate {if(!handingOff && transfer!=null) transfer.Cancel();};
     }
     void Post(Action change) {if(!IsDisposed && IsHandleCreated) try {BeginInvoke(change);} catch(InvalidOperationException) {}}
     void StartDownload() {
-        busy=true;action.Text="取消";progress.Style=ProgressBarStyle.Marquee;transfer=new ProgramDownload();
+        busy=true;stage="初始化安装";action.Text="取消";progress.Style=ProgressBarStyle.Marquee;transfer=new ProgramDownload();
         worker=new Thread(delegate() {
             try {
                 var local=Environment.GetEnvironmentVariable("LOCALAPPDATA");
                 if(String.IsNullOrWhiteSpace(local)) throw new InvalidOperationException("无法确定用户数据目录");
-                var source=transfer.Prepare(local,s=>Post(()=>status.Text=s),(n,total)=>Post(()=>{progress.Style=ProgressBarStyle.Continuous;progress.Value=(int)(n*100/total);}));
+                var source=transfer.Prepare(local,s=>{stage=s.TrimEnd('…');Post(()=>status.Text=s);},(n,total)=>Post(()=>{progress.Style=ProgressBarStyle.Continuous;progress.Value=(int)(n*100/total);}));
                 Post(delegate {
                     if(transfer.Cancelled) return;
                     try {
                         // Only this verified new program is invoked. Its normal
                         // installer owns directory choice, backup and rollback.
+                        stage="启动已校验程序";
                         Process.Start(new ProcessStartInfo {FileName=Path.Combine(source,"BailongEnhanced.exe"),Arguments="--apply-program-update",WorkingDirectory=source,UseShellExecute=false});
                         handingOff=true;Close();
                     } catch(Exception e) {Failed(e);}
@@ -166,8 +168,25 @@ internal sealed class LatestProgramInstaller : Form {
     }
     void Failed(Exception error) {
         if(transfer.Cancelled) return;busy=false;progress.Style=ProgressBarStyle.Continuous;progress.Value=0;action.Text="重试";
-        var win=error as System.ComponentModel.Win32Exception;
-        status.Text=win!=null && (win.NativeErrorCode==225 || win.NativeErrorCode==226) ? "安全防护拦截了程序，请查看保护历史记录。" : "准备失败："+error.Message;
+        status.Text=DescribeFailure(error,stage);
+    }
+    internal static string DescribeFailure(Exception error,string failedStage) {
+        // File operations often surface HRESULT_FROM_WIN32 through IOException,
+        // including nested/aggregate exceptions, rather than Win32Exception.
+        var pending=new Stack<Exception>();pending.Push(error);int code=0;
+        while(pending.Count>0) {
+            var current=pending.Pop();var win=current as System.ComponentModel.Win32Exception;
+            var native=win==null ? 0 : win.NativeErrorCode;
+            if(native==225 || native==226) {code=native;break;}
+            uint hr=unchecked((uint)current.HResult);
+            if(hr==0x800700E1u || hr==0x800700E2u) {code=(int)(hr & 0xffff);break;}
+            var aggregate=current as AggregateException;
+            if(aggregate!=null) foreach(var inner in aggregate.InnerExceptions) pending.Push(inner);
+            else if(current.InnerException!=null) pending.Push(current.InnerException);
+        }
+        var phase=String.IsNullOrWhiteSpace(failedStage) ? "准备安装" : failedStage;
+        if(code!=0) return "安全防护拦截了文件（错误 "+code+"）。\n阶段："+phase+"\n请查看 Windows 保护历史或杀毒软件记录，提供检测名称和文件路径。";
+        return "准备失败（"+phase+"）："+error.Message;
     }
     [STAThread] static int Main() {
         ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;

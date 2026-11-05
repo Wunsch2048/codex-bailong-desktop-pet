@@ -5,6 +5,7 @@ from theme_runtime import set_theme_style,theme_style_source,set_theme_text
 import math,random
 from html import escape
 from datetime import datetime
+from performance_metrics import measured
 from PySide6.QtCore import Qt,QRect,QRectF,QPointF,QPoint,QSize,QEvent,Signal,QVariantAnimation,QEasingCurve,QAbstractAnimation,QTimer
 from PySide6.QtGui import QPainter,QPainterPath,QPen,QColor,QFontMetrics,QPixmap,QRegion
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QToolButton,QScrollArea,QApplication,QSizePolicy,QProgressBar,QStackedWidget
@@ -21,7 +22,7 @@ from card_motion import card_geometry,paint_card
 from ui_theme import MODEL_COLORS,PANEL,PRIMARY,SELECTED
 from settings_controls import SlidingSegments
 from quota_compare_ui import QuotaCompareView
-from project_cost_ui import ProjectCosts,ProjectSearchBar,DailyCostButton,ExplanationOverlay,SmoothCostScroll
+from project_cost_ui import ProjectCosts,ProjectSearchBar,DailyCostButton,ExplanationOverlay,SmoothCostScroll,CostMoreButton
 COLORS=MODEL_COLORS
 
 # Radix Colors light: mauve for surfaces/text, purple for the quota accent.
@@ -31,7 +32,7 @@ CYCLE_ACCENT='#8b78a6';CYCLE_TRACK='#e4dfea'
 def tab(text,slot,checked=False,checkable=True):
     b=QToolButton();b.setText(text);b.setCheckable(checkable);b.setChecked(checked);b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
     b.setCursor(Qt.CursorShape.PointingHandCursor);b.setFixedHeight(23)
-    set_theme_style(b,'QToolButton{'+FONT_CSS+'font-size:12px;font-weight:500;color:#706879;border:0;border-radius:5px;padding:2px 4px;background:transparent;}QToolButton:checked{color:#514360;background:#eae1f2;}QToolButton:hover{background:#f0e9f6;}')
+    set_theme_style(b,'QToolButton{'+FONT_CSS+'font-size:12px;font-weight:500;color:#706879;border:0;border-radius:5px;padding:2px 4px;background:transparent;}QToolButton:hover{background:#f0e9f6;}QToolButton:checked{color:#514360;background:#eae1f2;font-weight:600;}')
     b.clicked.connect(slot);return b
 
 class ScopeReadout(QLabel):
@@ -114,7 +115,7 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
     def paintEvent(self,event):self.paint_combo() if self.mode=='line' else self.paint_layers()
     def render_layers(self,p,dynamic):
         if self.mode=='line':return self._render_combo(p,dynamic)
-        chart=self.chart_rect();bottom=chart.bottom();self.hits=[]
+        chart=self.chart_rect();bottom=chart.bottom();self.hits=[];self._combo_records=[]
         if self.mode=='line':values=self.report.get('hours',[0]*24);top=max(values,default=0)
         else:
             bins=self.series['bins'];values=[b['values'].get(self.selected,0) if self.selected else b['total'] for b in bins];top=max(values,default=0)
@@ -147,7 +148,16 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
                     p.fillRect(QRectF(chart.left()+i*slot,y-height,max(.8,slot-1.5),height),QColor(chart_color(j,original=COLORS[j%len(COLORS)])));y-=height
                 p.restore()
                 label=b['start'] if b['start']==b['end'] else b['start']+' 至 '+b['end']
-                self.hits.append((QRectF(chart.left()+i*slot,chart.top(),slot,chart.height()),label+f'  {value:,} Tokens'))
+                rect=QRectF(chart.left()+i*slot,chart.top(),slot,chart.height())
+                self.hits.append((rect,label+f'  {value:,} Tokens'))
+                rows=[(self.selected or 'Token 用量',compact_tokens(value),None)]
+                if not self.selected:
+                    ranked=sorted(enumerate(model_order),key=lambda entry:-b['values'].get(entry[1],0))
+                    used=[(j,model) for j,model in ranked if b['values'].get(model,0)>0]
+                    for j,model in used[:3]:
+                        rows.append((model,compact_tokens(b['values'][model]),chart_color(j,original=COLORS[j%len(COLORS)])))
+                    if len(used)>3:rows.append(('其他模型',compact_tokens(sum(b['values'][m] for _,m in used[3:])),None))
+                self._combo_records.append(dict(rect=rect,label=label,subtitle=self.selected or '全部模型',rows=rows))
             labels=[(0,self.series['start'][5:].replace('-','/')),(1,self.series['end'][5:].replace('-','/'))]
         p=static;p.setFont(font(10,True));p.setPen(theme_color(MUTED))
         for f,text in labels:
@@ -168,12 +178,12 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
         for f,label in [(0,'00时'),(.5,'12'),(1,'24时')]:
             p.drawText(QRectF(plot.left()+f*plot.width()-(32 if f==1 else 15 if f==.5 else 0),plot.bottom()+2,32,18),Qt.AlignmentFlag.AlignVCenter|(Qt.AlignmentFlag.AlignRight if f==1 else Qt.AlignmentFlag.AlignLeft),label)
     def keyPressEvent(self,event):
-        if self.mode!='line' or not self.combo_key(event):super().keyPressEvent(event)
+        if not self.combo_key(event):super().keyPressEvent(event)
     def focusOutEvent(self,event):
         if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.dismiss_inspection()
         super().focusOutEvent(event)
     def mouseMoveEvent(self,event):
-        if self.mode=='line':self.inspect_at(event.position())
+        self.inspect_at(event.position())
         hovered=''
         for rect,text in self.hits:
             if rect.contains(event.position()):hovered=text;break
@@ -193,18 +203,33 @@ class ModelRow(QToolButton):
         self.clicked.connect(slot)
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.selected or self.underMouse():p.fillRect(self.rect(),QColor(theme_color('#f0e9f5')))
-        if self.selected:
-            p.setPen(QPen(QColor(theme_color(PRIMARY)),2));p.drawLine(0,3,0,self.height()-3)
-        p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(chart_color(self.index,original=COLORS[self.index%len(COLORS)])));p.drawRoundedRect(QRectF(1,7,7,7),2,2)
-        p.setPen(QColor(theme_color(PRIMARY)));p.setFont(font(11,True));name=QFontMetrics(p.font()).elidedText(self.item['model'],Qt.TextElideMode.ElideRight,max(20,self.width()-120))
-        p.drawText(QRectF(13,1,self.width()-122,19),Qt.AlignmentFlag.AlignVCenter,name)
+        accent=QColor(theme_color(PRIMARY))
+        if self.selected or self.underMouse():
+            fill=QColor(accent)
+            fill.setAlpha(30 if self.isDown() else 22 if self.selected else 12)
+            outline=QColor(accent);outline.setAlpha(90)
+            p.setPen(QPen(outline,1) if self.selected else Qt.PenStyle.NoPen)
+            p.setBrush(fill);p.drawRoundedRect(QRectF(self.rect()).adjusted(2.5,1.5,-2.5,-1.5),7,7)
+        swatch=QColor(chart_color(self.index,original=COLORS[self.index%len(COLORS)]))
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(swatch)
+        p.drawRoundedRect(QRectF(9,9,7,7),2,2)
+        right=self.width()-25
+        p.setFont(font(11,self.selected))
+        total=compact_tokens(self.item['total'])+f"  {self.item['total']/max(1,self.total)*100:.1f}%"
+        metrics=QFontMetrics(p.font());amount_width=metrics.horizontalAdvance(total)+2
         p.setPen(QColor(theme_color(INK)))
-        text=compact_tokens(self.item['total'])+f"  {self.item['total']/max(1,self.total)*100:.1f}%"
-        p.drawText(QRectF(self.width()-115,1,114,19),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,text)
-        p.setPen(QColor(theme_color('#706879')));p.setFont(font(10))
+        p.drawText(QRectF(right-amount_width,3,amount_width,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,total)
+        p.setFont(font(11,True));p.setPen(accent)
+        name_width=max(0,right-amount_width-28)
+        name=QFontMetrics(p.font()).elidedText(self.item['model'],Qt.TextElideMode.ElideRight,name_width)
+        p.drawText(QRectF(22,3,name_width,18),Qt.AlignmentFlag.AlignVCenter,name)
+        if self.selected:
+            p.setPen(QPen(accent,1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
+            x=self.width()-16
+            p.drawLine(QPointF(x-3,13),QPointF(x-1,15));p.drawLine(QPointF(x-1,15),QPointF(x+3,10))
+        p.setPen(QColor(theme_color(MUTED)));p.setFont(font(10))
         detail=compact_tokens(self.item['input'])+' in  '+compact_tokens(self.item['output'])+' out' if self.item['known'] else '输入 / 输出分项记录不完整'
-        p.drawText(QRectF(13,18,self.width()-15,17),Qt.AlignmentFlag.AlignVCenter,detail)
+        p.drawText(QRectF(22,19,self.width()-31,16),Qt.AlignmentFlag.AlignVCenter,detail)
 
 class DailyReport(QWidget):
     refreshRequested=Signal()
@@ -462,6 +487,7 @@ class DailyReport(QWidget):
             for page,text in [('overview','日报'),('models','模型'),('cycle','额度'),('projects','成本')]:
                 b=tab(text,lambda checked=False,k=page:self.set_page(k),False);b.setObjectName('report_'+page);row.addWidget(b);self.page_buttons[page]=b
             row.addStretch()
+            self.cost_more_button=CostMoreButton();self.cost_more_button.clicked.connect(lambda:self.project_view.more() if hasattr(self,'project_view') else None);row.addWidget(self.cost_more_button)
             self.scope_row=QWidget();self.scope_row.setFixedHeight(27);scope=QHBoxLayout(self.scope_row);scope.setContentsMargins(0,0,0,0);scope.setSpacing(5)
             self.scope_left=QStackedWidget();self.scope_left.setMinimumWidth(0);self.scope_left.setFixedHeight(27)
             self.scope_model_total=ScopeReadout();self.scope_project_search=ProjectSearchBar()
@@ -474,6 +500,7 @@ class DailyReport(QWidget):
         self.day_label.setText(r.get('day','--')[5:].replace('-','/')+' 昨日' if self.page not in ('cycle','projects') else '')
         for page,b in self.page_buttons.items():b.setChecked(page==self.page)
         show_period=self.page in ('models','projects')
+        self.cost_more_button.setVisible(self.page=='projects')
         self.scope_row.setVisible(show_period);self.nav_panel.setFixedHeight(56 if show_period else 27)
         self.period_control.setVisible(show_period and self.period!='yesterday')
         self.yesterday_scope.setVisible(show_period and self.period=='yesterday')
@@ -484,7 +511,14 @@ class DailyReport(QWidget):
         if self._animating or self.follow.active:
             self._pending_rebuild=True;return
         self._building=True
-        for cached_page,item in self._body_cache.items():
+        self._pending_rebuild=False
+        width=self.panel_width();self.surface.setFixedWidth(width)
+        r=self.snapshot.get('report') or {};self.report=r
+        self.ensure_chrome(r)
+        cached=self._body_cache.get(self.page)
+        if cached and cached['ready']==bool(r) and self.layout.indexOf(cached['refs']['scroll'])==2:
+            self._update_cached_body(r,cached);self._building=False;self._measure_overview();return
+        for item in self._body_cache.values():
             if item['refs']['scroll'] is getattr(self,'scroll',None):
                 item['refs'].update({name:getattr(self,name) for name in item['refs']})
         while self.layout.count()>2:
@@ -492,9 +526,6 @@ class DailyReport(QWidget):
             if w:
                 w.hide()
                 if not any(item['refs']['scroll'] is w for item in self._body_cache.values()):w.deleteLater()
-        width=self.panel_width();self.surface.setFixedWidth(width);r=self.snapshot.get('report') or {};self.report=r
-        self.ensure_chrome(r)
-        cached=self._body_cache.get(self.page)
         if cached and cached['ready']==bool(r):
             for name,value in cached['refs'].items():setattr(self,name,value)
             self.layout.addWidget(self.scroll,1);self.scroll.show()
@@ -511,6 +542,7 @@ class DailyReport(QWidget):
         self.data_state=self.label('',11,True);self.data_state.setWordWrap(True);set_theme_style(self.data_state,theme_style_source(self.data_state)+'color:#89566c;');content.addWidget(self.data_state);self._update_data_state()
         if self.page=='projects':
             self.project_view=ProjectCosts(search_bar=self.scope_project_search);self.project_view.set_data(self.snapshot.get('projects'),self.period)
+            self.project_view.more_anchor=self.cost_more_button
             self.project_view.changed.connect(self._refresh_page_frame);content.addWidget(self.project_view,1)
             self.plot=None;self.body_height=270
         elif not r and self.page!='cycle':
@@ -541,11 +573,10 @@ class DailyReport(QWidget):
             self.model_total=self.scope_model_total;self.model_total.setText('Token  '+compact_tokens(shown))
             filter_bar=QWidget();filter_layout=QHBoxLayout(filter_bar);filter_layout.setContentsMargins(0,0,0,0);filter_layout.setSpacing(4)
             self.filter_label=self.secondary(self.label('',11));self.filter_label.setWordWrap(True);filter_layout.addWidget(self.filter_label,1)
-            self.clear_filter=tab('清除筛选',self.clear_model_filter);self.clear_filter.setObjectName('report_clear_model_filter');filter_layout.addWidget(self.clear_filter);content.addWidget(filter_bar);self._update_filter_label()
+            self.clear_filter=tab('清除筛选',self.clear_model_filter,checkable=False);self.clear_filter.setObjectName('report_clear_model_filter');filter_layout.addWidget(self.clear_filter);content.addWidget(filter_bar);self._update_filter_label()
             self.plot=ReportPlot(r,'bars',self.period,self.selected_model,series=series);content.addWidget(self.plot)
             denominator=self.secondary(self.label('模型占比 = 该模型 / 当前时间范围全部模型',10));denominator.setWordWrap(True);content.addWidget(denominator)
             self.readout=self.secondary(self.label('点击模型筛选  再点一次还原',9))
-            self.plot.hoverText.connect(lambda text,label=self.readout:label.setText(text or '点击模型筛选  再点一次还原'))
             content.addWidget(self.readout)
             model_group=QWidget();self.model_layout=QVBoxLayout(model_group);self.model_layout.setContentsMargins(0,0,0,0);self.model_layout.setSpacing(4)
             self._add_model_rows(series);content.addWidget(model_group)
@@ -597,15 +628,7 @@ class DailyReport(QWidget):
         if self.page=='projects':self.project_view.set_data(self.snapshot.get('projects'),self.period)
         self._update_data_state();self.note_label.setText(self._note(r))
     def _measure_overview(self):
-        if self.page=='overview':
-            for widget in [self.surface]+self.surface.findChildren(QWidget):widget.ensurePolished()
-            body=self.scroll.widget();available=max(1,self.surface.width()-20)
-            body.ensurePolished();content=body.layout()
-            height=content.totalHeightForWidth(available)
-            if height<0:height=content.sizeHint().height()
-            margins=self.layout.contentsMargins()
-            header=sum(max(self.layout.itemAt(i).widget().minimumHeight(),self.layout.itemAt(i).widget().sizeHint().height()) for i in (0,1))
-            self._overview_height=473  # Preserve the approved overview canvas; content is compacted within it.
+        if self.page=='overview':self._overview_height=473
         self.natural_height=self._overview_height
     def reserved_height(self,host_size=None):
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
@@ -614,13 +637,16 @@ class DailyReport(QWidget):
     def panel_width(self,host=None):
         host=self.bubble.geometry() if host is None else host
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
-        return min(max(self.MIN_WIDTH,round(host.width())),max(1,area.width()-2*self.PAD))
+        return min(max(self.MIN_WIDTH,round(host.width())),max(1,area.width()))
     def geometry_for_host(self,host):
         """Small hosts anchor a readable panel; they do not dictate its width."""
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
         width=self.panel_width(host)
         x=round(host.x()+(host.width()-width)/2)
-        x=max(area.left()+self.PAD,min(x,area.right()-self.PAD-width+1))
+        # Clamp the visible card, not its transparent shadow canvas. The
+        # host may touch either screen edge; reserving PAD here shifts only
+        # the report and makes equal-width cards visibly misalign.
+        x=max(area.left(),min(x,area.right()-width+1))
         height=max(1,min(self.natural_height,round(host.y())-area.top()-self.GAP-self.PAD))
         return QRect(x,round(host.y())-self.GAP-height,width,height)
     def toggle(self):self.dismiss() if self.requested else self.open()
@@ -636,6 +662,7 @@ class DailyReport(QWidget):
             prepared=page==self._host_prepared_page
             self._host_open_page=None;self._host_prepared_page=None
             if self.requested:self.open(page,_prepared=prepared)
+    @measured('report_open_dispatch')
     def open(self,page='overview',_prepared=False):
         from panel_transition import present_barrier
         self._host_closing=False
@@ -662,12 +689,9 @@ class DailyReport(QWidget):
                     self._book_opened=True
                 top=bool(self.bubble.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
                 if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=top:self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,top)
-                # All tabs share the overview's measured height. A direct
-                # quota-alert entry must measure it while hidden too, rather
-                # than open a short cycle page and jump on the next tab.
+                # The fixed overview height is established at construction;
+                # a direct quota/cost entry does not need a second body build.
                 if not _prepared:
-                    if self.page!='overview':
-                        selected=self.page;self.page='overview';self.rebuild();self.page=selected
                     self.rebuild()
                     if self.page=='projects':self.project_view.reset_navigation()
                 owner=self.bubble.owner_pet()
@@ -685,7 +709,7 @@ class DailyReport(QWidget):
                     owner.position_bubble()
                 self.sync_geometry();self._prepare_frame()
             self.show();self.raise_();self._input_passthrough(True)
-            self.follow.prewarm()
+            if not self.follow.active:self.follow.park(self.follow.shield)
             if native_open:self.repaint();present_barrier()
         finally:
             if native_open:self.setWindowOpacity(opacity)
@@ -705,22 +729,18 @@ class DailyReport(QWidget):
         # Do not recreate the layered window with QWidget.setWindowFlags.
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,value)
         if self.windowHandle():self.windowHandle().setFlag(Qt.WindowType.WindowTransparentForInput,value)
+    @measured('report_prepare_frame')
     def _prepare_frame(self):
         self.refresh_button.freeze_motion('surface')
-        if self.plot:
-            if self.requested:self.plot.begin_reveal()
-            else:self.plot.freeze_reveal()
+        if self.plot and not self.requested:self.plot.freeze_reveal()
         # Nested cards/scroll content must settle before raster capture, rather
         # than processing their first LayoutRequest after the reveal finishes.
-        widgets=[self.surface]+self.surface.findChildren(QWidget)
-        for widget in reversed(widgets):
-            widget.ensurePolished()
-            if widget.layout():widget.layout().activate()
-        for widget in widgets:
-            if widget.layout():widget.layout().activate()
+        from panel_transition import settle_visible
+        settle_visible(self.surface)
         # Wrapped labels now have their final metrics; settle the complete
         # target before freezing it, never grow a pixel at native handoff.
         self.sync_geometry()
+        if self.plot and self.requested:self.plot.begin_reveal()
         ratio=self.devicePixelRatioF();size=self.surface.size()
         frame=QPixmap(round(size.width()*ratio),round(size.height()*ratio));frame.setDevicePixelRatio(ratio)
         frame.fill(QColor(theme_color('#fcfafc')))
@@ -793,6 +813,12 @@ class DailyReport(QWidget):
         if guarded:
             present_barrier();self.setWindowOpacity(opacity);self.repaint();present_barrier();self.follow.park(self.follow.shield)
         if self.plot:self.plot.start_reveal()
+        # The landing surface is only used by later host transitions. Keep
+        # its cold native show out of the report's first visible frame.
+        QTimer.singleShot(0,self,self._park_open_landing)
+    def _park_open_landing(self):
+        if self.requested and self.isVisible() and not self._animating and not self.follow.active:
+            self.follow.park(self.follow.landing)
     def _restore_host(self):
         self._host_closing=False;b=self.bubble
         owner=b.owner_pet()

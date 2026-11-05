@@ -68,16 +68,25 @@ def subagent_sessions(home,ids):
     except (OSError,sqlite3.Error,ValueError):return set()
 
 
+def conversation_display_name(metadata):
+    for key in ('name','title'):
+        value=metadata.get(key)
+        if isinstance(value,str) and value.strip():return value.strip()
+    return ''
+
 def conversation_names(home,ids):
     """Fetch only display names for tracked sessions from the desktop store."""
     ids=list(dict.fromkeys(session_id(sid) for sid in ids if sid))
     if not ids:return {}
     try:
         with closing(sqlite3.connect((Path(home)/'state_5.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
-            found={}
+            found={};columns={row[1] for row in db.execute('PRAGMA table_info(threads)')};fields=[k for k in ('id','name','title') if k in columns]
+            if 'id' not in fields:return {}
             for start in range(0,len(ids),128):
-                chunk=ids[start:start+128];rows=db.execute('SELECT id,name,title FROM threads WHERE id IN ('+','.join('?' for _ in chunk)+')',chunk)
-                found.update({sid:(name or title).strip() for sid,name,title in rows if (name or title or '').strip()})
+                chunk=ids[start:start+128];rows=db.execute('SELECT '+','.join(fields)+' FROM threads WHERE id IN ('+','.join('?' for _ in chunk)+')',chunk)
+                for row in rows:
+                    metadata=dict(zip(fields,row));name=conversation_display_name(metadata)
+                    if name:found[metadata['id']]=name
             return found
     except (OSError,sqlite3.Error,ValueError):return {}
 

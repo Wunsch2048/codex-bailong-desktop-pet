@@ -87,6 +87,22 @@ class WindowAPI:
         if not top and self.valid(behind) and not self.topmost(behind) and self.above(hwnd,behind):
             return bool(self.u.SetWindowPos(hwnd,behind,0,0,0,0,flags))
         return True
+    def stack_with(self,hwnd,anchor):
+        """Place a companion immediately above its anchor without raising it."""
+        if not self.valid(hwnd) or not self.valid(anchor):return False
+        previous=self.u.GetWindow(anchor,3)
+        if previous==hwnd:return True
+        # Use the observed native order. The topmost style alone does not
+        # guarantee which side of the foreground window the anchor occupies.
+        insert_after=previous or wintypes.HWND(-1 if self.topmost(anchor) else 0)
+        flags=1|2|0x10|0x200
+        moved=bool(self.u.SetWindowPos(hwnd,insert_after,0,0,0,0,flags))
+        foreground=self.foreground()
+        if foreground not in (hwnd,anchor) and self.valid(foreground):
+            if self.above(hwnd,foreground) and not self.above(anchor,foreground):
+                return self.set_topmost(hwnd,False,foreground)
+        return moved
+
     def snapshot(self,hwnd=None):
         hwnd=self.foreground() if hwnd is None else hwnd
         if not hwnd or not self.u.IsWindowVisible(hwnd) or self.u.IsIconic(hwnd):return None

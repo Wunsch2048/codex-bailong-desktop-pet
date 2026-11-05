@@ -19,6 +19,11 @@ def ink_count(pixmap):
     return count
 
 class CostMotionTests(unittest.TestCase):
+    def test_async_detail_refresh_during_entry_keeps_text_in_target_frame(self):
+        motion=self.prepared(self.row);motion.animation.resume();self.view._detail_key=None;self.view.refresh()
+        self.assertGreater(ink_count(motion.next_frame),200)
+        motion.animation.setCurrentTime(motion.animation.duration());APP.processEvents();self.assertTrue(self.view.updatesEnabled())
+
     def setUp(self):
         self.motion=patch('project_cost_ui.motion_enabled',return_value=True);self.motion.start()
         self.host=QWidget();layout=QVBoxLayout(self.host);self.view=ProjectCosts();layout.addWidget(self.view);self.host.resize(290,460)
@@ -42,6 +47,28 @@ class CostMotionTests(unittest.TestCase):
         motion.animation.setCurrentTime(motion.animation.duration());APP.processEvents()
         # Verify the final page pixels, not only selected/state properties.
         self.assertEqual(target.toImage(),PageFade.snapshot(self.view).toImage())
+    def test_scrolled_project_tab_switch_captures_reset_target(self):
+        from settings_controls import SlidingSegments
+        self.row['session_usage']=[
+            dict(id=str(i),name=f'会话 {i}',cost=1.,tokens=1000) for i in range(15)
+        ]
+        self.row['sessions']=15
+        self.view.set_data(dict(ranges={'all':[self.row]}),'all')
+        motion=self.prepared(self.row)
+        motion.animation.setCurrentTime(motion.animation.duration());APP.processEvents()
+        bar=self.view.details.verticalScrollBar()
+        self.assertGreater(bar.maximum(),80);bar.setValue(80)
+        tabs=self.view.details.widget().findChild(SlidingSegments)
+        tabs.buttons['composition'].click()
+        self.assertIsNotNone(motion.frame)
+        APP.processEvents()
+        self.assertEqual(self.view.project_part,'composition')
+        self.assertEqual(bar.value(),0)
+        self.assertIsNotNone(motion.next_frame)
+        target=motion.next_frame.toImage()
+        motion.animation.setCurrentTime(motion.animation.duration());APP.processEvents()
+        self.assertEqual(target,PageFade.snapshot(self.view).toImage())
+
     def test_latest_reverse_wins_before_queued_preparation(self):
         self.view.select(self.row);self.view.select(None);APP.processEvents();APP.processEvents()
         motion=self.view.detail_motion;self.assertIsNone(self.view.selected)

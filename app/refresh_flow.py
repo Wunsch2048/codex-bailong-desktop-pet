@@ -3,6 +3,24 @@ import threading
 import time
 
 
+class CompletionRefresh:
+    """UI-thread completion bursts: immediate first read and one trailing read.
+
+    Only completion notifications use this gate. Explicit user refreshes and
+    periodic quota reads retain their existing behavior and run coordinator.
+    """
+    def __init__(self,parent,refresh,clock=time.monotonic,interval=15):
+        from PySide6.QtCore import QTimer
+        self.refresh=refresh;self.clock=clock;self.interval=interval;self.last=None
+        self.timer=QTimer(parent);self.timer.setSingleShot(True);self.timer.timeout.connect(self.request)
+    def request(self):
+        now=self.clock();remaining=0 if self.last is None else self.interval-(now-self.last)
+        if remaining<=0:
+            self.timer.stop();self.last=now;return self.refresh()
+        if not self.timer.isActive():self.timer.start(max(1,__import__('math').ceil(remaining*1000)))
+        return None
+
+
 class RefreshRuns:
     """One running or reserved read, shared safely by UI and worker threads."""
     def __init__(self):

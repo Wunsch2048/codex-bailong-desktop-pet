@@ -23,9 +23,6 @@ class LinkedReportMotion(QObject):
             # is open, so its first host resize has a paintable guard too.
             if not surface.isVisible():surface.prepare(self.report.geometry())
         else:surface.hide()
-    def prewarm(self):
-        if not self.active:
-            self.park(self.landing);self.park(self.shield)
     def capture(self):
         r=self.report;ratio=r.devicePixelRatioF();size=r.surface.size()
         image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)

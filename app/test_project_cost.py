@@ -107,7 +107,7 @@ class CostTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         from project_cost_ui import ProjectCosts
         app=QApplication.instance() or QApplication([])
-        rows=[dict(id=str(i),name='项目'+str(i),path='D:/project/'+str(i),cost=1.,parts=[.5,.1,.4],tokens=1000,pending_tokens=0,models=['模型'+str(n) for n in range(15)],sessions=1,archived=False) for i in range(12)]
+        rows=[dict(id=str(i),name='项目'+str(i),path='D:/project/'+str(i),cost=1.,parts=[.5,.1,.4],tokens=1000,pending_tokens=0,models=[],sessions=15,session_usage=[dict(id=str(n),name='会话'+str(n),tokens=1000,cost=1.) for n in range(15)],archived=False) for i in range(12)]
         view=ProjectCosts();view.resize(246,350);view.set_data(dict(ranges={'all':rows}),'all');view.show();app.processEvents()
         try:
             view.list.verticalScrollBar().setValue(180);parent_position=view.list.verticalScrollBar().value()
@@ -144,20 +144,25 @@ class CostTests(unittest.TestCase):
     def test_explicit_membership_does_not_merge_shared_roots_and_children_count_once(self):
         with tempfile.TemporaryDirectory() as folder:
             h=Path(folder);now=time.time()
-            global_state={'local-projects':{'a':{'name':'原项目','rootPaths':['D:/shared']},'b':{'name':'新项目','rootPaths':['D:/new','D:/shared']}},'thread-project-assignments':{'stays':{'projectId':'a'},'moves':{'projectId':'b'}}}
+            global_state={'local-projects':{'a':{'name':'原项目','rootPaths':['D:/shared']},'b':{'name':'新项目','rootPaths':['D:/new','D:/shared']}},'thread-project-assignments':{'stays':{'projectId':'a'},'moves':{'projectId':'b'}},'projectless-thread-ids':['ban1','ban2']}
             (h/'.codex-global-state.json').write_text(json.dumps(global_state),encoding='utf-8')
             with closing(sqlite3.connect(h/'state_5.sqlite')) as meta,meta:
                 meta.execute('CREATE TABLE threads(id TEXT,cwd TEXT,archived INTEGER,source TEXT)')
-                meta.executemany('INSERT INTO threads VALUES (?,?,0,?)',[('stays','D:/shared','vscode'),('moves','D:/shared','vscode'),('child','D:/shared',json.dumps({'subagent':{'thread_spawn':{'parent_thread_id':'moves'}}}))])
+                meta.executemany('INSERT INTO threads VALUES (?,?,0,?)',[('stays','D:/shared','vscode'),('moves','D:/shared','vscode'),('child','D:/shared',json.dumps({'subagent':{'thread_spawn':{'parent_thread_id':'moves'}}})),('ban1','D:/one/ban','vscode'),('ban2','D:/two/ban','vscode')])
             with sqlite3.connect(':memory:') as db:
                 migrate(db)
-                for i,sid in enumerate(('stays','moves','child')):db.execute('INSERT INTO cost_events VALUES (?,?,?,?,?,?,?,?,?,?)',(str(i),now-1,sid,'d:/shared','gpt-6.1-sol',1000,800,600,200,1))
+                for i,sid in enumerate(('stays','moves','child','ban1','ban2')):db.execute('INSERT INTO cost_events VALUES (?,?,?,?,?,?,?,?,?,?)',(str(i),now-1,sid,'d:/shared','gpt-6.1-sol',1000,800,600,200,1))
                 data=snapshot(db,now,dict(pending=False,errors=0),[],h)
                 projects={p['id']:p for p in data['ranges']['all']}
                 self.assertEqual(projects['project:a']['tokens'],1000)
                 self.assertEqual(projects['project:b']['tokens'],2000)
                 self.assertEqual(projects['project:b']['sessions'],1)
                 self.assertEqual(projects['project:b']['path'],'d:/new')
+                unassigned=projects['unassigned:']
+                self.assertEqual((unassigned['tokens'],unassigned['sessions'],unassigned['pending_tokens']),(2000,2,0))
+                self.assertEqual({s['directory'] for s in unassigned['session_usage']},{'d:/one/ban','d:/two/ban'})
+                self.assertEqual(search_rows(data,query='one/ban'),[unassigned])
+
 
 
     def test_wheel_interpolates_and_unchanged_refresh_keeps_items(self):

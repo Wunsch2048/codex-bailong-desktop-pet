@@ -4,6 +4,22 @@ from roaming import plan,path_between,contains,crosses,inflate,center_rect,clean
 
 class RoamingTests(unittest.TestCase):
     def settings(self,**kw):return normalized(dict(wander_horizontal_only=False,**kw))
+    def test_edge_stops_cover_the_whole_perimeter_and_allow_diagonal_legs(self):
+        from roaming import legal_bounds
+        area=(-1600,-200,1600,1000);foot=(0,0,180,180);bounds=legal_bounds(area,foot)
+        rng=random.Random(32);start=(bounds[0],bounds[3]);sides=set();diagonal=False;intermediate=False
+        for _ in range(100):
+            route=plan(start,start,area,foot,self.settings(wander_mode='edge'),rng.uniform)
+            self.assertTrue(route.points,route.reason)
+            end=route.points[-1]
+            self.assertFalse(contains(end,route.center))
+            matched=[i for i,value in enumerate((bounds[0],bounds[1],bounds[2],bounds[3])) if end[i%2]==value]
+            self.assertTrue(matched);sides.update(matched);intermediate|=len(matched)==1
+            for a,b in zip([start]+list(route.points),route.points):
+                self.assertFalse(crosses(a,b,route.center))
+                diagonal|=a[0]!=b[0] and a[1]!=b[1]
+            start=end
+        self.assertEqual(sides,{0,1,2,3});self.assertTrue(diagonal);self.assertTrue(intermediate)
     def test_all_four_modes_produce_screen_local_routes(self):
         for area in ((0,0,1920,1080),(-1920,0,1920,1080),(0,-900,1600,900)):
             x,y,w,h=area;start=(x+w-230,y+h-230)

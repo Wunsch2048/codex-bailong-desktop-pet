@@ -116,7 +116,7 @@ class SettingsDialog(QDialog):
         self.apply_button.setProperty('role','primary');self.apply_button.setAutoDefault(True);self.apply_button.setDefault(True)
         self.save_shortcut=QShortcut(QKeySequence('Ctrl+S'),self);self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);self.save_shortcut.activated.connect(self.apply)
         self.tabs.tabBar().setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        outer.addWidget(footer);self.tabs.currentChanged.connect(self.activate_page);self.activate_page(0);self.reload()
+        outer.addWidget(footer);self.tabs.currentChanged.connect(self.activate_page);self.activate_page(0);self.reload(read_startup=not lazy)
         if hasattr(pet,'materials'):pet.materials.changed.connect(self.refresh_character_material_hint)
         if hasattr(pet,'settingsChanged'):pet.settingsChanged.connect(self.sync_from_pet)
         pet.bubble.dataBusyChanged.connect(self.update_refresh_state)
@@ -134,6 +134,7 @@ class SettingsDialog(QDialog):
         if frame is None and motion and previous!=index and self.isVisible():frame=motion.snapshot(self.tabs.widget(previous))
         if motion:motion.clear()
         self.build_page(index)
+        if index==2:self.sync_from_pet(read_startup=True)
         for i,button in enumerate(self.category_buttons):button.setChecked(i==index)
         self.category_title.setText(self.page_titles[index]);self.tabs.widget(index).verticalScrollBar().setValue(0);self.update_draft_state()
         self._category_index=index
@@ -244,6 +245,7 @@ class SettingsDialog(QDialog):
     def build_page_2(self):
         pet=self.pet
         connection=self.tab('Codex 联动')
+        pricing=QPushButton('计价设置');pricing.clicked.connect(self.open_pricing);connection.addRow(pricing)
         self.section(connection,'运行联动',None)
         self.codex_startup=SettingsSwitchRow('随 Codex 桌面端启动');connection.addRow(self.codex_startup)
         self.field_tabs['codex_startup']=self._building_index;self.field_titles['codex_startup']='随 Codex 启动'
@@ -302,6 +304,12 @@ class SettingsDialog(QDialog):
         self.connection_text.setPlainText('点击“检测连接与额度”生成只读报告；不会发送对话或消耗 Token。');paths.addRow(self.connection_text)
         self.paths_card=AnimatedDisclosure(path_body);connection.addRow(self.paths_card);self.path_toggle.toggled.connect(self.paths_card.set_expanded)
         self.path_source.currentIndexChanged.connect(self.path_source_changed);self.path_source_changed()
+
+    def open_pricing(self):
+        from pricing_ui import open_editor
+        data=getattr(self.pet.bubble,'token_snapshot',{}).get('projects',{})
+        models={m['model'] for p in data.get('ranges',{}).get('all',[]) for m in p['model_usage']}
+        open_editor(self.tabs,models,self.pet.refresh_tokens)
 
     def build_page_3(self):
         pet=self.pet
@@ -487,13 +495,20 @@ class SettingsDialog(QDialog):
             try:values['startup']=autostart_enabled();values['codex_startup']=enabled()
             except OSError:self.status.setText('开机启动状态读取失败；其他设置仍可修改。')
         return values
-    def reload(self):
+    def reload(self,*,read_startup=True):
         if hasattr(self.pet,'preview_theme'):self.pet.preview_theme(None)
-        self.status.clear();values=self.values_from_pet(read_startup=True);values.setdefault('startup',False)
+        self.status.clear();values=self.values_from_pet(read_startup)
+        for key in ('startup','codex_startup'):
+            values.setdefault(key,self.draft.baseline.get(key,False) if self.draft else False)
         self.draft=SettingsDraft(values);self.fill(self.draft.values);self.refresh_library();self.update_draft_state()
     def sync_from_pet(self,changes=None,read_startup=False):
         if self.draft is None:return
-        self.draft.rebase(self.values_from_pet(read_startup));self.fill(self.draft.values);self.update_draft_state()
+        previous=self.draft.values.copy()
+        status=(self.draft.dirty,self.draft.conflicts.copy())
+        self.draft.rebase(self.values_from_pet(read_startup))
+        changed=self.draft.values!=previous
+        if changed:self.fill(self.draft.values)
+        if changed or status!=(self.draft.dirty,self.draft.conflicts):self.update_draft_state()
         if self.pet.bubble.panel_page=='settings' and not self._saving:self.preview_theme_draft()
 
     def preview_theme_draft(self):

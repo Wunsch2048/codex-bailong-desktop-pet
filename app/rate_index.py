@@ -43,7 +43,7 @@ def update(db,files,stop=lambda:False,budget=.15):
                         if not line.endswith(b'\n'):stream.seek(start);break
                         offset=stream.tell();continue
                     offset=stream.tell();scanned+=len(line)
-                    if not any(k in line for k in (b'session_meta',b'token_count',b'task_started',b'turn_started',b'task_complete')):continue
+                    if not any(k in line for k in (b'session_meta',b'token_count',b'task_',b'turn_')):continue
                     try:
                         obj=json.loads(line);payload=obj.get('payload');stamp=stamp_of(obj)
                         if not isinstance(payload,dict) or stamp is None:continue

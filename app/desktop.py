@@ -56,15 +56,23 @@ class DesktopPet(EnhancedPet):
         self._hit_image=None;self.throwing=False;self.velocity=(0.,0.)
         self._pointer_pressed=False;self._pointer_epoch=0
         self.drag_samples=deque(maxlen=12);self.press_feedback=0;self.buffer_until=0
+        self._drag_pointer=None;self._last_drag_move=0.
         self.pending_completion=None;self.settings_dialog=None;self.chat_window=None
         self.reactions=StatusReactions(time.monotonic());self.last_reaction=None
         self.character_dir=STATE_DIR/'characters';self.character_dir.mkdir(exist_ok=True)
         self.created_at=time.monotonic();self.decode_error=None
         super().__init__(monitor)
+        self._drag_move_timer=QTimer(self);self._drag_move_timer.setSingleShot(True)
+        self._drag_move_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._drag_move_timer.timeout.connect(self.flush_drag_pointer)
+        from refresh_flow import CompletionRefresh
+        self._completion_quota_refresh=CompletionRefresh(self,self.refresh_quota)
         # A hidden Qt/native owner can also suppress its tool windows. Keep a
         # logical owner for data/placement, with an independent native card.
         self.bubble.setParent(None,self.bubble.windowFlags())
         self.bubble._owner=self
+        from roaming_controller import watch_interaction
+        self._roaming_input=watch_interaction(self)
         from codex_navigation import CodexNavigation
         self.codex_navigation=CodexNavigation(lambda session:open_codex(session),self)
         self.codex_navigation.error.connect(lambda text:self.say(text,6000))
@@ -320,6 +328,8 @@ class DesktopPet(EnhancedPet):
         if not self.isVisible() or self.dragging or self.throwing or self.walking or (getattr(self,'edge_dock',None) and self.edge_dock.active):return False
         if now<max(self.next_chain,self.buffer_until,self.status_hold):return False
         if self.settings.get('status_actions',True) and (self.reactions.busy(now) or self.bubble.status_indicator.is_busy()):return False
+        if self.roaming.pending_start or self.roaming.paused_until is not None:
+            self.start_walk();return self.walking
         if self.roaming.queue:self.start_walk();return self.walking
         self.next_chain=now+self.settings['random_interval']+self.settings['action_gap']
         choices=['idle'];weights=[30]
@@ -394,11 +404,29 @@ class DesktopPet(EnhancedPet):
     def say(self,text,ms=4000):
         if self.enhanced_ready:
             now=time.monotonic();priority=self._priority or 3
+            if priority<=1 and not self.settings.get('self_talk',True):return
             if now<self.status_hold and priority<getattr(self,'message_priority',0):return
             # Automatic action lines never obscure an active Codex task.
-            if priority<=1 and not getattr(self,'_allow_talk_busy',False) and (self.last_activity.get('active',0)>0 or self.last_activity.get('state') in ('working','thinking','responding')):return
+            if priority<=1 and not getattr(self,'_allow_talk_busy',False) and self.bubble.status_indicator.is_busy():return
             self.message_priority=priority
+            self._speech_source=('action' if self._interactive_action or self._manual_action else 'automatic_action') if getattr(self,'_action_line_speaking',False) else 'automatic' if priority<=1 else 'system'
         super().say(text,ms)
+
+    def say_action_line(self,item):
+        # User-requested responses may speak during work; only unsolicited
+        # action captions are quiet. Use the aggregate visible busy state.
+        requested=self._interactive_action or self._manual_action
+        if self.enhanced_ready and not requested and self.bubble.status_indicator.is_busy():return
+        previous=getattr(self,'_action_line_speaking',False);self._action_line_speaking=True
+        try:super().say_action_line(item)
+        finally:self._action_line_speaking=previous
+
+    def quiet_background_speech(self):
+        source=getattr(self,'_speech_source',None)
+        automatic=source in ('automatic','automatic_action');action=source=='automatic_action'
+        busy=self.bubble.status_indicator.is_busy()
+        if (automatic and not self.settings.get('self_talk',True)) or (busy and (action or automatic and self.settings.get('talk_quiet',True))):
+            self._speech_source=None;self.status_hold=0;self.pending_activity=None;self.restore_status()
 
     def stop_walk(self,land=False,preserve_route=False):
         if not preserve_route:self.roaming.cancel()
@@ -450,8 +478,10 @@ class DesktopPet(EnhancedPet):
         if self.settings.get('status_actions',True) and (self.reactions.busy(time.monotonic()) or self.bubble.status_indicator.is_busy()):return
         if getattr(self,'edge_dock',None) and self.edge_dock.active:return
         if self.settings_dialog and self.settings_dialog.isVisible():return
-        if self.bubble.underMouse() or self.underMouse() or self.bubble.size_transition.running or self.bubble.size_transition.preparing:return
+        resuming=self.roaming.paused_until is not None or self.roaming.pending_start
+        if ((self.bubble.underMouse() or self.underMouse()) and not resuming) or QApplication.mouseButtons():return
         if (not self.settings.get('panel_detached') and ((self.bubble.report and self.bubble.report.requested) or self.bubble.panel_page!='status')) or self.settings.get('no_move') or self.dragging or self.throwing or self.gate.state not in ('idle','walk'):return
+        if not self.roaming.prepare_panel(time.monotonic()):return
         screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen();area=screen.availableGeometry()
         home=self.settings.get('wander_home')
         if not isinstance(home,dict) or home.get('screen')!=screen.name():
@@ -459,7 +489,8 @@ class DesktopPet(EnhancedPet):
         anchor=restore_position(home,self.width(),self.height(),(area.x(),area.y(),area.width(),area.height()))
         horizontal=self.settings['wander_horizontal_only']
         leg=self.roaming.next(screen,area,anchor,random.uniform)
-        if leg is None:return
+        if leg is None:self.roaming.cancel();return
+        self.roaming.paused_until=None;self.roaming.pending_start=False
         target,bounds=leg
         tx,ty=target
         distance=math.hypot(tx-self.x(),ty-self.y())
@@ -486,6 +517,7 @@ class DesktopPet(EnhancedPet):
         now=time.monotonic();motion_now=time.perf_counter();dt=motion_now-self.motion_clock;self.motion_clock=motion_now
         if not self.isVisible():return
         self.edge_dock.observe_pointer()
+        if hasattr(self.roaming,'tick'):self.roaming.tick(now)
         if self.throwing:
             a=(QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()).availableGeometry()
             bounds=(a.left(),a.top(),max(a.left(),a.right()-self.width()+1),max(a.top(),a.bottom()-self.height()+1))
@@ -512,7 +544,7 @@ class DesktopPet(EnhancedPet):
         # current clip has ended. This timer only moves the desktop window.
         if now>=self.next_talk:
             self.next_talk=now+random.uniform(self.settings['talk_min'],self.settings['talk_max'])
-            busy=self.last_activity.get('active',0)>0 or self.last_activity.get('state') in ('working','thinking','responding')
+            busy=self.bubble.status_indicator.is_busy()
             if self.settings['self_talk'] and self.settings['talk_lines'] and now>=self.status_hold and (not self.settings['talk_quiet'] or not busy):
                 self._priority=1
                 self._allow_talk_busy=not self.settings['talk_quiet']
@@ -523,6 +555,7 @@ class DesktopPet(EnhancedPet):
         if event.button()==Qt.MouseButton.LeftButton:
             self.roaming.cancel()
             self._pointer_epoch+=1;self._pointer_pressed=True
+            self._last_drag_move=0.
         self.throwing=False
         if self.mode=='throw':self.gate.state='idle';self.idle()
         self.press_feedback=time.monotonic();self.drag_samples.clear();self.drag_samples.append((time.perf_counter(),self.x(),self.y()))
@@ -534,10 +567,23 @@ class DesktopPet(EnhancedPet):
         # User dragging is the highest priority; it can interrupt a task gesture.
         if event.buttons()&Qt.MouseButton.LeftButton and not self.dragging and hasattr(self,'press_pos'):
             if (event.globalPosition().toPoint()-self.press_pos).manhattanLength()>8:
-                self.begin_drag_panel()
                 self.gate.state='idle'
         super().mouseMoveEvent(event)
-        if self.dragging:self.gate.state='drag';self.drag_samples.append((time.perf_counter(),self.x(),self.y()))
+        if self.dragging:self.gate.state='drag'
+    def move_drag_pointer(self,pointer):
+        self._drag_pointer=pointer
+        remaining=.008-(time.perf_counter()-self._last_drag_move)
+        if remaining<=0:
+            self.flush_drag_pointer()
+        elif not self._drag_move_timer.isActive():
+            self._drag_move_timer.start(max(1,math.ceil(remaining*1000)))
+    def flush_drag_pointer(self):
+        self._drag_move_timer.stop()
+        pointer=self._drag_pointer;self._drag_pointer=None
+        if pointer is None or not self.dragging or self.settings.get('no_move'):return
+        self._last_drag_move=time.perf_counter()
+        super().move_drag_pointer(pointer)
+        self.drag_samples.append((self._last_drag_move,self.x(),self.y()))
     def begin_drag_panel(self):
         from drag_panel import DragPanel
         if not hasattr(self,'drag_panel'):self.drag_panel=DragPanel(self)
@@ -550,6 +596,7 @@ class DesktopPet(EnhancedPet):
         self._pointer_pressed=False;self._pointer_epoch+=1
         if not had_press:return
         if self.dragging:
+            self.flush_drag_pointer()
             self.dragging=False;self.last_click=None;self.click_timer.stop();self.gate.state='idle'
             if self.edge_dock.try_dock():
                 if hasattr(self,'drag_panel'):self.drag_panel.finish(docked=True)
@@ -582,6 +629,7 @@ class DesktopPet(EnhancedPet):
         """A lost grab has no release event; finish safely without a click or throw."""
         if not (self._pointer_pressed or self.dragging):return
         was_dragging=self.dragging
+        self._drag_move_timer.stop();self._drag_pointer=None
         self._pointer_pressed=False;self._pointer_epoch+=1;self.dragging=False
         self.drag_samples.clear();self.last_click=None;self.click_timer.stop()
         if hasattr(self,'drag_panel'):self.drag_panel.finish()
@@ -616,7 +664,7 @@ class DesktopPet(EnhancedPet):
             self._priority=10
             try:self.say('Codex 任务完成啦！\n'+title,14000)
             finally:self._priority=0
-            self.notify('Codex 任务已完成',title);self.refresh_quota()
+            self.notify('Codex 任务已完成',title);self._completion_quota_refresh.request()
             self.complete_animation(event)
         else:
             if event.get('kind')=='status':
@@ -625,6 +673,7 @@ class DesktopPet(EnhancedPet):
             elif event.get('kind')=='monitor_error':
                 self.reactions.observe(dict(state='offline',text='监听异常',active=0),time.monotonic())
             super().on_activity(event)
+            if event.get('kind')=='status':self.quiet_background_speech()
             if event.get('kind')=='status' and self.settings.get('status_actions',True) and self.bubble.status_indicator.is_busy() and self.walking and not (self.dragging or self.throwing):
                 self.stop_walk(land=True)
     def complete_animation(self,event):
@@ -695,6 +744,7 @@ class DesktopPet(EnhancedPet):
             self._codex_exit_gate.reset()
         old_size=self.height();foot=self.geometry().bottom()+1;center=self.geometry().center().x()
         self.settings.update(values);self.settings=normalized(self.settings)
+        if self.enhanced_ready:self.quiet_background_speech()
         from settings_controls import set_motion_mode,settle_motion
         set_motion_mode(self.settings['ui_animation_mode'])
         if self.settings['ui_animation_mode']!=previous.get('ui_animation_mode','quality'):settle_motion()
@@ -898,6 +948,7 @@ class DesktopPet(EnhancedPet):
         # the saved independent-card anchor. Initial placement must not create
         # and persist a replacement anchor from the temporary startup geometry.
         if not getattr(self,'_visibility_ready',False):return super().position_bubble()
+        if self.dragging and self.settings.get('panel_detached'):return
         if hasattr(self,'drag_panel'):self.drag_panel.follow()
         report=getattr(self.bubble,'report',None)
         if report and getattr(report,'_host_closing',False) and not getattr(getattr(self,'drag_panel',None),'active',False):return
@@ -914,9 +965,24 @@ class DesktopPet(EnhancedPet):
             if not self.card_surface_visible():self.bubble.hide()
             return
         super().position_bubble()
+        self.sync_attached_panel_stack()
         if self.enhanced_ready and self.bubble.panel_page!='status':self.bubble._editor_positioned=True
         if self.enhanced_ready and not self.card_surface_visible():self.bubble.hide()
+    def sync_attached_panel_stack(self):
+        bubble=self.bubble;video=self.video_yield
+        if (video is None or self._video_yielded or self._fullscreen_yielded or
+                self.settings.get('panel_detached') or bubble.panel_page!='status' or
+                bubble.expanded or (bubble.report and bubble.report.requested) or
+                not self.isVisible() or not bubble.isVisible()):
+            return
+        now=time.monotonic()
+        if now<getattr(self,'_next_attached_stack_check',0.):return
+        self._next_attached_stack_check=now+.12
+        video.api.stack_with(int(bubble.winId()),int(self.winId()))
+
     def can_raise_bubble(self):
+        if self.video_yield is not None and not self.settings.get('panel_detached') and not self.bubble.expanded:
+            return False
         if self._video_yielded or self._fullscreen_yielded or self.dragging or self.throwing or self.walking:return False
         # Owned panels stay above the pet. Periodic bubble updates must not
         # reorder its sibling windows over an open settings/chat panel.
@@ -1046,7 +1112,8 @@ class DesktopPet(EnhancedPet):
         if not self.settings_dialog:
             from desktop_settings import SettingsDialog
             self.settings_dialog=SettingsDialog(self,embedded=True,lazy=True)
-        self.settings_dialog.sync_from_pet(read_startup=True)
+        else:
+            self.settings_dialog.sync_from_pet(read_startup=self.settings_dialog.tabs.currentIndex()==2)
         self.show_panel(self.settings_dialog)
     def open_status(self):
         self.show()
@@ -1080,17 +1147,23 @@ class DesktopPet(EnhancedPet):
         self.recently_visited=getattr(self,'recently_visited',{});self.recently_visited[session]=time.monotonic()
         try:self.codex_navigation.open(session)
         except OSError as error:self.say(str(error),6000)
-    def open_data(self):QDesktopServices.openUrl(QUrl.fromLocalFile(str(STATE_DIR)))
+    def open_data(self):
+        try:
+            STATE_DIR.mkdir(parents=True,exist_ok=True)
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(STATE_DIR))):
+                raise OSError('文件管理器未能打开数据目录：'+str(STATE_DIR))
+            return True
+        except (OSError,ValueError) as error:
+            QMessageBox.warning(self.settings_dialog,'打开数据目录失败',str(error));return False
     def open_install_manager(self):
         """只在 Windows 打开已登记的安装管理程序"""
         from app_updates import program_updates_supported
-        if not program_updates_supported():self.say('当前平台不支持 Windows 安装管理，请手动管理程序目录。',6000);return
         try:
+            if not program_updates_supported():raise OSError('当前平台请使用对应版本的安装与维护方式。')
             from installer import checked_version,read_manifest
             from storage_locations import install_root
             root=install_root();m=read_manifest(root)
-            exe=checked_version(root,m.get('current',''))/'白龙安装管理.exe'
-            if not exe.is_file():raise OSError('当前没有已安装的维护程序，请使用安装器选择程序位置')
+            exe=checked_version(root,m.get('current',''))/'BailongEnhanced.exe'
             from process_launch import launch_own
             launch_own([str(exe),'--manage'],cwd=exe.parent,creationflags=0x08000000)
         except (OSError,ValueError) as exc:QMessageBox.warning(self.settings_dialog,'安装管理',str(exc))
@@ -1238,12 +1311,16 @@ class DesktopPet(EnhancedPet):
         self.settings['character']='builtin';self.save_settings();self.idle()
         self.materials.remove(plan)
     def export_diagnostics(self):
-        self.record_state();path=ROOT/('白龙诊断-'+time.strftime('%Y%m%d-%H%M%S')+'.json')
-        value=json.loads((STATE_DIR/'runtime.json').read_text(encoding='utf-8'))
-        value['asset_count']=len(all_items(self.manifest));value['decode_error']=self.decode_error
-        value.update(wander_mode=self.settings.get('wander_mode','edge'),wander_route_pending=len(self.roaming.queue),wander_window_geometry_interval=1,wander_fast_center_pass=True)
-        value['work_animation_count']=len([v for v in self.manifest.get('workAnimations',[]) if v]);value['semantic_work_actions']=True;value['explicit_task_arrival_animation']=True
-        atomic_json(path,value);self.say('诊断已保存：'+path.name,6000)
+        try:
+            self.record_state();path=STATE_DIR/'diagnostics'/('白龙诊断-'+time.strftime('%Y%m%d-%H%M%S')+'.json')
+            value=json.loads((STATE_DIR/'runtime.json').read_text(encoding='utf-8'))
+            value['asset_count']=len(all_items(self.manifest));value['decode_error']=self.decode_error
+            value.update(wander_mode=self.settings.get('wander_mode','edge'),wander_route_pending=len(self.roaming.queue),wander_window_geometry_interval=1,wander_fast_center_pass=True)
+            value['work_animation_count']=len([v for v in self.manifest.get('workAnimations',[]) if v]);value['semantic_work_actions']=True;value['explicit_task_arrival_animation']=True
+            atomic_json(path,value);self.say('诊断已保存到数据目录的 diagnostics 文件夹：'+path.name,6000)
+            return path
+        except (OSError,ValueError,TypeError) as error:
+            QMessageBox.warning(self.settings_dialog,'导出诊断失败','无法保存诊断：'+str(error));return None
     def cleanup_installations(self):
         """只清理 Windows 安装器登记且经用户确认的历史版本"""
         from app_updates import program_updates_supported
@@ -1269,15 +1346,22 @@ class DesktopPet(EnhancedPet):
         if getattr(self,'_cleanup_exit_pending',False):self.close()
 
     def backup_settings(self):
-        path=STATE_DIR/('settings-backup-'+time.strftime('%Y%m%d-%H%M%S')+'.json');self.save_settings();shutil.copy2(CONFIG,path)
-        self.say('设置备份已保存到配置目录。',5000)
+        try:
+            path=STATE_DIR/('settings-backup-'+time.strftime('%Y%m%d-%H%M%S')+'.json')
+            self.save_settings();value=json.loads(CONFIG.read_text(encoding='utf-8'))
+            if not isinstance(value,dict):raise ValueError('设置文件格式无效')
+            atomic_json(path,value)
+            self.say('设置备份已保存到配置目录。',5000);return path
+        except (OSError,ValueError,TypeError) as error:
+            QMessageBox.warning(self.settings_dialog,'备份设置失败','无法备份设置：'+str(error));return None
     def restore_settings(self):
         path,_=QFileDialog.getOpenFileName(self.settings_dialog,'选择设置备份',str(STATE_DIR),'JSON (*.json)')
         if not path:return
         try:
             raw=json.loads(Path(path).read_text(encoding='utf-8'))
             if not isinstance(raw,dict):raise ValueError('设置备份格式无效')
-            desired=normalized(raw);previous=copy.deepcopy(self.settings);self.backup_settings()
+            desired=normalized(raw);previous=copy.deepcopy(self.settings)
+            if self.backup_settings() is None:return
             try:
                 if desired['character']!=self.settings['character']:self.switch_character(desired['character'])
                 self.apply_settings(desired);self.restore_saved_position();self.position_bubble()

@@ -947,6 +947,8 @@ class EnhancedPet(Pet):
                'ring_shape':'mini_circle' if self.bubble.is_island() else 'none',
                'ring_sweep':360 if self.bubble.is_island() else 0,'ring_tilt':0,
                'token_month_total':(self.bubble.token_snapshot or {}).get('total')}
+        live=getattr(self.bubble,'live_rate_card',None)
+        if live is not None and hasattr(live,'hover_diagnostics'):value['realtime_hover']=live.hover_diagnostics()
         value['database_maintenance']=getattr(self,'database_maintenance',None)
         value['hover_hints']=dict(header_custom=True,tray_custom=True,
             tray_hook_ready=bool(getattr(self.tray,'ready',False) or self.tray_hover.hook.hwnd),tray_hook_error=getattr(self.tray,'error','') or self.tray_hover.hook.error,
@@ -979,6 +981,9 @@ class EnhancedPet(Pet):
 def main():
     from process_launch import configure_frozen_qt
     configure_frozen_qt()
+    if '--cost-extension-probe' in sys.argv:
+        from cost_extension_probe import run
+        return run(sys.argv[sys.argv.index('--cost-extension-probe')+1])
     if '--chat-probe' in sys.argv:
         from chat_probe import run
         return run(sys.argv[sys.argv.index('--chat-probe')+1])

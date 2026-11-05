@@ -142,14 +142,18 @@ class LinuxUpdateTests(unittest.TestCase):
 
     def test_install_management_and_cleanup_do_not_inspect_or_change_installations(self):
         """不支持的维护调用在读取 Windows 安装登记和生成清理任务之前返回"""
-        pet = SimpleNamespace(say=Mock())
-        with patch('installer.read_manifest') as read, patch('installation_cleanup.cleanup_plan') as plan, patch('process_launch.launch_own') as launch:
+        pet = SimpleNamespace(say=Mock(), settings_dialog=None)
+        with (patch('installer.read_manifest') as read,
+              patch('installation_cleanup.cleanup_plan') as plan,
+              patch('process_launch.launch_own') as launch,
+              patch('desktop.QMessageBox.warning') as warning):
             DesktopPet.open_install_manager(pet)
             DesktopPet.cleanup_installations(pet)
         read.assert_not_called()
         plan.assert_not_called()
         launch.assert_not_called()
-        self.assertEqual(pet.say.call_count, 2)
+        warning.assert_called_once()
+        pet.say.assert_called_once()
 
     def test_maintenance_page_exposes_animation_and_data_only(self):
         """真实设置页保留数据操作、动画更新及 Linux 下载入口"""

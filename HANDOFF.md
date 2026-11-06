@@ -1,3 +1,7 @@
+# v1.6.0 已公开交付
+
+Windows 当前公开版为 v1.6.0，详见 [版本说明](docs/releases/v1.6.0.md)。Linux 社区预览与 macOS 社区版独立维护。
+
 # v1.5.0 已公开交付
 
 Windows 当前公开版为 v1.5.0，详见 [版本说明](docs/releases/v1.5.0.md)。Linux 社区预览与 macOS 社区版独立维护。

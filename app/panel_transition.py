@@ -74,7 +74,14 @@ class NativeLanding(QWidget):
         # Expose an empty, input-transparent surface during the animation.
         # A first show at the final resize may not be paintable synchronously.
         if self.geometry()!=rect:self.setGeometry(rect)
-        if not self.isVisible():self.show();self.raise_()
+        from native_landing import publish
+        self.pre_show_published=False
+        if not self.isVisible():
+            # Seed the layered HWND before ShowWindow can expose an unpainted
+            # default rectangle. Qt repaint may be deferred until Expose.
+            try:self.pre_show_published=publish(self,self.image)
+            except OSError as error:self.native_error=str(error)
+            self.show();self.raise_()
         self.repaint()
         # A just-shown translucent tool is not necessarily exposed to Qt yet.
         # Submit the raster now, before the owner becomes transparent.
@@ -231,10 +238,18 @@ class PanelTransition(QObject):
             if b.report:b.report.follow.finish(target)
             self.before=None;self.start_rect=None;self.old_surface=None;self.start_page_state=None;self.deferred=False;self.preparing=False;self._end_preparation();self._hold_icon(False);return
         self.target_rect=target;b.layout.activate()
+        # Let hidden target children run their normal Show/layout preparation
+        # under the frozen native canvas. QTabWidget defers its internal pane
+        # geometry until Show; capturing earlier gives default 100x30 children.
+        # This does not expose/recreate a native window or process UI events.
+        if b.content.isHidden() and not b.updatesEnabled():b.content.show()
         self.shrinking=target.width()*target.height()<self.start_rect.width()*self.start_rect.height()
         self.animation.setDuration(SHRINK_MS if self.shrinking else EXPAND_MS)
         self.animation.setEasingCurve(QEasingCurve.Type.Linear)
         widgets=settle_visible(b.content)
+        # The temporary child Show is for layout only. Keep target content
+        # hidden when native updates resume, until its raster owns the canvas.
+        b.content.hide()
         # QWidget.render skips update-disabled descendants. Restore them only
         # for synchronous offscreen captures, after all posted layout work.
         # No event-loop turn or native paint is dispatched in this interval.

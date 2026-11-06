@@ -97,6 +97,7 @@ class Session:
     closed_turn: str = ''
     done: bool = True
     source_subagent: bool = False
+    attached_parent: str = ''
     provenance_known: bool = False
     display: str = ''
     calls: dict = field(default_factory=dict)
@@ -105,6 +106,9 @@ class Session:
     updated: float = 0
     runtime_active: bool|None = None
     runtime_turn: str = ''
+
+    @property
+    def source_hidden(self):return self.source_subagent or bool(self.attached_parent)
 
 
 class ActivityReducer:
@@ -119,25 +123,25 @@ class ActivityReducer:
         return dict(kind='status',session=sid,state='waiting' if waiting else 'idle' if quiet else 'working' if s.compacting else s.state,
                     text=label or ('等待新的 Codex 任务' if quiet else '正在压缩上下文' if s.compacting else s.message),title=s.title,turn=s.turn,
                     activity='waiting' if waiting else 'idle' if quiet else 'compact' if s.compacting else activity,display=label or ('等待新任务' if quiet else '正在压缩上下文' if s.compacting else s.display),
-                    compacting=s.compacting,waiting_reason=waiting,waiting=sum(bool(x.waiting_reason) and not x.done for x in self.sessions.values()),
-                    user_message=user_message,turn_started=turn_started,active=sum((not x.done or x.compacting) and not x.source_subagent and not (x.runtime_turn==x.turn and x.runtime_active is False) for x in self.sessions.values()))
+                    compacting=s.compacting,waiting_reason=waiting,waiting=sum(bool(x.waiting_reason) and not x.done and not x.source_hidden for x in self.sessions.values()),
+                    user_message=user_message,turn_started=turn_started,active=sum((not x.done or x.compacting) and not x.source_hidden and not (x.runtime_turn==x.turn and x.runtime_active is False) for x in self.sessions.values()))
 
     def set_runtime(self,sid,active,turn):
         """Explicit runtime idleness is reversible, never a synthetic completion."""
         s=self.sessions.get(sid)
-        if not s or s.source_subagent or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
+        if not s or s.source_hidden or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
         if s.runtime_turn==turn and s.runtime_active is active:return []
         s.runtime_turn=turn;s.runtime_active=active
         return [self._status(sid,s)]
 
     def runtime_events(self,sid,active,turn):
         s=self.sessions.get(sid)
-        if not s or s.source_subagent or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
+        if not s or s.source_hidden or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
         return self.set_runtime(sid,active,turn)+[dict(kind='animation_lifecycle',session=sid,turn=turn,active=active)]
 
     def terminate(self,sid,status,turn):
         s=self.sessions.get(sid)
-        if not s or s.source_subagent or s.done or not turn or s.turn!=turn or status not in ('completed','failed','interrupted'):return []
+        if not s or s.source_hidden or s.done or not turn or s.turn!=turn or status not in ('completed','failed','interrupted'):return []
         s.done=True;s.closed_turn=turn;s.compacting=False;s.waiting_reason=''
         s.state='complete' if status=='completed' else 'interrupted'
         s.message=s.display={'completed':'任务已完成','failed':'任务执行失败','interrupted':'任务已中断'}[status]
@@ -147,7 +151,7 @@ class ActivityReducer:
 
     def set_waiting(self,sid,reason,turn=''):
         s=self.sessions.setdefault(sid,Session())
-        if s.source_subagent or s.done or reason not in ('','input','approval'):return []
+        if s.source_hidden or s.done or reason not in ('','input','approval'):return []
         if turn and s.turn and turn!=s.turn:return []
         if reason==s.waiting_reason:return []
         s.waiting_reason=reason
@@ -155,7 +159,7 @@ class ActivityReducer:
 
     def set_compacting(self,sid,value,turn=''):
         s=self.sessions.setdefault(sid,Session())
-        if s.source_subagent or bool(value)==s.compacting:return []
+        if s.source_hidden or bool(value)==s.compacting:return []
         if value and s.done and (not turn or turn==s.closed_turn or turn==s.turn):return []
         if turn and s.turn and turn!=s.turn and not s.done:return []
         if turn and (not s.turn or s.done):s.turn=turn;s.closed_turn=''
@@ -179,7 +183,7 @@ class ActivityReducer:
             owner=p.get('id') or p.get('session_id')
             if not s.provenance_known and (not owner or session_id(owner)==session_id(sid)):
                 s.source_subagent=is_subagent_metadata(p);s.provenance_known=True
-        if s.source_subagent:
+        if s.source_hidden:
             return []
         limits = p.get('rate_limits')
         if limits is None and isinstance(p.get('info'), dict):
@@ -314,7 +318,8 @@ class RolloutTail:
         self.catalog=LogCatalog(self.home);self.files={};self.last_scan=0;self.seeded=False
         self.health=dict(state='unknown',code='starting');self.pins=set();self.generation=None
         self.discovered=set();self.file_ids={};self.queue=[];self.by_id={}
-        self.rate_observer=None
+        self.rate_observer=None;self.usage_observer=None
+        self.attached={};self._identity_checked=set();self._identity_scan=-1e9;self._hidden=set()
     def set_pins(self,ids):self.pins={session_id(s) for s in ids}
     def poll(self):
         from performance_metrics import METRICS
@@ -330,7 +335,14 @@ class RolloutTail:
             ordered=sorted(new,key=modified,reverse=True)
             self.queue.extend((p,self.seeded) for p in (ordered if self.seeded else ordered[:16]))
             self.discovered=set(paths);self.by_id={session_id(self.file_ids[p]):p for p in sorted(paths,key=lambda p:(self.home/'sessions') in p.parents)}
-        active={session_id(sid) for sid,s in self.reducer.sessions.items() if not s.source_subagent and (not s.done or s.compacting)}
+        identities={session_id(s) for s in self.reducer.sessions}|self.pins
+        identities.update(session_id(self.file_ids[p]) for p,new in self.queue[:32])
+        if now-self._identity_scan>=5 or identities-self._identity_checked:
+            from session_read_state import attached_conversations
+            self.attached.update(attached_conversations(self.home,identities))
+            self._identity_checked=identities;self._identity_scan=now
+        for alias,s in self.reducer.sessions.items():s.attached_parent=self.attached.get(session_id(alias),'')
+        active={session_id(sid) for sid,s in self.reducer.sessions.items() if not s.source_hidden and (not s.done or s.compacting)}
         important=active|self.pins
         # DB-active/unread/displayed identities are read even if their log has
         # not changed for hours or moved to the archive directory.
@@ -347,6 +359,7 @@ class RolloutTail:
                 self.reducer.sessions[sid]=self.reducer.sessions.pop(canonical)
             try:
                 st=path.stat();recognized=False
+                self.reducer.sessions.setdefault(sid,Session()).attached_parent=self.attached.get(canonical,'')
                 with path.open('rb') as header:meta=json.loads(header.readline(4*1024*1024))
                 if isinstance(meta,dict) and meta.get('type')=='session_meta':
                     self.reducer.apply(sid,meta,historical=True);recognized=True
@@ -381,12 +394,15 @@ class RolloutTail:
                 if not isinstance(obj,dict):continue
                 if obj.get('type') in ('session_meta','event_msg','response_item','turn_context'):state['recognized']=True
                 historical=state['history'] or (state.get('discovery_cutoff') is not None and safe_time(obj.get('timestamp'))<state['discovery_cutoff'])
+                if self.usage_observer and obj.get('type')=='event_msg' and isinstance(obj.get('payload'),dict) and obj['payload'].get('type')=='token_count':
+                    self.usage_observer(str(path.resolve()),obj,historical=historical)
                 if self.rate_observer and obj.get('type')=='event_msg' and isinstance(obj.get('payload'),dict):
-                    self.rate_observer(sid,obj['payload'],safe_time(obj.get('timestamp')),historical=historical)
+                    if not self.reducer.sessions[sid].attached_parent:
+                        self.rate_observer(sid,obj['payload'],safe_time(obj.get('timestamp')),historical=historical)
                 events.extend(self.reducer.apply(sid,obj,historical=historical))
             if state['offset']>=size:state['history']=False;state['discovery_cutoff']=None
         # Keep 32 recently used files plus every active/unread/displayed one.
-        active={session_id(sid) for sid,s in self.reducer.sessions.items() if not s.source_subagent and (not s.done or s.compacting)}
+        active={session_id(sid) for sid,s in self.reducer.sessions.items() if not s.source_hidden and (not s.done or s.compacting)}
         important|=active
         recent=sorted(self.files,key=lambda p:self.files[p]['touched'],reverse=True)[:32]
         self.files={p:v for p,v in self.files.items() if p in recent or session_id(v['sid']) in important}
@@ -397,6 +413,17 @@ class RolloutTail:
             self.seeded=True
             if self.reducer.last_quota:events.append(self.reducer.last_quota)
             events.append(dict(kind='status',state='idle' if self.files else 'offline',text='已找到本机 Codex 会话，等待新消息' if self.files else '尚未找到本机 Codex 会话，请打开 Codex 并发送消息',title='Codex 状态',active=0))
+        hidden={session_id(sid) for sid,s in self.reducer.sessions.items() if s.source_hidden}|set(self.attached)
+        if hidden!=self._hidden:
+            self._hidden=hidden
+            events.insert(0,dict(kind='hidden_sessions',sessions=sorted(hidden)))
+            visible=[(sid,s) for sid,s in self.reducer.sessions.items() if not s.source_hidden]
+            if visible:
+                sid,s=max(visible,key=lambda pair:(not pair[1].done,pair[1].updated))
+                # A metadata repair must also correct the aggregate count when
+                # the actual task has been silent for a long time.
+                events.append(self.reducer._status(sid,s))
+            else:events.append(dict(kind='status',state='idle',text='等待 Codex 新任务',title='Codex 状态',active=0,waiting=0))
         recognized=any(v.get('recognized') for v in self.files.values())
         self.health=dict(state='degraded' if errors or readable and not recognized else 'available' if readable else 'unavailable',code='logs_unreadable' if errors else 'logs_schema' if readable and not recognized else 'logs_idle' if readable else 'logs_missing')
         return events

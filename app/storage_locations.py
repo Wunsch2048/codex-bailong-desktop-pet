@@ -6,6 +6,32 @@ MARKER='.bailong-storage.json'
 
 def data_dir():return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
 
+
+def configure_data_environment():
+    """Honor this managed install's data binding across different launch hosts.
+
+    MSIX hosts can virtualize LocalAppData. Keep the registered running data
+    rather than accidentally adopting an older namesake outside that host.
+    Uninstalled candidates and isolated probes must keep their own environment.
+    """
+    if sys.platform!='win32' or not getattr(sys,'frozen',False) or os.environ.get('BAILONG_ISOLATED')=='1':return None
+    exe=Path(sys.executable).absolute()
+    if exe.parent.parent.name!='versions':return None
+    install=exe.parent.parent.parent.resolve()
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Uninstall\BailongEnhanced') as key:
+            registered=winreg.QueryValueEx(key,'InstallLocation')[0]
+            bound=winreg.QueryValueEx(key,'DataLocation')[0]
+        if not isinstance(registered,str) or Path(registered).resolve()!=install:return None
+        if not isinstance(bound,str):return None
+        data=Path(bound)
+        if not data.is_absolute() or data.name.casefold()!='bailongenhanced':return None
+        data=plain(data)
+        os.environ['LOCALAPPDATA']=str(data.parent)
+        return data
+    except (OSError,ValueError,TypeError):return None
+
 def registered_install_root():
     if sys.platform!='win32':return None
     try:

@@ -71,6 +71,15 @@ class WorkloadTests(unittest.TestCase):
         now=self.start+WEEK+201;rows=summarize_cycles(self.db,now)
         self.assertIsNotNone(rows[0]['estimated_total']);self.assertIsNone(rows[0]['change'])
         self.assertIn('模型使用结构',rows[0]['comparison_block']);self.assertIsNone(anomaly(rows,now))
+        self.assertEqual(rows[0]['reference_change'],-25)
+    def test_missing_speed_allows_reference_but_never_strict_change_or_alert(self):
+        self.cycle(self.start,1000,0,40);self.cycle(self.start+WEEK,500,0,40)
+        self.db.execute("UPDATE quota_workload_events SET speed=''")
+        now=self.start+WEEK+201;rows=summarize_cycles(self.db,now)
+        self.assertEqual(rows[0]['reference_change'],-50)
+        self.assertIsNone(rows[0]['change']);self.assertIsNone(anomaly(rows,now))
+        self.assertIn('速度档位',rows[0]['comparison_block'])
+        self.assertFalse(rows[0]['workload']['complete'])
     def test_identical_conditions_can_still_warn_both_directions(self):
         for amounts,expected in [((1000,500),-50),((500,1000),100)]:
             self.db.execute('DELETE FROM usage');self.db.execute('DELETE FROM quota_observations');self.db.execute('DELETE FROM quota_workload_events')

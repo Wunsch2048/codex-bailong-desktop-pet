@@ -128,6 +128,11 @@ class DesktopPet(EnhancedPet):
         self.codexPresence.connect(self.observe_codex_presence)
         self.codex_timer=QTimer(self);self.codex_timer.setInterval(2000);self.codex_timer.timeout.connect(self.poll_codex_presence)
         if monitor:self.codex_timer.start()
+        if monitor:
+            from official_credit_rates import shared as official_rates
+            self.official_rates=official_rates();self.official_rates.start()
+            from official_api_prices import shared as api_prices
+            self.api_prices=api_prices();self.api_prices.updated.connect(self.refresh_tokens);self.api_prices.start()
         self._tray_update_hint=''
         self._refresh_tray_icon()
         self.tray.activated.disconnect()
@@ -642,6 +647,23 @@ class DesktopPet(EnhancedPet):
 
     @measured('ui_activity')
     def on_activity(self,event):
+        if event.get('kind')=='hidden_sessions':
+            from session_read_state import session_id
+            excluded={session_id(s) for s in event.get('sessions',[])}
+            self._hidden_activity_sessions=excluded
+            roster=self.bubble.roster
+            for sid in excluded:
+                roster.items.pop(sid,None);roster.names.pop(sid,None)
+            for entries in (self.reactions.sessions,self.reactions.leases,self.reactions.openings):
+                for key in list(entries):
+                    if session_id(key[0] if isinstance(key,tuple) else key) in excluded:entries.pop(key,None)
+            roster.pending.difference_update(excluded);roster.pinned=[s for s in roster.pinned if s not in excluded]
+            if self.reactions.completion and session_id(self.reactions.completion.get('session','')) in excluded:self.reactions.completion=None
+            if getattr(self,'pending_completion',None) and session_id(self.pending_completion.get('session','')) in excluded:self.pending_completion=None
+            if self.reactions.latest and session_id(self.reactions.latest.get('session','')) in excluded:self.reactions.latest=None
+            self.bubble.status_indicator.exclude_sessions(excluded);self.bubble.refresh_status();return
+        from session_read_state import session_id
+        if session_id(event.get('session','')) in getattr(self,'_hidden_activity_sessions',set()):return
         if event.get('kind')=='animation_lifecycle':
             self.reactions.confirm(event.get('session',''),event.get('turn',''),event.get('active',False),time.monotonic());return
         if event.get('kind')=='connection_health':

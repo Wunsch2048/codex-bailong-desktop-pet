@@ -67,6 +67,13 @@ def readable_palette(source):
     danger_bgs=tuple(mix(p['dangerBg'],ink,f) for f in (0,.07,.14))
     danger_ink=max(('#ffffff','#111113'),key=lambda c:min(contrast(c,bg) for bg in danger_bgs))
     p['dangerBadge']=readable(p.get('dangerBadge',p['danger']),danger_bgs,danger_ink,4.5)
+    # Reference differences retain a yellow identity even in themes whose
+    # decorative warning colour is red/blue. Adapt depth and ink to the surface.
+    dark=luminance(p['surface'])<.15
+    p['referenceBg']=mix(p['surface'],'#e6b52c',.23 if dark else .30)
+    reference_bgs=tuple(mix(p['referenceBg'],ink,f) for f in (0,.07,.14))
+    reference_ink=max(('#fff1b8','#644400'),key=lambda c:min(contrast(c,bg) for bg in reference_bgs))
+    p['referenceBadge']=readable(reference_ink,reference_bgs,reference_ink,4.5)
     # PRIMARY and its hover are text-readable colors; choose their shared ink.
     p['accentOn']=max(('#ffffff','#111113'),key=lambda c:contrast(c,p['accentText']))
     p['primaryPressed']=readable(mix(p['accentText'],ink,.12),(*surfaces,p['accentOn']),p['accentText'],4.5)

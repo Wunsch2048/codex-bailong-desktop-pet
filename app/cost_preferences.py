@@ -36,10 +36,19 @@ def save(value):
 def prices(value=None):
     from project_cost import RATES
     result=dict(RATES)
+    from official_api_prices import latest_rates
+    for model,values in latest_rates().items():
+        if all(v is not None for v in values):result[model]=values
+        else:result.pop(model,None)
     for model,values in (load() if value is None else value)['prices'].items():
         if all(v is not None for v in values):result[model]=tuple(values)
         else:result.pop(model,None)
     return result
+
+def price_history(value=None):
+    from project_cost import RATES
+    from official_api_prices import price_history as history
+    return history((load() if value is None else value)['prices'],RATES)
 def money(amount,value=None):
     if amount is None:return '—'
     value=current() if value is None else value;currency=value['currency'];fx=1 if currency=='USD' else value['fx']

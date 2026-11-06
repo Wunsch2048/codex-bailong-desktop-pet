@@ -117,10 +117,10 @@ class DetailsTabs(QTabWidget):
         help_button=DetailInfoButton(self);self.help_button=help_button;help_button.setObjectName('detail_help');help_button.setFixedSize(22,22)
         help_button.setFocusPolicy(Qt.FocusPolicy.NoFocus);help_button.setCursor(Qt.CursorShape.PointingHandCursor)
         help_button.setAccessibleName('使用说明');help_button.setToolTip('说明')
+        help_button.setProperty('headerActionHint','使用说明')
         set_theme_style(help_button,'QToolButton{color:#706879;border:0;background:transparent;border-radius:6px;}QToolButton:hover{background:#eee7f5;}QToolButton:checked{background:#eae2f2;}')
-        help_button.setCheckable(True);help_button.clicked.connect(bubble.show_explanations)
+        help_button.clicked.connect(bubble.show_explanations)
         help_button.move(max(0,self.width()-22),0)
-        self.currentChanged.connect(lambda index:help_button.setChecked(index>=3))
         items=quota_items(bubble.windows)
         for item in items:
             title={'一周':'本周窗口','5小时':'5 小时窗口'}.get(item['name'],item['name']+'窗口')

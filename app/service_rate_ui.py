@@ -1,8 +1,9 @@
 """Compact service row and in-place detail on the existing realtime bubble."""
 from html import escape
 from datetime import datetime
+import time
 from PySide6.QtCore import Qt,QRect,QRectF,QPoint,QPropertyAnimation,QEasingCurve,QEvent
-from PySide6.QtGui import QPainter,QColor,QPen,QTextDocument
+from PySide6.QtGui import QPainter,QColor,QPen,QTextDocument,QCursor
 from compact_bubble import font
 from theme_registry import palette
 from public_status import shared,bubble_position,service_colors
@@ -78,15 +79,21 @@ def service_bubble(Base):
             if event.button()!=Qt.MouseButton.LeftButton:return
             if not self.focusable:return
             if self.page=='sessions' and event.position().y()>=self.height()-29:self.page='service';self.detail_scroll=0
-            elif self.page=='service' and event.position().y()<30:
-                if event.position().x()>self.width()-30:self.dismiss(True);return
+            elif self.page=='service' and event.position().y()<30 and event.position().x()<110:
                 self.page='sessions'
             else:return
             if self.host:self.inspect(dict(details=self.rows,rate=self.total),self.host)
         def hideEvent(self,event):
             self.geometry_motion.stop();super().hideEvent(event)
         def event(self,event):
-            if event.type()==QEvent.Type.WindowDeactivate and getattr(self,'focusable',False):self.dismiss(True)
+            if event.type()==QEvent.Type.WindowDeactivate and getattr(self,'focusable',False):
+                from shiboken6 import isValid
+                host=getattr(self,'host',None)
+                if host is not None and isValid(host) and host.isVisible() and QRect(host.mapToGlobal(QPoint()),host.size()).contains(QCursor.pos()):
+                    # Windows may deactivate this Tool before delivering the
+                    # host's press. Carry that one click across the focus loss.
+                    host._service_deactivated_at=time.monotonic()
+                self.dismiss(True)
             return super().event(event)
         def paintEvent(self,event):
             if self.page=='sessions':
@@ -99,6 +106,6 @@ def service_bubble(Base):
                 p.setPen(QColor(theme['muted']));p.drawText(QRectF(self.width()-80,y+2,69,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,stamp+(' ›' if self.focusable else ''));return
             theme=palette();p=QPainter(self);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver);p.setOpacity(self.level);p.setRenderHint(QPainter.RenderHint.Antialiasing)
             p.setPen(QColor(theme['border']));p.setBrush(QColor(theme['surface']));p.drawRoundedRect(QRectF(1,1,self.width()-2,self.height()-2),9,9)
-            p.setFont(font(11));p.setPen(QColor(theme['accentText']));p.drawText(11,21,'‹ 会话速率');p.drawText(self.width()-23,21,'×')
+            p.setFont(font(11));p.setPen(QColor(theme['accentText']));p.drawText(11,21,'‹ 会话速率')
             p.setClipRect(QRectF(10,29,self.width()-20,self.height()-35));p.translate(10,29-self.detail_scroll);self.doc.drawContents(p)
     return SessionRateBubble

@@ -16,13 +16,18 @@ RATES={'gpt-6-astra':(10,1,50),'gpt-6.1-sol':(2,.1,10),
 RATE_SOURCES={name:'https://developers.openai.com/api/docs/models/'+name
               for name in ('gpt-6-sol','gpt-5.6-luna')}
 
-def rate(model,prices=None):
+def rate(model,prices=None,stamp=None,history=None):
     name=re.sub(r'-\d{4}-\d{2}-\d{2}$','',model.lower())
+    if history is not None and stamp is not None:
+        from official_api_prices import historical_rate
+        return historical_rate(name,stamp,history)
     return (RATES if prices is None else prices).get(name)
 
-def pricing_revision(prices=None):
+def pricing_revision(prices=None,history=None):
     """Bind each projection to the entire price table, not just its label."""
-    return PRICE_VERSION+':'+hashlib.sha256(json.dumps(RATES if prices is None else prices,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:16]
+    value=RATES if prices is None else prices
+    if history is not None:value=dict(prices=value,history=history)
+    return PRICE_VERSION+':'+hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()[:16]
 
 def migrate(db):
     db.execute('CREATE TABLE IF NOT EXISTS cost_files(path TEXT PRIMARY KEY,offset INTEGER,state TEXT,archived INTEGER)')
@@ -127,8 +132,10 @@ def update(db,files,stop=lambda:False,budget=.35):
     return dict(pending=pending,initial_pending=initial,syncing=pending and not initial,errors=errors)
 
 def snapshot(db,now,progress,files=None,home=None):
-    from cost_preferences import prices as saved_prices
-    prices=saved_prices();price_revision=pricing_revision(prices)
+    from cost_preferences import prices as saved_prices,price_history as saved_history
+    prices=saved_prices();history=saved_history();price_revision=pricing_revision(prices,history)
+    from official_api_prices import PriceBook
+    price_book=PriceBook(history)
     statuses={};limited=False;membership_health={};unresolved=0;metadata={}
     db.execute('CREATE TABLE IF NOT EXISTS cost_session_assignment(session TEXT PRIMARY KEY,project TEXT,archived INTEGER)')
     assignments={sid:(project,bool(archived)) for sid,project,archived in db.execute('SELECT * FROM cost_session_assignment')}
@@ -178,7 +185,8 @@ def snapshot(db,now,progress,files=None,home=None):
         if stamp>now:continue
         # Keep incomplete events separate: one bad record must not turn a
         # whole otherwise-priced session/model/day into pending usage.
-        key=(project,model,sid,datetime.fromtimestamp(stamp).strftime('%Y-%m-%d'),bool(known))
+        applied=price_book.rate(model,stamp)
+        key=(project,model,sid,datetime.fromtimestamp(stamp).strftime('%Y-%m-%d'),bool(known),applied)
         sums=buckets.setdefault(key,[0,0,0,0]);sums[0]+=tokens
         for i,value in enumerate((a,c,b),1):
             if value is not None:sums[i]+=value
@@ -191,7 +199,7 @@ def snapshot(db,now,progress,files=None,home=None):
     projectless=set(membership_health.pop('projectless_ids',()))
     scratch_root=project_path(str(Path.home()/'Documents'/'Codex'))
     grouped=[]
-    for (project,model,sid,day,known),values in buckets.items():
+    for (project,model,sid,day,known,applied),values in buckets.items():
         root=root_session(sid,parents)
         path=assignments.get(root,assignments.get(sid,(project_path(project),False)))[0]
         original_path=path
@@ -205,7 +213,7 @@ def snapshot(db,now,progress,files=None,home=None):
                      date_folder.replace('-','').isdigit())
             if root in projectless or scratch:
                 path=unassigned
-        grouped.append((path,model,root,day,*values,known,original_path,(sid,project)))
+        grouped.append((path,model,root,day,*values,known,original_path,(sid,project),applied))
     project_archives={}
     for path,model,sid,*_ in grouped:
         archived=archived_meta.get(sid,bool(statuses.get(sid)) and all(statuses[sid]))
@@ -214,7 +222,7 @@ def snapshot(db,now,progress,files=None,home=None):
     for period,days in [('all',None),('30d',30),('7d',7),('yesterday',1)]:
         start=yesterday if period=='yesterday' else (midnight-timedelta(days=days-1)).strftime('%Y-%m-%d') if days else ''
         projects={}
-        for path,model,sid,day,tokens,a,c,b,known,original_path,source in grouped:
+        for path,model,sid,day,tokens,a,c,b,known,original_path,source,applied in grouped:
             if day<start or (period=='yesterday' and day!=yesterday):continue
             display=dict(name='未归属项目',path='') if path==unassigned else catalog.get(path,{})
             name=display.get('name') or (PureWindowsPath(path).name if path else '未识别项目') or path
@@ -227,7 +235,7 @@ def snapshot(db,now,progress,files=None,home=None):
             if path==unassigned:session['directory']=original_path
             session['tokens']+=tokens
             p['archived']=project_archives[path]
-            model_prices=rate(model,prices)
+            model_prices=applied
             if not path and original_path:
                 p.setdefault('priced_history_sources',set()).add(source)
             if not known or model_prices is None or not original_path:
@@ -249,7 +257,7 @@ def snapshot(db,now,progress,files=None,home=None):
             p['model_usage']=sorted(p['model_usage'].values(),key=lambda v:-v['cost'])
             p['session_usage']=sorted(p['session_usage'].values(),key=lambda v:-v['cost'])
         result[period]=sorted(projects.values(),key=lambda p:-p['cost'])
-    return dict(ranges=result,yesterday=yesterday,**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_source=PRICE_SOURCE,checked=now)
+    return dict(ranges=result,yesterday=yesterday,**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_history=history,price_source=PRICE_SOURCE,checked=now)
 
 def search_rows(data,period='all',query='',archive='active'):
     def norm(s):return unicodedata.normalize('NFKC',s).casefold().replace('\\','/')

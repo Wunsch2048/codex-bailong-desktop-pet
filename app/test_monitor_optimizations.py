@@ -66,14 +66,13 @@ class CostProjectionTests(unittest.TestCase):
         self.assertEqual(row['pending_reasons'],dict(unknown_model=1000,incomplete_counts=1000))
         self.assertEqual(sum(row['pending_reasons'].values()),row['pending_tokens'])
         self.assertEqual(next(r for r in data['ranges']['all'] if not r['id'])['pending_reasons'],dict(unknown_project=1000))
-        from PySide6.QtWidgets import QPushButton
-        from project_cost_ui import ProjectCosts,ExplanationOverlay
+        from project_cost_ui import ProjectCosts
         view=ProjectCosts();view.data=data;body=view.detail_body(row)
-        action=next(b for b in body.findChildren(QPushButton) if '待定价' in b.text())
-        action.click()
-        overlay=view.findChild(ExplanationOverlay)
-        text='\n'.join(label.text() for label in overlay.findChildren(QLabel))
-        self.assertIn('已知价格的部分已计入金额',text);self.assertIn('模型暂无单价',text);self.assertIn('记录不完整',text)
+        from PySide6.QtWidgets import QPushButton
+        pending=next(button for button in body.findChildren(QPushButton) if '待定价' in button.text())
+        pending.click()
+        text='\n'.join(label.text() for label in view.findChildren(QLabel))
+        self.assertIn('模型暂无单价',text);self.assertIn('输入 / 输出记录不完整',text)
         body.deleteLater();view.deleteLater();APP.processEvents()
 
 class RateLifecycleTests(unittest.TestCase):

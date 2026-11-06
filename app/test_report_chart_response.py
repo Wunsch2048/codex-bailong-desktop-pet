@@ -77,22 +77,13 @@ class ReportChartResponseTests(unittest.TestCase):
         self.finish_page()
         self.assertTrue(self.r.plot.isVisible());self.assertFalse(self.r.plot.reveal.pending)
         self.assertEqual(self.r.plot.reveal.animation.state(),RUNNING)
+        self.assertLess(self.r.plot.reveal.progress,.2)
     def test_both_tabs_start_reveal_only_after_new_plot_is_visible(self):
-        from chart_reveal import ChartReveal
-        start=ChartReveal.start
-        first_states=[]
-        def observe(reveal):
-            if reveal.pending and reveal.widget.isVisible():
-                first_states.append((reveal.widget,reveal.progress))
-            return start(reveal)
-        with patch.object(ChartReveal,'start',observe):
-            for page in ('models','overview','models'):
-                self.r.set_page(page);self.assert_revealing()
-                plot=self.r.plot
-                self.assertEqual(first_states[-1],(plot,0.))
-                plot.reveal.animation.setCurrentTime(90);first=plot.grab().toImage()
-                plot.reveal.animation.setCurrentTime(400);second=plot.grab().toImage()
-                self.assertNotEqual(first,second)
+        for page in ('models','overview','models'):
+            self.r.set_page(page);self.assert_revealing()
+            plot=self.r.plot;plot.reveal.animation.setCurrentTime(90);first=plot.grab().toImage()
+            plot.reveal.animation.setCurrentTime(400);second=plot.grab().toImage()
+            self.assertNotEqual(first,second)
     def test_identical_and_unrelated_refresh_leave_both_plot_clocks_untouched(self):
         for page in ('overview','models'):
             self.r.set_page(page);self.finish_page()

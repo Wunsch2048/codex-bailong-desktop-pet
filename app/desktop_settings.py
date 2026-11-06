@@ -2,7 +2,7 @@
 from theme_runtime import set_theme_style,theme_style_source
 import copy
 import threading
-from PySide6.QtCore import Qt,QThread,Signal
+from PySide6.QtCore import Qt,QThread,Signal,QTimer
 from PySide6.QtGui import QShortcut,QKeySequence
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QTabWidget,QWidget,
     QCheckBox,QDoubleSpinBox,QPlainTextEdit,QPushButton,QComboBox,QLabel,QFileDialog,QMessageBox,QScrollArea,QLineEdit,QSizePolicy,QLayout)
@@ -97,7 +97,7 @@ class SettingsDialog(QDialog):
         set_theme_style(self.defaults_button,f'QToolButton{{font-size:18px;border:0;border-radius:7px;background:{PANEL};color:{PRIMARY};}}QToolButton:hover{{background:{SELECTED};}}QToolButton:disabled{{color:{MUTED};}}')
         self.defaults_button.clicked.connect(self.defaults);heading.addWidget(self.defaults_button);right_row.addLayout(heading);right_row.addWidget(self.tabs,1);body_row.addWidget(right,1);outer.addWidget(body,1)
         from data_page_motion import PageFade
-        self._category_motion=PageFade(self.tabs);self._category_index=0
+        self._category_motion=PageFade(self.tabs);self._category_index=0;self._category_ticket=0
         self._page_forms={};self._built_pages=set();self._building_index=0;self.refresh_buttons={}
         for title in ['面板与显示', '人物与动作', 'Codex 联动', '角色与素材', '闲聊与台词', '更新与维护']:self.tab(title)
         self.build_page(0)
@@ -129,9 +129,11 @@ class SettingsDialog(QDialog):
         for button in self.findChildren(QPushButton):button.setAutoDefault(False)
         self._writing_widgets=False
     def activate_page(self,index):
+        from settings_controls import motion_enabled
+        self._category_ticket+=1;ticket=self._category_ticket
         previous=getattr(self,'_category_index',index);motion=getattr(self,'_category_motion',None)
         frame=motion.current_frame() if motion and motion.isVisible() else None
-        if frame is None and motion and previous!=index and self.isVisible():frame=motion.snapshot(self.tabs.widget(previous))
+        if frame is None and motion and previous!=index and self.isVisible() and motion_enabled():frame=motion.snapshot(self.tabs.widget(previous))
         if motion:motion.clear()
         self.build_page(index)
         if index==2:self.sync_from_pet(read_startup=True)
@@ -139,8 +141,16 @@ class SettingsDialog(QDialog):
         self.category_title.setText(self.page_titles[index]);self.tabs.widget(index).verticalScrollBar().setValue(0);self.update_draft_state()
         self._category_index=index
         if frame is not None:
-            page=self.tabs.widget(index);page.ensurePolished();page.widget().layout().activate()
-            motion.present(frame,motion.snapshot(page),page.geometry(),direction=1 if index>previous else -1)
+            motion.hold(frame,self.tabs.widget(index).geometry())
+            QTimer.singleShot(0,self,lambda:self.present_category(ticket,index,frame,1 if index>previous else -1))
+    def present_category(self,ticket,index,frame,direction):
+        if ticket!=self._category_ticket:return
+        motion=self._category_motion
+        from settings_controls import motion_enabled
+        if not self.isVisible() or not self.updatesEnabled() or not motion_enabled():motion.clear();return
+        from panel_transition import settle_visible
+        page=self.tabs.widget(index);settle_visible(page)
+        motion.present(frame,motion.snapshot(page),page.geometry(),direction=direction,axis='vertical')
     def begin_visit(self):
         """Reset one page entry, never a repaint or a return from its subpage."""
         if self._visit_active:return
@@ -151,6 +161,8 @@ class SettingsDialog(QDialog):
         if not self.embedded:self.begin_visit()
         super().showEvent(event)
     def hideEvent(self,event):
+        if hasattr(self,'_category_motion'):
+            self._category_ticket+=1;self._category_motion.clear()
         if not self.embedded:self.end_visit()
         super().hideEvent(event)
     def build_page_0(self):

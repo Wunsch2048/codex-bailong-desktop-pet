@@ -176,7 +176,8 @@ class TokenUsageIndex:
         for hour,value in db.execute("SELECT strftime('%H',stamp,'unixepoch','localtime'),SUM(tokens) FROM usage WHERE stamp>=? AND stamp<=? GROUP BY strftime('%H',stamp,'unixepoch','localtime')",(midnight.timestamp(),now)):
             hours[int(hour)]=value
         from token_analytics import report_snapshot
-        return {'report':report_snapshot(db,now),'month':start.strftime('%Y-%m'),'days':days,'total':sum(days.values()),
+        return {'_usage_rowid':db.execute('SELECT COALESCE(MAX(rowid),0) FROM usage').fetchone()[0],
+                'report':report_snapshot(db,now),'month':start.strftime('%Y-%m'),'days':days,'total':sum(days.values()),
                 'history_days':history,'history_start':min(history,default=None),'all_total':sum(history.values()),
                 'today':current.strftime('%Y-%m-%d'),'hours':hours,
                 'checked':now,'partial':bool(errors),'source':'本机 Codex 日志'}

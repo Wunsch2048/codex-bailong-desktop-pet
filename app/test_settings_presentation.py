@@ -103,6 +103,40 @@ class SettingsPresentationTests(unittest.TestCase):
             self.editor.roaming_editor.close_page();APP.processEvents()
             self.assertEqual(self.editor.roaming_editor.page_motion.direction,-1)
             self.assertFalse(self.editor.roaming_editor.isVisible())
+    def test_category_vertical_direction_tracks_sidebar_order_and_interruptions(self):
+        from PySide6.QtGui import QPixmap,QPainter,QColor
+        from PySide6.QtCore import QRect
+        from data_page_motion import paint_pages
+        with patch('settings_controls.motion_enabled',return_value=True):
+            for index,direction in ((4,1),(1,-1),(5,1),(0,-1)):
+                self.page(index);motion=self.editor._category_motion
+                self.assertTrue(motion.isVisible());self.assertEqual(motion.axis,'vertical')
+                self.assertEqual(motion.direction,direction)
+                motion.animation.setCurrentTime(70)
+                self.assertFalse(motion.current_frame().isNull())
+            motion.animation.setCurrentTime(motion.animation.duration())
+            self.assertFalse(motion.isVisible())
+        first=QPixmap(60,40);first.fill(QColor('red'))
+        second=QPixmap(60,40);second.fill(QColor('blue'))
+        for direction,top,bottom in ((1,'#ff0000','#0000ff'),(-1,'#0000ff','#ff0000')):
+            image=QPixmap(60,40);image.fill(Qt.GlobalColor.transparent)
+            painter=QPainter(image);paint_pages(painter,QRect(0,0,60,40),first,second,.5,direction,axis='vertical');painter.end()
+            pixels=image.toImage()
+            self.assertEqual(pixels.pixelColor(30,5).name(),top)
+            self.assertEqual(pixels.pixelColor(30,35).name(),bottom)
+            self.assertTrue(all(pixels.pixelColor(30,y).alpha()==255 for y in range(40)))
+    def test_first_lazy_category_frame_matches_landed_page_and_hide_cancels_pending(self):
+        with patch('settings_controls.motion_enabled',return_value=True):
+            self.page(1);motion=self.editor._category_motion
+            target=motion.next_frame.toImage()
+            motion.animation.setCurrentTime(motion.animation.duration());APP.processEvents()
+            self.assertEqual(target,motion.snapshot(self.editor.tabs.currentWidget()).toImage())
+            self.editor.tabs.setCurrentIndex(4);self.editor.hide();APP.processEvents()
+            self.assertFalse(motion.isVisible());self.assertIsNone(motion.next_frame)
+    def test_performance_categories_do_not_capture_or_leave_pending_cover(self):
+        motion=self.editor._category_motion
+        with patch('settings_controls.motion_enabled',return_value=False),patch.object(motion,'snapshot',wraps=motion.snapshot) as snapshot:
+            self.page(1);snapshot.assert_not_called();self.assertFalse(motion.isVisible())
     def test_update_disclosure_keeps_a_filled_hover_and_checked_surface(self):
         self.page(5)
         from theme_runtime import theme_style_source
@@ -199,7 +233,7 @@ class SettingsPresentationTests(unittest.TestCase):
         area=self.page(3);area.verticalScrollBar().setValue(area.verticalScrollBar().maximum());self.assertGreater(area.verticalScrollBar().value(),0)
         bubble.return_to_status();settle();bubble.show_page('settings',self.editor);settle()
         self.assertEqual(self.editor.tabs.currentIndex(),3);self.assertEqual(area.verticalScrollBar().value(),0)
-        self.assertEqual(self.editor.size().toTuple(),(334,386));bubble.hide()
+        self.assertEqual(self.editor.size().toTuple(),(334,bubble._status_default_height-94));bubble.hide()
     def test_manual_zone_reset_uses_vector_action_and_preserves_draft_boundary(self):
         from settings_presentation import SettingsResetButton
         self.page(1);self.editor.roaming_button.click();roaming=self.editor.roaming_editor

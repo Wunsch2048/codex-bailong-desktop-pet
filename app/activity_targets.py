@@ -9,7 +9,7 @@ class ActivityTargets:
         now=self.clock();active=set();children=set()
         for alias,state in sessions.items():
             sid=session_id(alias)
-            if state.source_subagent:children.add(sid);continue
+            if state.source_subagent or getattr(state,'attached_parent',''):children.add(sid);continue
             item=self.entries.setdefault(sid,dict(alias=alias,active=False,unread=False,shown=False,touched=now))
             item['alias']=alias
             if not state.done or state.compacting:active.add(sid)

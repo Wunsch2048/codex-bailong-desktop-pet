@@ -47,8 +47,13 @@ class ChartBubble(HintBubble):
         return 230,161 if ((self.record or {}).get('rate_item') or {}).get('first_token_ms') is not None else 143
     def inspect(self,record,anchor,host):
         self.record=record;owner=host.window()
-        self.present(record['label'],record.get('subtitle','用量与回合均速'),anchor,host.screen(),owner=owner,
-                     topmost=bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint))
+        placement=(anchor,host.screen().availableGeometry(),self.hint_size(),owner,bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint))
+        if not self.isVisible() or placement!=getattr(self,'_placement',None):
+            self.present(record['label'],record.get('subtitle','用量与回合均速'),anchor,host.screen(),owner=owner,
+                         topmost=placement[-1],initial_level=1.)
+            self._placement=placement
+        else:
+            self.title=record['label'];self.subtitle=record.get('subtitle','用量与回合均速')
         self.update()
         if 'rows' in record:
             self.setAccessibleDescription('；'.join(f'{name} {value}' for name,value,_ in record['rows']))
@@ -162,6 +167,17 @@ class ComboChart:
         if index<0:self.dismiss_inspection();return
         if self._popup.isVisible():self.show_inspection()
         else:self._inspect_delay.start()
+    def hold_inspection(self):
+        if not 0<=self._inspection<len(self._combo_records):return None
+        return (self._combo_records[self._inspection]['label'],self._popup.isVisible(),self._inspect_delay.isActive())
+    def resume_inspection(self,state):
+        if state is None:return
+        self.ensure_layers()
+        self._inspection=next((i for i,r in enumerate(self._combo_records) if r['label']==state[0]),-1)
+        if self._inspection<0:self.dismiss_inspection();return
+        if state[1]:self.show_inspection()
+        elif state[2] and not self._inspect_delay.isActive() and self.isVisible():self._inspect_delay.start(1)
+        self.update()
     def show_inspection(self):
         if not self.isVisible() or self.reveal.progress<.99 or not 0<=self._inspection<len(self._combo_records):return
         rect=self._combo_records[self._inspection]['rect'].toAlignedRect();anchor=QRect(self.mapToGlobal(rect.topLeft()),rect.size())

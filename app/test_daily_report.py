@@ -297,7 +297,13 @@ class ReportUiTests(unittest.TestCase):
         self.assertEqual(self.r.cycle_view.estimate.text(),'600.0K')
         self.assertIn('75%',self.r.cycle_view.detail.text())
         APP.processEvents()
-        self.assertEqual(self.r.scroll.verticalScrollBar().maximum(),0)
+        area=self.r.scroll;plot=self.r.cycle_view.plot
+        self.assertFalse(area.verticalScrollBar().isVisible())
+        self.assertEqual(area.horizontalScrollBar().maximum(),0)
+        self.assertTrue(area.viewport().rect().contains(plot.mapTo(area.viewport(),plot.rect().bottomRight())))
+        area.verticalScrollBar().setValue(area.verticalScrollBar().maximum());APP.processEvents()
+        button=self.r.cycle_view.rules_button
+        self.assertTrue(area.viewport().rect().contains(button.mapTo(area.viewport(),button.rect().center())))
         self.assertTrue(self.r.cycle_view.note.isHidden() or self.r.cycle_view.rules.isHidden())
         self.assertTrue(self.r.cycle_view.rules_button.isVisible())
         data=dict(data,quota_history=dict(cycles=[dict(item,estimated_total=None,complete=False)]))

@@ -4,7 +4,7 @@ from theme_registry import color as theme_color
 import weakref
 from PySide6.QtCore import Qt,QObject,QEvent,QPoint,QRect,QRectF,QTimer,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QColor,QCursor,QFontMetrics,QPainter,QPainterPath,QPen
-from PySide6.QtWidgets import QWidget,QToolTip
+from PySide6.QtWidgets import QWidget,QToolTip,QApplication
 from typography import ui_font
 from ui_theme import SURFACE,INK,MUTED,BORDER
 from settings_controls import motion_enabled
@@ -48,7 +48,16 @@ class HintBubble(QWidget):
         else:self.setGeometry(geometry)
         self.setAccessibleName(self.title)
         self.setAccessibleDescription(self.subtitle)
-        if not self.isVisible():self.level=initial_level;self.show()
+        if not self.isVisible():
+            self.level=initial_level
+            # Clear a cold/reused layered HWND before exposing it. This keeps
+            # the normal alpha entrance without a native blank/stale rectangle.
+            self.native_seeded=False
+            if QApplication.platformName()=='windows':
+                from native_landing import publish
+                try:self.native_seeded=publish(self,None)
+                except OSError:self.native_seeded=False
+            self.show()
         self.raise_()
         self._animate(1.)
         # An already opaque surface has no alpha delta to drive paintEvent.

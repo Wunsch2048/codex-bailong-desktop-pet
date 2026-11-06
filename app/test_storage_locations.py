@@ -16,6 +16,34 @@ class StorageTests(unittest.TestCase):
         self.assertEqual((self.target/'nested/a.bin').read_bytes(),b'animation')
         self.assertTrue((self.source/'nested/a.bin').exists())
         self.assertTrue(locations.clean_source(plan));self.assertFalse(self.source.exists())
+    @unittest.skipUnless(locations.sys.platform=='win32','Windows registry data binding')
+    def test_managed_launch_uses_registered_data_before_creating_settings(self):
+        import winreg
+        install=self.root/'apps/BailongEnhanced';exe=install/'versions/1.17.0-test/BailongEnhanced.exe'
+        bound=self.root/'package-cache/Local/BailongEnhanced';bound.mkdir(parents=True)
+        (bound/'settings.json').write_text('{"theme":"starfield"}')
+        old=locations.data_dir();key=Mock();key.__enter__=Mock(return_value=key);key.__exit__=Mock(return_value=False)
+        values={'InstallLocation':str(install),'DataLocation':str(bound)}
+        with patch.object(locations.sys,'frozen',True,create=True),patch.object(locations.sys,'executable',str(exe)),patch.object(winreg,'OpenKey',return_value=key),patch.object(winreg,'QueryValueEx',side_effect=lambda k,n:(values[n],winreg.REG_SZ)),patch.dict(os.environ,{'BAILONG_ISOLATED':'0'}):
+            self.assertEqual(locations.configure_data_environment(),bound)
+            self.assertEqual(locations.data_dir(),bound)
+            self.assertEqual(json.loads((locations.data_dir()/'settings.json').read_text())['theme'],'starfield')
+            self.assertFalse(old.exists())
+    @unittest.skipUnless(locations.sys.platform=='win32','Windows registry data binding')
+    def test_data_binding_does_not_override_unrelated_install_or_isolated_probe(self):
+        import winreg
+        install=self.root/'apps/BailongEnhanced';exe=install/'versions/1.17.0-test/BailongEnhanced.exe'
+        key=Mock();key.__enter__=Mock(return_value=key);key.__exit__=Mock(return_value=False)
+        values={'InstallLocation':str(install),'DataLocation':str(self.root/'bound/BailongEnhanced')}
+        before=locations.data_dir()
+        with patch.object(locations.sys,'frozen',True,create=True),patch.object(locations.sys,'executable',str(exe)),patch.object(winreg,'OpenKey',return_value=key),patch.object(winreg,'QueryValueEx',side_effect=lambda k,n:(values[n],winreg.REG_SZ)):
+            with patch.dict(os.environ,{'BAILONG_ISOLATED':'1'}):self.assertIsNone(locations.configure_data_environment())
+            self.assertEqual(locations.data_dir(),before)
+            with patch.dict(os.environ,{'BAILONG_ISOLATED':'0'}):
+                for changed in ({'InstallLocation':str(self.root/'other/BailongEnhanced')},{'DataLocation':str(self.root/'unrelated')},{'DataLocation':'relative/BailongEnhanced'}):
+                    earlier=dict(values);values.update(changed)
+                    self.assertIsNone(locations.configure_data_environment());self.assertEqual(locations.data_dir(),before)
+                    values.clear();values.update(earlier)
     def test_source_change_prevents_deleting_changed_file(self):
         plan=locations.copy_tree(self.source,self.target,'materials');(self.source/'nested/a.bin').write_bytes(b'new data')
         with self.assertRaises(OSError):locations.clean_source(plan)

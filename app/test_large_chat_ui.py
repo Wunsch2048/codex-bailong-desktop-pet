@@ -56,7 +56,8 @@ class LargeChatUiTests(unittest.TestCase):
         try:
             self.chat.input.setPlainText('尚未发出的草稿')
             bubble.show_page('chat',self.chat);bubble.size_transition.complete();APP.processEvents()
-            self.assertEqual(bubble.size().toTuple(),(360,480));self.assertEqual(self.chat.size().toTuple(),(334,386))
+            baseline=bubble._status_default_height
+            self.assertEqual(bubble.size().toTuple(),(360,baseline));self.assertEqual(self.chat.size().toTuple(),(334,baseline-94))
             bubble.show_status(False);bubble.size_transition.complete();APP.processEvents()
             bubble.show_page('chat',self.chat);bubble.size_transition.complete();APP.processEvents()
             self.assertEqual(self.chat.input.toPlainText(),'尚未发出的草稿')
@@ -64,7 +65,7 @@ class LargeChatUiTests(unittest.TestCase):
             bubble.show_status(False);bubble.size_transition.complete();APP.processEvents()
             bubble.show_page('chat',self.chat);bubble.size_transition.complete();APP.processEvents()
             self.assertEqual(editor.fields['model'].text(),'unsaved-model');self.assertEqual(self.chat.input.toPlainText(),'尚未发出的草稿')
-            self.assertEqual(editor.size().toTuple(),(334,386))
+            self.assertEqual(editor.size().toTuple(),(334,baseline-94))
             self.host.layout().addWidget(self.chat)
         finally:
             bubble.size_transition.complete();bubble.close();bubble.deleteLater();APP.processEvents()

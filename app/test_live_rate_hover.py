@@ -182,6 +182,42 @@ class LiveRateHoverTests(unittest.TestCase):
     def test_service_panel_deactivate_closes_only_service_panel(self):
         card=self.card();QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel
         APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate));self.assertFalse(panel.isVisible())
+    def test_second_click_stays_closed_when_deactivate_arrives_before_or_after_press(self):
+        from public_status import shared
+        card=self.card()
+        with patch.object(shared(),'request'):
+            for before_press in (True,False):
+                QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel;self.assertTrue(panel.isVisible())
+                if before_press:APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
+                QTest.mousePress(card,Qt.MouseButton.LeftButton)
+                if not before_press:APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
+                QTest.mouseRelease(card,Qt.MouseButton.LeftButton);APP.processEvents()
+                self.assertFalse(panel.isVisible());self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_delay.isActive())
+    def test_outside_deactivate_and_expired_focus_loss_do_not_consume_a_new_open(self):
+        from public_status import shared
+        import time
+        card=self.card()
+        with patch.object(shared(),'request'):
+            QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel
+            self.position=QPoint(-1000,-1000);APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
+            self.assertFalse(panel.isVisible());QTest.mouseClick(card,Qt.MouseButton.LeftButton);self.assertTrue(panel.isVisible())
+            self.position=card.mapToGlobal(card.rect().center());APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
+            card._service_deactivated_at=time.monotonic()-2
+            QTest.mouseClick(card,Qt.MouseButton.LeftButton);self.assertTrue(panel.isVisible())
+    def test_service_has_no_close_symbol_or_right_header_close_hit_target(self):
+        from public_status import shared
+        from PySide6.QtGui import QPainter
+        card=self.card()
+        with patch.object(shared(),'request'):
+            QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel;labels=[]
+            class Recorder(QPainter):
+                def drawText(self,*args):
+                    if args and isinstance(args[-1],str):labels.append(args[-1])
+                    return super().drawText(*args)
+            with patch('service_rate_ui.QPainter',Recorder):panel.grab()
+            self.assertIn('‹ 会话速率',labels);self.assertNotIn('×',labels)
+            QTest.mouseClick(panel,Qt.MouseButton.LeftButton,pos=QPoint(panel.width()-12,16))
+            self.assertTrue(panel.isVisible());self.assertEqual(panel.page,'service')
 
 
 if __name__=='__main__':unittest.main()

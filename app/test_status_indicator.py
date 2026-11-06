@@ -108,9 +108,10 @@ class IndicatorTests(unittest.TestCase):
                 self.icon.notify_complete(event);roster.observe(event)
             running=dict(kind='status',session='a',turn='new',state='working',active=1)
             self.icon.observe(running);roster.observe(running)
+            self.assertEqual(self.icon.unread,[('b','done')])
             reader=ReadAcknowledgements();self.assertEqual(reader.poll(home,self.icon.unread,100),[])
             self.now=104;keys=reader.poll(home,self.icon.unread,104)
-            self.assertTrue(self.icon.acknowledge_seen(keys));self.assertEqual(self.icon.unread,[('b','done')])
+            self.assertFalse(self.icon.acknowledge_seen(keys));self.assertEqual(self.icon.unread,[('b','done')])
             chosen,_=roster.selection(self.icon.unread)
             self.assertEqual([(v['session'],v['state']) for v in chosen],[('b','complete'),('a','working')])
             restored=StatusIndicator();restored.set_store(store,home)
@@ -127,7 +128,7 @@ class IndicatorTests(unittest.TestCase):
         self.icon.show();self.assertTrue(self.icon.timer.isActive());self.assertEqual(self.icon.busy_since,start)
         self.icon.notify_complete(dict(session='visible-task',turn='completed-turn'));self.icon.hide();self.now+=3;self.icon.show()
         self.assertEqual(self.icon.visual(),'attention');self.assertFalse(self.icon.timer.isActive())
-    def test_only_actual_reply_in_matching_session_acknowledges(self):
+    def test_ambiguous_status_keeps_notice_and_actual_reply_acknowledges(self):
         self.icon.notify_complete(dict(session='a',turn='1'))
         self.icon.notify_complete(dict(session='b',turn='1'))
         self.icon.observe(dict(state='thinking',session='a',active=1))
@@ -139,6 +140,82 @@ class IndicatorTests(unittest.TestCase):
         self.icon.observe(dict(state='thinking',session='b',user_message=True,active=2))
         self.assertEqual(self.icon.visual(),'complete');self.assertFalse(self.icon.unread)
         self.now+=1;self.icon._tick();self.assertEqual(self.icon.visual(),'busy')
+
+    def test_relay_work_retires_only_resumed_session_and_restores_running_row(self):
+        from conversation_roster import ConversationRoster
+        roster=ConversationRoster()
+        for sid in ('a','b'):
+            event=dict(kind='complete',session=sid,turn='one')
+            self.icon.notify_complete(event);roster.observe(event)
+        for sid,remaining in [('a',[('b','one')]),('b',[])]:
+            event=dict(kind='status',session=sid,turn='two',state='thinking',active=2)
+            self.icon.observe(event);roster.observe(event)
+            self.assertEqual(self.icon.unread,remaining)
+            chosen,_=roster.selection(self.icon.unread)
+            self.assertEqual(next(v for v in chosen if v['session']==sid)['state'],'thinking')
+            self.assertFalse(self.icon.ack_flash())
+        self.assertEqual(self.icon.visual(),'busy')
+        self.assertIsNone(self.icon.completed_at)
+        self.assertFalse(self.icon.notify_complete(dict(session='a',turn='one')))
+        self.assertTrue(self.icon.notify_complete(dict(session='a',turn='two')))
+        self.assertEqual(self.icon.unread,[('a','two')])
+
+    def test_resumed_work_uses_session_identity_and_each_working_state(self):
+        for state in ('thinking','working','responding'):
+            with self.subTest(state=state):
+                sid='12345678-1234-1234-1234-123456789abc'
+                self.icon.notify_complete(dict(session=sid,turn=state+'-old'))
+                self.icon.observe(dict(session='local:host:'+sid,turn=state+'-new',state=state,active=1))
+                self.assertFalse(self.icon.unread)
+                self.assertEqual(self.icon.visual(),'busy')
+
+    def test_unknown_other_session_idle_waiting_and_completed_turn_do_not_retire(self):
+        self.icon.notify_complete(dict(session='a',turn='one'))
+        self.icon.notify_complete(dict(session='a',turn='two'))
+        for event in [dict(state='working',active=1),
+                      dict(session='b',turn='three',state='working',active=1),
+                      dict(session='a',state='thinking',active=1),
+                      dict(session='a',turn='three',state='waiting',active=1),
+                      dict(session='a',turn='three',state='idle',active=1),
+                      dict(session='a',turn='three',state='offline',active=0),
+                      dict(session='a',turn='one',state='working',active=1)]:
+            self.icon.observe(event)
+            self.assertEqual(self.icon.unread,[('a','one'),('a','two')])
+        self.icon.observe(dict(session='a',turn='three',state='working',active=1))
+        self.assertFalse(self.icon.unread)
+
+    def test_reducer_auto_continuation_without_user_message_retires_notice(self):
+        from enhanced_core import ActivityReducer
+        r=ActivityReducer()
+        def feed(sid,typ,**fields):
+            for event in r.apply(sid,dict(type='event_msg',payload=dict(type=typ,**fields))):
+                if event['kind']=='complete':self.icon.notify_complete(event)
+                elif event['kind']=='status':self.icon.observe(event)
+        feed('a','task_started',turn_id='one');feed('b','task_started',turn_id='one')
+        feed('a','task_complete')
+        self.assertEqual(self.icon.unread,[('a','one')])
+        feed('b','item_completed',item=dict(type='CommandExecution',status='completed'))
+        self.assertEqual(self.icon.unread,[('a','one')])
+        feed('a','task_started',turn_id='two')
+        self.assertFalse(self.icon.unread);self.assertEqual(self.icon.visual(),'busy')
+        feed('a','task_complete')
+        self.assertEqual(self.icon.unread,[('a','two')])
+
+    def test_resumed_notice_stays_retired_after_restart_and_old_replay(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home=Path(folder);store=home/'notifications.json';self.icon.set_store(store,home)
+            self.icon.notify_complete(dict(session='a',turn='one'))
+            self.icon.notify_complete(dict(session='b',turn='one'))
+            self.icon.observe(dict(session='a',turn='two',state='working',active=1))
+            self.assertEqual(json.loads(store.read_text())['unread'],[['b','one']])
+            restored=StatusIndicator(clock=lambda:self.now)
+            try:
+                restored.set_store(store,home)
+                self.assertEqual(restored.unread,[('b','one')])
+                restored.seen.clear()  # Durable deduplication also survives the bounded recent list.
+                self.assertFalse(restored.notify_complete(dict(session='a',turn='one')))
+                self.assertTrue(restored.notify_complete(dict(session='a',turn='two')))
+            finally:restored.close();restored.deleteLater()
     def test_unread_survives_restart_without_replaying_wiggle(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'notifications.json';self.icon.set_store(path)

@@ -210,10 +210,33 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
     return list(reversed(result))
 
 
+def capacity_reference(current,previous,pending=False):
+    """Descriptive difference under each cycle's usage, never a quota verdict."""
+    result=dict(change=None,reason='',preliminary=False)
+    if pending:return dict(result,reason='历史记录整理中')
+    if not current or not previous:return dict(result,reason='尚无上一周期估算')
+    if not previous.get('closed'):return dict(result,reason='上一周期尚未结束')
+    if not current.get('plan') or current.get('plan')!=previous.get('plan'):
+        return dict(result,reason='两轮套餐不同或套餐记录缺失')
+    for cycle in (current,previous):
+        value=cycle.get('estimated_total')
+        if (not cycle.get('complete') or not cycle.get('fresh') or cycle.get('corrected') or
+                cycle.get('rise_pending') or cycle.get('drop',0)<5 or
+                not isinstance(value,(int,float)) or isinstance(value,bool) or
+                not math.isfinite(value) or value<=0):
+            return dict(result,reason='两轮需有完整、有效的容量估算')
+    return dict(change=round((current['estimated_total']/previous['estimated_total']-1)*100,1),
+                reason='两轮各按当轮用法估算，差异也会受模型和档位影响',
+                preliminary=any(c.get('drop',0)<20 for c in (current,previous)))
+
+
 def compare_cycles(result):
     """Re-evaluate policy even when a closed capacity came from cache."""
     from quota_workload import mismatch
     for i,item in enumerate(result):
+        reference=capacity_reference(item,result[i-1] if i else None)
+        item.update(reference_change=reference['change'],reference_reason=reference['reason'],
+                    reference_preliminary=reference['preliminary'])
         item.update(change=None,baseline=None,comparison_block='',comparison_scope='previous',comparison_version=1)
         item.pop('baseline_count',None);item.pop('baseline_cycle_id',None)
         item['comparison_reason']='尚无上一周期记录'
@@ -321,6 +344,34 @@ def visible_anomaly(snapshot,windows,now=None,decline_threshold=10,increase_thre
     if remaining is not None and remaining>warning.get('remaining',100)+5:return None
     if not 0<=now-warning['through']<=900:return None
     return warning
+
+
+def visible_quota_change(snapshot,windows,now=None,decline_threshold=10,increase_threshold=15):
+    """One display badge: qualified alert first, descriptive reference second.
+
+    Reference values never enter the anomaly/notification pipeline.
+    """
+    alert=visible_anomaly(snapshot,windows,now,decline_threshold,increase_threshold)
+    if alert:return alert
+    now=time.time() if now is None else now
+    snapshot=snapshot or {};history=snapshot.get('quota_history') or {}
+    if any(snapshot.get(k) for k in ('partial','unavailable','refresh_failed')) or history.get('pending') or history.get('partial'):return None
+    cycles=history.get('cycles') or []
+    if len(cycles)<2:return None
+    current,previous=cycles[:2]
+    if current.get('closed') or not 0<=now-current.get('through',0)<=900:return None
+    reference=capacity_reference(current,previous)
+    if reference['change'] is None:return None
+    week=next((w for w in windows if w.get('name')=='一周'),None)
+    if not week or week.get('plan')!=current.get('plan'):return None
+    from reset_watch import epoch
+    deadline=epoch(week.get('resetsAt'));reset=current.get('reset_at')
+    if not deadline or deadline<=now or not reset or abs(deadline-reset)>1800:return None
+    remaining=week.get('remaining')
+    if remaining is not None and remaining>current.get('remaining',100)+5:return None
+    label='初步参考差异' if reference['preliminary'] else '参考差异'
+    return dict(kind='reference',change=reference['change'],preliminary=reference['preliminary'],
+                description=f"{label} {reference['change']:+.1f}%。\n两轮各按当轮用法估算，差异会受模型和档位影响。点击查看额度详情。")
 
 
 def inherit_live_plan(windows,live,observed):

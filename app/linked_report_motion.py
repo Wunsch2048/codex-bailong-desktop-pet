@@ -15,14 +15,9 @@ class LinkedReportMotion(QObject):
         self.landing=NativeLanding(report.bubble);self.shield=NativeLanding(report.bubble)
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.setInterval(0);self.timer.timeout.connect(self.release)
     def park(self,surface):
-        surface.image=None
-        if surface.isVisible():surface.repaint()
-        if self.report.isVisible() and self.report.requested:
-            # A newly shown layered HWND is not exposed synchronously. Keep
-            # these empty/input-transparent stores exposed while the report
-            # is open, so its first host resize has a paintable guard too.
-            if not surface.isVisible():surface.prepare(self.report.geometry())
-        else:surface.hide()
+        # NativeLanding seeds its raster before its first show. Empty guards
+        # no longer need an idle exposed HWND behind the opening report.
+        surface.release()
     def capture(self):
         r=self.report;ratio=r.devicePixelRatioF();size=r.surface.size()
         image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)

@@ -18,7 +18,9 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         self.init_combo();self.setMouseTracking(True);self.setMinimumWidth(0);self.set_data(snapshot,period,now)
 
     def set_data(self,snapshot,period,now=None):
-        self.dismiss_inspection();self.period=period
+        held=self.hold_inspection() if getattr(self,'period',None)==period else None
+        if held is None:self.dismiss_inspection()
+        self.period=period
         self.snapshot=snapshot or {};self.now=time.time() if now is None else now
         self.series=usage_series(snapshot,period,self.now);self.invalidate_layers()
         if period=='all' and self.series.get('bucket_days',1)>1:
@@ -36,7 +38,7 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         if not s['available']:description+='统计中或暂不可用。'
         if self.snapshot.get('partial'):description+='部分日志暂不可读。'
         self.setAccessibleName('Codex Token '+('小时曲线' if s['mode']=='line' else '用量柱状图'))
-        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('');self.update()
+        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('');self.resume_inspection(held);self.update()
 
     def chart_rect(self):
         # Both the title and the mixed Chinese/numeric axis use the shared

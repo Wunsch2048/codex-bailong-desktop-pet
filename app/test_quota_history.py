@@ -291,4 +291,36 @@ class QuotaHistoryTests(unittest.TestCase):
         self.assertEqual(parsed[0]['plan'],'plus')
 
 
+
+class CapacityReferenceTests(unittest.TestCase):
+    def cycle(self,**changes):
+        result=dict(closed=True,complete=True,fresh=True,drop=30,estimated_total=1000,plan='pro')
+        result.update(changes);return result
+    def test_reference_is_independent_of_workload_and_twenty_point_gate(self):
+        from quota_history import capacity_reference
+        result=capacity_reference(self.cycle(closed=False,drop=5,estimated_total=500,eligible=False),self.cycle())
+        self.assertEqual(result['change'],-50);self.assertTrue(result['preliminary'])
+        self.assertEqual(capacity_reference(self.cycle(),self.cycle())['change'],0)
+        self.assertEqual(capacity_reference(self.cycle(estimated_total=2000),self.cycle())['change'],100)
+    def test_unreliable_or_missing_estimates_do_not_produce_reference(self):
+        from quota_history import capacity_reference
+        for changes in [dict(complete=False),dict(fresh=False),dict(drop=4),dict(corrected=True),dict(rise_pending=True),
+                        dict(estimated_total=0),dict(estimated_total=None),dict(estimated_total=True),
+                        dict(estimated_total=float('nan')),dict(estimated_total=float('inf')),dict(plan=''),dict(plan='plus')]:
+            for first in (True,False):
+                with self.subTest(changes=changes,first=first):
+                    a,b=self.cycle(**changes),self.cycle()
+                    self.assertIsNone(capacity_reference(a,b)['change'] if first else capacity_reference(b,a)['change'])
+        self.assertIsNone(capacity_reference(self.cycle(),None)['change'])
+        self.assertIsNone(capacity_reference(self.cycle(),self.cycle(closed=False))['change'])
+        self.assertIsNone(capacity_reference(self.cycle(),self.cycle(),pending=True)['change'])
+    def test_cached_reference_is_recomputed_without_loosening_strict_gate(self):
+        from quota_history import compare_cycles
+        fields=dict(eligible=True,model='sol',model_share=1,output_share=.2,kind='natural')
+        old=self.cycle(id='old',**fields)
+        current=self.cycle(id='new',closed=False,estimated_total=500,reference_change=999,**fields)
+        compare_cycles([old,current])
+        self.assertEqual(current['reference_change'],-50)
+        self.assertIsNone(current['change']);self.assertIn('记录不完整',current['comparison_reason'])
+
 if __name__=='__main__':unittest.main()

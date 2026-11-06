@@ -16,16 +16,17 @@ def dollars(n):
 
 class DetailJob(QThread):
     ready=Signal(object);failed=Signal(str)
-    def __init__(self,path,project,period,home=None,price_table=None):
+    def __init__(self,path,project,period,home=None,price_table=None,price_history=None):
         super().__init__(QApplication.instance());self.path=path;self.project=project;self.period=period;self.home=home
         self.price_table=None if price_table is None else dict(price_table)
+        self.price_history=price_history
         QApplication.instance().aboutToQuit.connect(self.stop_for_exit)
     def stop_for_exit(self):
         self.requestInterruption();self.wait(3000)
     def run(self):
         from cost_details import detail_snapshot
         try:
-            result=detail_snapshot(self.path,self.project,self.period,cancel=self.isInterruptionRequested,home=self.home,price_table=self.price_table)
+            result=detail_snapshot(self.path,self.project,self.period,cancel=self.isInterruptionRequested,home=self.home,price_table=self.price_table,price_history=self.price_history)
             if result is not None:self.ready.emit(result)
         except Exception as error:self.failed.emit('明细暂未取得，请稍后重试：'+str(error)[:100])
 
@@ -413,7 +414,7 @@ class ProjectCosts(QWidget):
         if exact:self.detail_job=None;return
         if not path:self.turn_error='暂无可读取明细';return
         project=next(p for p in self.data['ranges'][self.period] if p['id']==self.selected)
-        self.detail_job=self.turn_cache.request(key,lambda p=path,scope=dict(project,session_ids=[session['id']]),period=self.period,home=getattr(index,'home',None),prices=self.data.get('price_table'):DetailJob(p,scope,period,home,prices))
+        self.detail_job=self.turn_cache.request(key,lambda p=path,scope=dict(project,session_ids=[session['id']]),period=self.period,home=getattr(index,'home',None),prices=self.data.get('price_table'),history=self.data.get('price_history'):DetailJob(p,scope,period,home,prices,history))
     def turn_cache_changed(self,key,result):
         wanted=self._turn_request_key
         if wanted is None or key[:4]!=wanted[:4]:return

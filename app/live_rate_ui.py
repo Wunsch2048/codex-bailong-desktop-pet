@@ -1,4 +1,4 @@
-"""Equal footer, with a fixed right-hand unit and value-only fade."""
+"""Equal footer, with a fixed right-hand unit and directional numeric roll."""
 from PySide6.QtCore import Qt,QRectF,QRect,QPoint,QEvent,QVariantAnimation,QEasingCurve,QTimer
 import time
 from PySide6.QtGui import QPainter,QColor,QFontMetrics,QCursor
@@ -65,8 +65,8 @@ class LiveRateCard(QWidget):
         super().__init__(parent);self._hover_trace=__import__('collections').deque(maxlen=240);self._hover_origin=time.monotonic();self._trace_paint_at=0.;self._last_inside=None;self._rebuilding=False;self._layout_pending=False;self._pending_hint_ms=None
         self._pending_leave_until=None;self._rebuild_ticket=0
         self.setObjectName('live_output_rate');self.setFixedHeight(20);self.value={};self.alpha=1.
-        self.animation=QVariantAnimation(self);self.animation.setDuration(180);self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self.animation.valueChanged.connect(self._advance);self.set_data(value or {})
+        from number_roll import NumberRoll
+        self.roll=NumberRoll(self);self.animation=self.roll.animation;self.set_data(value or {})
         self.expiry=QTimer(self);self.expiry.setSingleShot(True);self.expiry.timeout.connect(self._expire)
         self.popup=SessionRateBubble();self.destroyed.connect(self.popup.deleteLater)
         self.popup.installEventFilter(self)
@@ -85,7 +85,7 @@ class LiveRateCard(QWidget):
     def hover_diagnostics(self):
         return dict(capacity=240,events=list(self._hover_trace))
     def eventFilter(self,obj,event):
-        if obj is self.popup:
+        if obj is getattr(self,'popup',None):
             watched={QEvent.Type.Show:'popup-show',QEvent.Type.Hide:'popup-hide',QEvent.Type.Move:'popup-move',QEvent.Type.Resize:'popup-resize',QEvent.Type.WindowDeactivate:'popup-deactivate'}
             if event.type() in watched:self._trace_hover(watched[event.type()])
             elif event.type()==QEvent.Type.Paint and time.monotonic()-self._trace_paint_at>.1:
@@ -93,10 +93,8 @@ class LiveRateCard(QWidget):
         return super().eventFilter(obj,event)
     def set_data(self,value):
         previous=display(self.value.get('rate'));self.value=dict(value or {});current=display(self.value.get('rate'))
-        self.setAccessibleName('实时输出速率 '+current+' tok/s');self.animation.stop()
-        if current!=previous and self.isVisible() and motion_enabled():
-            self.alpha=.35;self.animation.setStartValue(.35);self.animation.setEndValue(1.);play_animation(self.animation)
-        else:self.alpha=1.
+        self.setAccessibleName('实时输出速率 '+current+' tok/s');self.alpha=1.
+        self.roll.set(current,self.value.get('rate'),animate=self.isVisible())
         self.update()
         if hasattr(self,'expiry'):self._schedule()
         if hasattr(self,'popup') and self.popup.isVisible() and not self._rebuilding:self.popup.inspect(self.value,self)
@@ -110,7 +108,7 @@ class LiveRateCard(QWidget):
         details=[dict(r,rate=None if r.get('expires') is not None and r['expires']<=time.monotonic() else r.get('rate'),waiting=True) for r in self.value.get('details',[])]
         valid=[r for r in details if r.get('rate') is not None]
         self.value=dict(self.value,rate=sum(r['rate'] for r in valid) if valid else None,expires=min((r['expires'] for r in valid),default=None),details=details)
-        self.animation.stop();self.alpha=1.;self.setAccessibleName('实时输出速率 '+display(self.value.get('rate'))+' tok/s');self.update();self._schedule()
+        self.roll.snap(display(self.value.get('rate')),self.value.get('rate'));self.alpha=1.;self.setAccessibleName('实时输出速率 '+display(self.value.get('rate'))+' tok/s');self.update();self._schedule()
         if hasattr(self,'popup') and self.popup.isVisible() and not self._rebuilding:self.popup.inspect(self.value,self)
         if hasattr(self,'service_panel') and self.service_panel.isVisible() and not self._rebuilding:self.service_panel.inspect(self.value,self)
     def _inside_card(self):return self.isVisible() and QRect(self.mapToGlobal(QPoint()),self.size()).contains(QCursor.pos())
@@ -183,11 +181,20 @@ class LiveRateCard(QWidget):
             self.hint_leave.stop()
             if not self.popup.isVisible() and not self.hint_delay.isActive():self.hint_delay.start(500)
         super().enterEvent(event)
+    def mousePressEvent(self,event):
+        if event.button()==Qt.MouseButton.LeftButton:
+            stamp=getattr(self,'_service_deactivated_at',None)
+            self._service_pressed_close=self.service_panel.isVisible() or (stamp is not None and 0<=time.monotonic()-stamp<.5)
+            self._service_deactivated_at=None;event.accept();return
+        super().mousePressEvent(event)
     def mouseReleaseEvent(self,event):
         if event.button()==Qt.MouseButton.LeftButton:
-            if self.service_panel.isVisible():self.service_panel.dismiss(True)
+            stamp=getattr(self,'_service_deactivated_at',None)
+            closing=self.service_panel.isVisible() or getattr(self,'_service_pressed_close',False) or (stamp is not None and 0<=time.monotonic()-stamp<.5)
+            self._service_pressed_close=False;self._service_deactivated_at=None;self._hide_hint()
+            if closing:self.service_panel.dismiss(True)
             elif self.isVisible() and not self._rebuilding:
-                self._hide_hint();self.service_panel.inspect(self.value,self,page='service')
+                self.service_panel.inspect(self.value,self,page='service')
             event.accept();return
         super().mouseReleaseEvent(event)
     def leaveEvent(self,event):
@@ -208,9 +215,11 @@ class LiveRateCard(QWidget):
             # GUI transaction. Confirm visibility after that transaction instead
             # of destroying the hover lifetime on its temporary Hide event.
             QTimer.singleShot(0,self,self._confirm_hidden)
-        self.animation.stop();self.expiry.stop();self.alpha=1.;super().hideEvent(event)
+        if not self.roll.rebuilding:self.roll.snap()
+        self.expiry.stop();self.alpha=1.;super().hideEvent(event)
     def _confirm_hidden(self):
         if not self._rebuilding and not self.isVisible():
+            self._service_pressed_close=False;self._service_deactivated_at=None
             self._hide_hint()
             if hasattr(self,'service_panel'):self.service_panel.dismiss(True)
     def paintEvent(self,event):
@@ -225,4 +234,4 @@ class LiveRateCard(QWidget):
         p.setOpacity(self.alpha);p.setFont(font(11 if expanded else 12,not expanded));p.setPen(theme_color(INK));value=display(self.value.get('rate'))
         rect=QRectF(31,0,max(0,unit_x-35),height);self.number_rect=rect;self.unit_x=unit_x
         if QFontMetrics(p.font()).horizontalAdvance(value)>rect.width():p.setFont(font(10,True))
-        p.drawText(rect,Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,value)
+        self.roll.paint(p,rect)

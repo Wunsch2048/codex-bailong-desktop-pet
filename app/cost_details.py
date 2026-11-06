@@ -8,7 +8,7 @@ from project_cost import parse_line,rate
 from cost_preferences import prices
 _turn_cache=OrderedDict();_checkpoints=OrderedDict();_cache_lock=threading.Lock()
 
-def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,home=None,price_table=None):
+def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,home=None,price_table=None,price_history=None):
     from project_membership import root_session
     from project_cost_store import active_event_stream
     now=time.time() if now is None else now;today=datetime.fromtimestamp(now).replace(hour=0,minute=0,second=0,microsecond=0)
@@ -58,6 +58,11 @@ def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,ho
                     while len(_checkpoints)>8:_checkpoints.popitem(last=False)
             except OSError:pass
         session_rows={};price=prices() if price_table is None else price_table
+        if price_history is None and price_table is None:
+            from cost_preferences import price_history as saved_history
+            price_history=saved_history()
+        from official_api_prices import PriceBook
+        price_book=PriceBook(price_history) if price_history is not None else None
         priced_history_sources={tuple(source) for source in project.get('priced_history_sources',())}
         for ident,stamp,sid,path,model,tokens,a,c,b,known in rows:
             root=root_session(sid,parents);s=session_rows.setdefault(root,dict(id=root,name='会话 '+root[-8:],tokens=0,cost=0.,pending_tokens=0,turns={}))
@@ -66,7 +71,7 @@ def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,ho
             t=s['turns'].setdefault(key,dict(id=turn or '',stamp=stamp,models=set(),tokens=0,input=0,cached=0,output=0,cost=0.,pending_tokens=0,unknown=not bool(turn),known=True))
             t['known']=t['known'] and bool(known)
             t['stamp']=min(t['stamp'],stamp);t['models'].add(model or '未识别模型');t['tokens']+=tokens;s['tokens']+=tokens
-            model_prices=rate(model,price)
+            model_prices=price_book.rate(model,stamp) if price_book else rate(model,price)
             for field,value in zip(('input','cached','output'),(a,c,b)):t[field]+=value or 0
             if known and model_prices is not None and (project['id'] or (sid,path) in priced_history_sources):
                 cost=((a-c)*model_prices[0]+c*model_prices[1]+b*model_prices[2])/1e6;t['cost']+=cost;s['cost']+=cost

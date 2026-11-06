@@ -12,7 +12,7 @@ def signature(code):
 def check():
     archive=ZlibArchiveReader(str(ROOT/'build/BailongEnhanced/PYZ-00.pyz'))
     result={}
-    for name in ('cost_preferences','public_status','service_rate_ui','pricing_ui','cost_details','turn_detail_cache','cost_extension_probe','live_rate_ui'):
+    for name in ('cost_preferences','official_credit_rates','official_api_prices','official_rates_ui','public_status','service_rate_ui','pricing_ui','cost_details','turn_detail_cache','cost_extension_probe','live_rate_ui','live_today','number_roll','rate_chart'):
         source=compile((ROOT/'app'/f'{name}.py').read_text(encoding='utf-8'),name+'.py','exec')
         result[name]=signature(source)==signature(archive.extract(name))
     for name in ('cli_launch_health','process_launch','startup_probe','drag_panel','project_cost_drain','index_maintenance'):

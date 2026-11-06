@@ -52,7 +52,7 @@ class LargeCardTests(unittest.TestCase):
         self.assertTrue(b.size_transition.running);settle(b)
         self.assertGreater(b.height(),base);self.assertLessEqual(b.height(),b.screen().availableGeometry().height()-24)
         tabs.setCurrentIndex(1);settle(b);self.assertEqual(b.height(),base)
-    def test_long_status_does_not_change_fixed_editor_height(self):
+    def test_editors_share_token_baseline_not_long_notice_height(self):
         from detail_sections import detail_label
         b=self.b;b.toggle_details();settle(b);baseline=b.height();tabs=b.details_tabs
         b.reset_snapshot={'pending':dict(id='long',scheduled=None,reset_type='regular',text='长公告内容。'*180)}
@@ -60,11 +60,22 @@ class LargeCardTests(unittest.TestCase):
         tabs.setCurrentIndex(2);settle(b);long_height=b.height();self.assertGreater(long_height,baseline)
         for page in ('chat','settings','chat'):
             b.show_page(page,QWidget());self.assertTrue(b.size_transition.running);settle(b)
-            self.assertEqual(b.height(),480);self.assertEqual(b.editor_stack.height(),386)
+            self.assertEqual(b.height(),baseline);self.assertEqual(b.editor_stack.height(),baseline-94)
         b.return_to_status();settle(b);self.assertEqual(b.height(),long_height)
         b.details_tabs.setCurrentIndex(1);self.assertTrue(b.size_transition.running);settle(b)
         self.assertEqual(b.height(),baseline)
-        b.show_page('settings',QWidget());settle(b);self.assertEqual(b.height(),480)
+        b.show_page('settings',QWidget());settle(b);self.assertEqual(b.height(),baseline)
+    def test_direct_editor_entry_measures_current_tasks_and_small_screen(self):
+        b=self.b
+        for limit in (480,320):
+            b.expanded_height=lambda:limit
+            for page in ('chat','settings'):
+                b.show_page(page,QWidget());settle(b);editor_height=b.height()
+                self.assertEqual(b.editor_stack.height(),editor_height-94)
+                b.show_status(True);settle(b);b.details_tabs.setCurrentIndex(1);settle(b)
+                self.assertEqual(editor_height,b.height())
+                self.assertLessEqual(editor_height,limit)
+                b.show_status(False);settle(b)
     def test_equal_height_help_navigation_has_a_valid_direction(self):
         b=self.b;b.toggle_details();settle(b)
         b.content.setFixedHeight(480);b.setFixedSize(360,480)

@@ -21,7 +21,20 @@ def run(output):
     try:
         with tempfile.TemporaryDirectory(prefix='bailong-cost-probe-') as folder:
             prefs.path=lambda:Path(folder)/'pricing.json';prefs._cached=None
-            host=QWidget();host.resize(240,400);host.show();editor=PricingEditor(host,['missing-model']);editor.edit_model('missing-model');editor.price_fields[0].setText('0');editor.price_fields[1].setText('0');editor.price_fields[2].setText('0');editor.finish_model();editor.commit_draft()
+            from official_api_prices import OfficialApiPrices,PriceBook
+            from official_credit_rates import OfficialCreditRates
+            from official_rates_ui import OfficialRatesPage
+            rates={name:dict(name=name,rates=[2.,.1,10.]) for name in ('gpt-6.1-sol','gpt-6-astra','gpt-6-luna')}
+            api=OfficialApiPrices(Path(folder)/'api.json');api.cache.accept(rates,time.time())
+            credits=OfficialCreditRates(Path(folder)/'credits.json');credits.cache.accept(rates,time.time())
+            result['separateOfficialUnits']=api.cache.data['unit']=='usd_per_million_tokens' and credits.cache.data['unit']=='credits_per_million_tokens'
+            result['priceHistory']=PriceBook(dict(manual={},builtin={'gpt-6.1-sol':[1.,.05,5.]},versions=api.cache.data['versions'])).rate('gpt-6.1-sol',0)==(1.,.05,5.)
+            host=QWidget();host.resize(240,400);host.show();editor=PricingEditor(host,['missing-model'],price_service=api)
+            result['compactPricingHome']=editor.page=='home' and hasattr(editor,'price_refresh') and not editor.findChildren(__import__('PySide6.QtWidgets',fromlist=['QPushButton']).QPushButton,'pricingModel')
+            editor.models_button.click();editor.show_price_history();app.processEvents()
+            result['officialApiPage']=editor.history_page.isVisible() and editor.history_page.geometry()==editor.rect()
+            editor.history_page.close();editor.edit_model('missing-model');editor.price_fields[0].setText('0');editor.price_fields[1].setText('0');editor.price_fields[2].setText('0');editor.finish_model();editor.commit_draft()
+            page=OfficialRatesPage(host,credits);app.processEvents();result['officialCreditsPage']=page.isVisible() and page.geometry()==host.rect();page.close();api.close();credits.close()
             result['pricingSaved']=prefs.prices()['missing-model']==(0,0,0)
             raw=encode_export([dict(project='sample',period='all',model='m',tokens=1,usd_cost=0,unpriced_tokens=0)],'CSV');result['csvExport']=raw.startswith(b'\xef\xbb\xbf') and b'sample' in raw
             session=dict(id='s',name='长会话标题\n附件说明 '+('示例文字'*60),tokens=1000,cost=1.,detail_revision='sample')
@@ -52,7 +65,7 @@ def run(output):
             for reply in pending:
                 if not reply.isFinished():reply.abort()
                 reply.deleteLater()
-        result['passed']=all(result.get(k) is True for k in ('pricingSaved','csvExport','costSummaryReuse','boundedSessionRow','inlineTurnParts','retainedTurnCache','compactBubble','serviceDetails','directServiceEntry','outsideClosesService','qtSsl'))
+        result['passed']=all(result.get(k) is True for k in ('pricingSaved','separateOfficialUnits','priceHistory','compactPricingHome','officialApiPage','officialCreditsPage','csvExport','costSummaryReuse','boundedSessionRow','inlineTurnParts','retainedTurnCache','compactBubble','serviceDetails','directServiceEntry','outsideClosesService','qtSsl'))
     except Exception as error:result.update(passed=False,error=repr(error))
     finally:prefs.path=old_path;prefs._cached=old_cache;service.request=original
     Path(output).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8');return 0 if result['passed'] else 1

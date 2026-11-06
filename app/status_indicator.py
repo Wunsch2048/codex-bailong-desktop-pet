@@ -4,7 +4,7 @@ import json
 from collections import deque
 from pathlib import Path
 from desktop_core import atomic_json
-from session_read_state import session_id,subagent_sessions
+from session_read_state import session_id,non_user_sessions
 from PySide6.QtCore import Qt,QTimer,Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget
@@ -22,7 +22,7 @@ class StatusIndicator(QWidget):
         self.clock=clock or time.monotonic
         self.state='idle';self.active=0;self.waiting=0;self.completed=False
         self.busy_since=self.clock();self.completed_at=None;self.seen=deque(maxlen=64)
-        self.unread=[];self.store=None;self.ledger=None;self.acknowledged_at=None
+        self.unread=[];self.store=None;self.ledger=None;self.acknowledged_at=None;self.excluded_sessions=set()
         self.island=False;self._last_signature=None
         self.completion_times={};self.session_summary=''
         self._hidden_at=self.clock();self._motion_offset=0.;self._motion_holds={'hidden'}
@@ -55,9 +55,9 @@ class StatusIndicator(QWidget):
                 # inherited parent header. Remove only proven child notices;
                 # retain seen keys so stale events cannot resurrect them.
                 from codex_connection import data_home
-                excluded=subagent_sessions(data_home(home),[sid for sid,turn in self.unread])
-                kept=[key for key in self.unread if key[0] not in excluded]
-                if kept!=stored_unread:self.unread=kept;self._save()
+                excluded=non_user_sessions(data_home(home),[sid for sid,turn in self.unread])
+                repaired=self.exclude_sessions(excluded)
+                if not repaired and self.unread!=stored_unread:self._save()
         except (OSError,ValueError):pass
         self.ledger.remember(list(self.seen)+self.unread)
         self._sync();self.update()
@@ -74,6 +74,18 @@ class StatusIndicator(QWidget):
         self.unread=[] if session is None else [key for key in self.unread if key[0]!=session_id(session)]
         if len(self.unread)==before:return False
         self.completed=True;self.acknowledged_at=self.clock()
+        if not self.unread:self.completed_at=None
+        self._save();self._sync();self.update();return True
+
+    def exclude_sessions(self,ids):
+        """Repair proven internal notices without a user-read acknowledgement."""
+        ids={session_id(s) for s in ids};self.excluded_sessions.update(ids)
+        removed=[k for k in self.unread if k[0] in ids]
+        if not removed:return False
+        for key in removed:
+            if key not in self.seen:self.seen.append(key)
+        self.unread=[k for k in self.unread if k[0] not in ids]
+        self.acknowledged_at=None
         if not self.unread:self.completed_at=None
         self._save();self._sync();self.update();return True
 
@@ -94,6 +106,7 @@ class StatusIndicator(QWidget):
         return self.acknowledged_at is not None and now-self.acknowledged_at<1.
 
     def observe(self,event):
+        self._retire_resumed_notice(event)
         if event.get('user_message') and event.get('session'):self.acknowledge(event['session'])
         was_busy=self.is_busy()
         self.state=event.get('state','idle')
@@ -108,8 +121,25 @@ class StatusIndicator(QWidget):
             self.completed=False
         self._sync();self.update()
 
+    def _retire_resumed_notice(self,event):
+        """A new working turn supersedes only this session's old completion."""
+        sid=session_id(event.get('session',''));turn=str(event.get('turn') or '')
+        if not sid or not turn or event.get('state') not in ACTIVE:return
+        removed=[key for key in self.unread if key[0]==sid and key[1]!=turn]
+        if not removed:return
+        # A replay of an already completed turn is not evidence of new work.
+        current=(sid,turn)
+        if current in self.seen or current in self.unread or self.ledger and self.ledger.contains(current):return
+        self.unread=[key for key in self.unread if key not in removed]
+        for key in removed:self.completion_times.pop(key,None)
+        self.completed=False;self.acknowledged_at=None
+        if not self.unread:self.completed_at=None
+        # Keep seen IDs and the durable ledger: retired completions stay deduped.
+        self._save()
+
     def notify_complete(self,event):
         key=(session_id(event.get('session','')),str(event.get('turn','')))
+        if key[0] in self.excluded_sessions:return False
         if not key[0] or not key[1]:return False
         if key in self.seen or key in self.unread or self.ledger and self.ledger.contains(key):return False
         self.seen.append(key)

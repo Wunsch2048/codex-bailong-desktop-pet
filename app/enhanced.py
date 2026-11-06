@@ -1,4 +1,6 @@
 """Bailong desktop companion with Codex status and account data."""
+from storage_locations import configure_data_environment
+configure_data_environment()
 from theme_registry import color as theme_color
 import ctypes
 import json
@@ -53,6 +55,8 @@ class ActivityThread(QThread):
         from wsl_codex import state_dir
         self.wsl=is_wsl_source(self.tail.home);self.session_dir=state_dir(STATE_DIR,self.tail.home)
         self.token_index=TokenUsageIndex(STATE_DIR/'token-usage.sqlite3',home);self.last_token_scan=0;self.token_wake=threading.Event();self.token_reader=None
+        from live_today import LiveTodayTotal
+        self.today_total=LiveTodayTotal(self.token_index.path);self.tail.usage_observer=self.today_total.ingest;self.last_live_today=None
         self.week_cycle=None
         self.token_runs=RefreshRuns()
         self.last_presence_scan=0;self.presence_reader=None;self.desktop_open=None;self.last_read_scan=0;self.seed_status_sent=False;self.last_name_scan=-10;self.conversation_names={}
@@ -104,6 +108,9 @@ class ActivityThread(QThread):
                 with self.context_lock:displayed=self.displayed;visited=self.visited
                 self.targets.sync(self.tail.reducer.sessions,pending,displayed,visited)
                 self.tail.set_pins(self.targets.pinned());batch=self.tail.poll()
+                live_today=self.today_total.snapshot()
+                if live_today is not None and live_today!=self.last_live_today:
+                    self.last_live_today=live_today;self.event.emit(dict(kind='live_today_tokens',value=live_today))
                 live_rate=self.output_rate.snapshot()
                 for item in live_rate['details']:
                     record=self.tail.reducer.sessions.get(item['session'])
@@ -116,7 +123,7 @@ class ActivityThread(QThread):
                     batch.extend(e for e in seeds if not states.get(session_id(e['session']),Session()).done)
                 self.targets.sync(self.tail.reducer.sessions,pending,displayed,visited)
                 if history_due and not self.wsl:
-                    unfinished={session_id(sid):s.turn for sid,s in self.tail.reducer.sessions.items() if not s.done and not s.source_subagent and s.turn}
+                    unfinished={session_id(sid):s.turn for sid,s in self.tail.reducer.sessions.items() if not s.done and not s.source_hidden and s.turn}
                     ids=self.targets.choose('terminal',128,unfinished)
                     for sid,turn,status in terminal_conversations(self.tail.home,[(sid,unfinished[sid]) for sid in ids]):
                         batch.extend(self.tail.reducer.terminate(self.targets.alias(sid),status,turn))
@@ -201,6 +208,7 @@ class ActivityThread(QThread):
             options=dict(stop=self.stop.is_set)
             if cycle:options['cycle']=cycle
             snapshot=self.token_index.poll(**options)
+            self.today_total.reconcile(snapshot);snapshot['_live_today']=self.today_total.snapshot()
             if (snapshot.get('quota_history') or {}).get('pending'):
                 # Bound each import slice and allow the UI/status worker to run.
                 # Continue in five seconds without adding a GUI timer or scanner.
@@ -695,6 +703,7 @@ class EnhancedPet(Pet):
                 self.bubble.set_token_busy(event['busy'])
         elif kind=='database_maintenance':
             self.database_maintenance=event['value']
+        elif kind=='live_today_tokens':self.bubble.set_live_today(event['value'])
         elif kind=='live_output_rate':
             self.bubble.live_output_rate=event['value']
             card=getattr(self.bubble,'live_rate_card',None)
@@ -703,6 +712,7 @@ class EnhancedPet(Pet):
                 if isValid(card):card.set_data(event['value'])
         elif kind=='token_usage':
             snapshot=event['snapshot']
+            self.bubble.set_live_today(snapshot.get('_live_today'),refresh=False)
             if snapshot.get('unavailable') and self.bubble.token_snapshot:
                 snapshot=dict(self.bubble.token_snapshot,partial=True,refresh_failed=True)
             self.bubble.token_snapshot=snapshot;self.bubble.redraw();self.position_bubble()

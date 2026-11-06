@@ -72,7 +72,7 @@ def quota_items(windows, now=None):
                           reset_text='重置时间未知', description='账户额度尚未取得。\n空轨道表示未知，不代表 0%。')]
 
 
-def today_tokens(tokens, now=None):
+def today_tokens(tokens, now=None, live=None):
     """Use the same local calendar day as TokenUsageIndex, never a peak ratio."""
     now = time.time() if now is None else now
     today = datetime.fromtimestamp(now).date()
@@ -97,6 +97,8 @@ def today_tokens(tokens, now=None):
                 # Missing today is zero; a corrupt present value must not become zero.
                 known = valid
                 count = value if valid else 0
+    if isinstance(live,dict) and live.get('day')==today.isoformat() and type(live.get('count')) is int and live['count']>=0:
+        count=live['count'];known=True;partial=partial or bool(live.get('partial'))
     if known:
         try:
             display = compact_tokens(count)
@@ -110,4 +112,4 @@ def today_tokens(tokens, now=None):
         description = '今日 Token 尚未取得有效统计。\n统计口径：本机 Codex 日志；输入含缓存，输出含推理。'
     if partial:
         description += '\n部分日志暂不可读，仅包含已读取记录。'
-    return dict(display=display, known=known, partial=partial, description=description)
+    return dict(display=display, count=count if known else None, known=known, partial=partial, description=description)

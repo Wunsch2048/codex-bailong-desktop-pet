@@ -34,12 +34,14 @@ def build_windows_bundle(version):
     """Create the user-facing Windows ZIP (installer plus docs) and combined checksums."""
     output=ROOT/'release';name=f'bailong-desktop-pet-{version}-windows-x64.zip'
     installer=output/f'白龙桌宠-{version}-一键部署.exe'
+    version_note=ROOT/'docs/releases'/f'v{version}.md'
+    if not version_note.is_file():version_note=ROOT/'发布说明'/f'v{version}.md'
     assets={
         '安装管理.cmd':ROOT/'发布说明/安装管理.cmd',
         '快速部署说明.txt':ROOT/'发布说明/快速部署说明.txt',
         '新增功能说明.txt':ROOT/'发布说明/新增功能说明.txt',
         '迭代历史.txt':ROOT/'发布说明/迭代历史.txt',
-        '本次更新说明.md':ROOT/'发布说明'/f'v{version}.md',
+        '本次更新说明.md':version_note,
         '来源与授权说明.txt':ROOT/'发布说明/来源与授权说明.txt',
         '原项目素材说明.txt':ROOT/'app/licenses/upstream-v0.4.1-assets.txt',
         installer.name:installer,

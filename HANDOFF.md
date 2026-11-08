@@ -1,3 +1,7 @@
+# v1.6.2 已公开交付
+
+Windows 当前公开版为 v1.6.2，详见 [版本说明](docs/releases/v1.6.2.md)。
+
 # v1.6.1 已公开交付
 
 Windows 当前公开版为 v1.6.1，详见 [版本说明](docs/releases/v1.6.1.md)。

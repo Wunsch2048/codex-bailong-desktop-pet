@@ -2,21 +2,20 @@
 
 在桌面查看 Codex 任务状态、完成提醒、账户额度和 Token 用量，也可以让白龙陪你一起工作。支持仅卡片使用，人物动画按需下载。
 
-**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.6.1/bailong-desktop-pet-1.6.1-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
+**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.6.2/bailong-desktop-pet-1.6.2-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
 
-Windows 当前公开版 **v1.6.1**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
+Windows 当前公开版 **v1.6.2**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
 
 ![白龙桌宠封面](docs/media/cover.png)
 
 ## 最近更新
 
-- **卡片防闪**：改善日报开合、正常卡片刷新和周额度悬停的闪烁。
-- **面板联动**：打开数据面板时，正常卡片和设置切换会带动数据面板一起调整宽度。
-- **会话状态**：改善两种卡片的会话翻页，修复任务结束后仍显示忙碌的问题。
-- **Windows 兼容**：修复外部 OpenSSL 文件干扰，缺少随包文件时提示修复安装。
-- **实时窗口**：服务状态只显示 Codex 相关信息。
+- **用量与额度**：修复 Codex 续写会话日志时重复计入历史 Token，避免今日用量和周额度参考差异突然放大。
+- **项目成本**：续写产生的用量按实际新增计算，保留原有会话的成本记录。升级后会在后台重新整理受影响的旧统计。
+- **速率统计**：修复续写首个回合被算入历史输出的问题，避免日报曲线虚高。底栏实时速率也会忽略晚到的旧日志读数。
+- **会话显示**：续写日志归到原会话，卡片使用 Codex 中的会话名称，名称尚未读到时显示通用名称。
 
-[查看 v1.6.1 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.6.1)
+[查看 v1.6.2 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.6.2)
 
 ## 主要功能
 

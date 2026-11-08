@@ -67,7 +67,7 @@ class CostExtensionTests(unittest.TestCase):
     def test_model_back_discards_uncommitted_fields(self):
         host=QWidget();self.widgets.append(host);host.resize(248,370);host.show();editor=PricingEditor(host);editor.edit_model('gpt-6.1-sol');editor.price_fields[0].setText('-2');editor.go_back();self.assertIsNone(editor.model);self.assertNotIn('gpt-6.1-sol',editor.draft['prices']);self.assertFalse(prefs.path().exists())
     def test_status_classification_and_validation(self):
-        self.assertEqual(decode_status({'status':{'indicator':'none'}})['tone'],'ok');self.assertEqual(decode_status({'status':{'indicator':'major'}})['tone'],'warn')
+        self.assertEqual(decode_status({'status':{'indicator':'none'}})['tone'],'unknown');self.assertEqual(decode_status({'status':{'indicator':'major'},'components':[dict(name='Codex in ChatGPT Desktop',status='major_outage')]})['tone'],'warn')
         with self.assertRaises(ValueError):decode_status({'status':{}})
     def test_color_semantics_in_dark_and_light(self):
         for surface in ('#fff','#111'):

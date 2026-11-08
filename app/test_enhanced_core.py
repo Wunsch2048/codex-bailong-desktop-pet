@@ -79,6 +79,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(last['active'],1)
         self.assertFalse(any(e['kind']=='complete' for e in r.apply('b',event('turn_aborted'))))
 
+    def test_recent_message_is_not_a_conversation_title(self):
+        r=ActivityReducer()
+        result=r.apply('a',event('user_message',message='按这个方向继续'))
+        self.assertEqual(result[-1]['title'],'Codex 对话')
+        result=r.apply('a',event('item_completed',item={'type':'UserMessage','content':[{'text':'还有'}]}))
+        self.assertEqual(result[-1]['title'],'Codex 对话')
+
     def test_acknowledgement_marks_only_actual_live_user_messages(self):
         r=ActivityReducer()
         self.assertFalse(r.apply('a',event('task_started',turn_id='1'))[-1]['user_message'])

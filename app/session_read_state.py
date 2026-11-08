@@ -28,7 +28,11 @@ def rollout_alias(path):
                 if obj.get('type')=='session_meta':
                     owner=session_id(payload.get('id') or payload.get('session_id') or '')
                     if owner==branch or is_subagent_metadata(payload):return path.stem
-                    if owner==parent:inherited_parent=True
+                    if owner==parent:
+                        base=payload.get('history_base')
+                        if isinstance(base,dict) and session_id(base.get('thread_id',''))==parent:
+                            return parent
+                        inherited_parent=True
                 if obj.get('type')=='event_msg' and payload.get('type')=='task_started':
                     attribution=payload.get('turn_attribution') or {}
                     if not isinstance(attribution,dict):return path.stem

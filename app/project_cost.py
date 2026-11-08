@@ -64,6 +64,10 @@ def parse_line(line,state,path):
             state['model']=p.get('model') or ''
             state['fork']=bool(p.get('forked_from_id'))
             state['created']=obj.get('timestamp')
+            from token_analytics import continuation
+            if continuation(obj):
+                base=p['history_base']
+                state['history_base']={'thread_id':base['thread_id'],'end_byte_offset':base.get('end_byte_offset')}
             return None
         if kind=='turn_context':
             state['turn']=str(p.get('turn_id') or p.get('id') or state.get('turn') or '')[:128]
@@ -92,6 +96,10 @@ def parse_line(line,state,path):
         if delta<=0:
             if delta<0:state['limited']=True
             return None
+        if previous is None and state.get('history_base'):
+            from token_analytics import initial_delta
+            delta,da,dbb,dc=initial_delta(info,total,a,b)
+            if not delta:return None
         known=all(v is not None and v>=0 for v in (da,dbb,dc)) and da+dbb==delta and dc<=da
         model=p.get('model') or info.get('model') or state.get('model','')
         if not isinstance(model,str):model=''

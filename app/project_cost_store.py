@@ -64,6 +64,18 @@ def scan(db,path,stop,deadline,parse_line):
     active=db.execute('SELECT revision,session,offset,state,fingerprint,checked FROM cost_source_active WHERE path=?',(key,)).fetchone()
     work=db.execute('SELECT revision,offset,state,fingerprint FROM cost_source_work WHERE path=?',(key,)).fetchone()
     stat=path.stat();now=time.time();hasher=None
+    upgrade=False
+    state=json.loads(active[3]) if active else json.loads(work[2]) if work else {}
+    if (active or work) and state.get('parser_revision',0)<4 and not (work and json.loads(work[2]).get('parser_revision')==4):
+        from token_analytics import continuation
+        with path.open('rb') as stream:
+            try:upgrade=continuation(json.loads(stream.readline(4*1024*1024)))
+            except (ValueError,UnicodeError):pass
+        if upgrade:work=None
+        elif active:
+            state['parser_revision']=4
+            db.execute('UPDATE cost_source_active SET state=? WHERE path=?',(json.dumps(state),key))
+            active=(*active[:3],json.dumps(state),*active[4:])
     if work:
         revision,offset,state,old=work[0],work[1],json.loads(work[2]),json.loads(work[3])
         base=state.get('_cost_append_base')
@@ -75,7 +87,7 @@ def scan(db,path,stop,deadline,parse_line):
             if hasher.hexdigest()!=old['digest']:work=None
     if not work:
         append=False;verified_at=now
-        if active:
+        if active and not upgrade:
             old=json.loads(active[4]);unchanged=stat.st_size==old['size'] and stat.st_mtime_ns==old['mtime'] and [stat.st_dev,stat.st_ino]==old['file']
             due=now-active[5]>=AUDIT_SECONDS
             if unchanged and not due:
@@ -99,7 +111,7 @@ def scan(db,path,stop,deadline,parse_line):
                 db.execute('UPDATE cost_source_active SET checked=?,fingerprint=?,archived=? WHERE path=?',(verified_at,json.dumps(current),archived,key));return False
             append=valid and stat.st_size>active[2]
         revision=uuid.uuid4().hex
-        offset,state=(active[2],json.loads(active[3])) if append else (0,{'parser_revision':3})
+        offset,state=(active[2],json.loads(active[3])) if append else (0,{'parser_revision':4})
         state['_cost_full_checked']=verified_at
         # Work holds only the appended delta. The confirmed revision stays
         # readable until the new complete-line prefix has passed verification.
@@ -155,26 +167,40 @@ def active_event_stream(db,prepare=True):
     Consume/close the iterator before starting another projection on this DB.
     """
     if prepare:migrate(db)
-    sources=list(db.execute('SELECT path,revision,session,state,fingerprint FROM cost_source_active'))
+    sources=list(db.execute('SELECT path,revision,session,state,fingerprint,offset FROM cost_source_active'))
     candidates={};conflicts=0
-    for path,revision,sid,state,fp in sources:
+    for path,revision,sid,state,fp,offset in sources:
         state=json.loads(state);fp=json.loads(fp)
         rank=(state.get('last_stamp',0),fp['mtime'],path)
-        candidates.setdefault(sid,[]).append((rank,path,revision))
-    db.execute('CREATE TEMP TABLE IF NOT EXISTS cost_selected_source(session TEXT PRIMARY KEY,path TEXT,revision TEXT)')
+        candidates.setdefault(sid,[]).append((rank,path,revision,state,offset))
+    db.execute("""CREATE TEMP TABLE IF NOT EXISTS cost_selected_source(
+        session TEXT,path TEXT PRIMARY KEY,revision TEXT,before REAL)""")
     db.execute('DELETE FROM temp.cost_selected_source')
+    from token_analytics import stamp_of
     for sid,items in candidates.items():
-        items.sort(reverse=True);_,path,rev=items[0]
-        db.execute('INSERT INTO temp.cost_selected_source VALUES(?,?,?)',(sid,path,rev))
-        for _,other,version in items[1:]:
-            if db.execute('''SELECT 1 FROM cost_source_events o WHERE o.path=? AND o.revision=?
-                AND NOT EXISTS(SELECT 1 FROM cost_source_events c WHERE c.path=? AND c.revision=? AND c.event=o.event) LIMIT 1''',
-                (other,version,path,rev)).fetchone():conflicts+=1
+        items.sort(key=lambda item:item[0],reverse=True)
+        selected=set();cutoff=None;current=items[0]
+        while current:
+            _,path,rev,state,_=current
+            selected.add(path)
+            db.execute('INSERT INTO temp.cost_selected_source VALUES(?,?,?,?)',(sid,path,rev,cutoff))
+            base=state.get('history_base') or {};thread=base.get('thread_id')
+            boundary=base.get('end_byte_offset');cutoff=stamp_of({'timestamp':state.get('created')})
+            if not isinstance(thread,str) or type(boundary) is not int or boundary<=0 or cutoff is None:break
+            current=next((item for item in items if item[1] not in selected
+                          and Path(item[1]).stem.endswith('-'+thread)
+                          and item[4]>=boundary and item[3].get('last_stamp',0)<=cutoff),None)
+        for _,other,version,_,_ in items:
+            if other in selected:continue
+            if db.execute("""SELECT 1 FROM cost_source_events o WHERE o.path=? AND o.revision=?
+                AND NOT EXISTS(SELECT 1 FROM cost_source_events c JOIN temp.cost_selected_source s
+                ON s.path=c.path AND s.revision=c.revision WHERE c.event=o.event) LIMIT 1""",
+                (other,version)).fetchone():conflicts+=1
     # Legacy rows are a fallback until that session has a verified new-parser source.
     def rows():
         cursor=db.execute('''SELECT e.* FROM cost_revision_events e WHERE EXISTS(
             SELECT 1 FROM cost_source_events r JOIN temp.cost_selected_source s
-            ON s.path=r.path AND s.revision=r.revision WHERE r.event=e.id)
+            ON s.path=r.path AND s.revision=r.revision WHERE r.event=e.id AND (s.before IS NULL OR e.stamp<s.before))
             UNION ALL SELECT e.* FROM cost_events e WHERE NOT EXISTS(
             SELECT 1 FROM temp.cost_selected_source s WHERE s.session=e.session)''')
         try:yield from cursor

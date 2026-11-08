@@ -217,9 +217,8 @@ class ActivityReducer:
             changed = True
         elif kind == 'event_msg' and typ == 'user_message':
             user_message = True
-            s.title = clean_text(p.get('message', ''), 42) or s.title
             s.done = False
-            s.state, s.message = 'thinking', '正在处理：' + s.title
+            s.state, s.message = 'thinking', '正在处理消息…'
             changed = True
         elif kind == 'event_msg' and typ in ('task_complete', 'task_completed'):
             changed=s.compacting
@@ -241,8 +240,7 @@ class ActivityReducer:
             it = item.get('type')
             if it == 'UserMessage':
                 user_message = True
-                s.title = content_text(item.get('content'))[:42] or s.title
-                s.state, s.message, s.done = 'thinking', '正在处理：' + s.title, False
+                s.state, s.message, s.done = 'thinking', '正在处理消息…', False
                 changed = True
             elif it == 'AgentMessage':
                 text = content_text(item.get('content'))
@@ -259,8 +257,7 @@ class ActivityReducer:
                 changed = True
         elif kind == 'response_item' and typ == 'message' and p.get('role') == 'user':
             user_message = True
-            s.title = clean_text(content_text(p.get('content')), 42) or s.title
-            s.state, s.message, s.done = 'thinking', '正在处理：' + s.title, False
+            s.state, s.message, s.done = 'thinking', '正在处理消息…', False
             changed = True
         elif kind == 'response_item' and typ in ('function_call', 'custom_tool_call'):
             s.state, s.message = 'working', '正在调用工具：' + clean_text(p.get('name', '工具'), 45)
@@ -323,7 +320,7 @@ class RolloutTail:
         self.health=dict(state='unknown',code='starting');self.pins=set();self.generation=None
         self.discovered=set();self.file_ids={};self.queue=[];self.by_id={}
         self.rate_observer=None;self.usage_observer=None
-        self.attached={};self._identity_checked=set();self._identity_scan=-1e9;self._hidden=set()
+        self.attached={};self._identity_checked=set();self._identity_scan=-1e9;self._hidden=set();self._rollout_aliases=set()
     def set_pins(self,ids):self.pins={session_id(s) for s in ids}
     def poll(self):
         from performance_metrics import METRICS
@@ -331,14 +328,21 @@ class RolloutTail:
         if self.last_scan==0:self.catalog.last_check=-1e9
         paths=self.catalog.discover();self.last_scan=now;errors+=self.catalog.errors
         if self.generation!=self.catalog.revision:
-            self.file_ids={p:rollout_alias(p) for p in paths}
+            aliases={p:rollout_alias(p) for p in paths}
+            # A continued page and its original rollout share one reducer,
+            # including the existing alias used before the page was created.
+            roots={session_id(alias):alias for alias in sorted(aliases.values())
+                   if alias!=session_id(alias)}
+            self.file_ids={p:roots.get(alias,alias) for p,alias in aliases.items()}
+            self._rollout_aliases={session_id(p.stem) for p,alias in aliases.items()
+                                   if session_id(p.stem)!=session_id(alias)}
             self.generation=self.catalog.revision;new=paths-self.discovered
             def modified(p):
                 try:return p.stat().st_mtime
                 except OSError:return 0
             ordered=sorted(new,key=modified,reverse=True)
             self.queue.extend((p,self.seeded) for p in (ordered if self.seeded else ordered[:16]))
-            self.discovered=set(paths);self.by_id={session_id(self.file_ids[p]):p for p in sorted(paths,key=lambda p:(self.home/'sessions') in p.parents)}
+            self.discovered=set(paths);self.by_id={session_id(self.file_ids[p]):p for p in sorted(paths,key=lambda p:((self.home/'sessions') in p.parents,p.name))}
         identities={session_id(s) for s in self.reducer.sessions}|self.pins
         identities.update(session_id(self.file_ids[p]) for p,new in self.queue[:32])
         if now-self._identity_scan>=5 or identities-self._identity_checked:
@@ -417,7 +421,7 @@ class RolloutTail:
             self.seeded=True
             if self.reducer.last_quota:events.append(self.reducer.last_quota)
             events.append(dict(kind='status',state='idle' if self.files else 'offline',text='已找到本机 Codex 会话，等待新消息' if self.files else '尚未找到本机 Codex 会话，请打开 Codex 并发送消息',title='Codex 状态',active=0))
-        hidden={session_id(sid) for sid,s in self.reducer.sessions.items() if s.source_hidden}|set(self.attached)
+        hidden={session_id(sid) for sid,s in self.reducer.sessions.items() if s.source_hidden}|set(self.attached)|self._rollout_aliases
         if hidden!=self._hidden:
             self._hidden=hidden
             events.insert(0,dict(kind='hidden_sessions',sessions=sorted(hidden)))

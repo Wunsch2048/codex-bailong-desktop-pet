@@ -9,8 +9,8 @@ from session_read_state import is_subagent_metadata,subagent_sessions,rollout_al
 from status_indicator import StatusIndicator
 
 APP=QApplication.instance() or QApplication([])
-PARENT='00000000-0000-4000-8000-000000000002'
-CHILD='00000000-0000-4000-8000-000000000003'
+PARENT='01a14429-54e3-7461-8c2f-83136516256a'
+CHILD='01a15019-01b0-7b61-ab1c-2b91cef1cfb8'
 
 def meta(sid,child=False):
     return dict(type='session_meta',payload=dict(id=sid,session_id=PARENT if child else sid,source={'subagent':{'thread_spawn':{'parent_thread_id':PARENT}}} if child else 'vscode',agent_path='/root/reviewer' if child else None))
@@ -78,6 +78,19 @@ class ChildProvenanceTests(unittest.TestCase):
             self.assertIn(PARENT,tail.reducer.sessions)
             with path.open('a',encoding='utf-8') as stream:stream.write(json.dumps(event('task_started','later'))+'\n')
             self.assertTrue(any(e.get('session')==PARENT for e in tail.poll()))
+
+    def test_paginated_rollout_is_not_a_second_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home=Path(directory);(home/'sessions').mkdir()
+            original=home/'sessions'/('rollout-2026-10-25T02-10-50-'+PARENT+'.jsonl')
+            page=home/'sessions'/('rollout-2026-10-25T02-10-51-'+PARENT+'_'+CHILD+'.jsonl')
+            original.write_text(json.dumps(meta(PARENT))+'\n',encoding='utf-8')
+            header=meta(PARENT);header['payload']['history_base']=dict(thread_id=PARENT,end_byte_offset=100)
+            page.write_text(json.dumps(header)+'\n',encoding='utf-8')
+            self.assertEqual(rollout_alias(page),PARENT)
+            tail=RolloutTail(home);tail.poll()
+            self.assertEqual(set(tail.reducer.sessions),{original.stem})
+            self.assertEqual(tail.by_id[PARENT],page)
 
 
 class StoredChildReminderTests(unittest.TestCase):

@@ -22,6 +22,29 @@ class TokenTests(unittest.TestCase):
         self.write([token(1,120,input_tokens=100,cached_input_tokens=80,output_tokens=20),token(1,120),token(2,250)])
         result=self.poll();self.assertEqual(result['total'],250);self.assertEqual(result['days']['2026-10-01'],120);self.assertEqual(result['days']['2026-10-02'],130)
         self.assertEqual(len(result['days']),31)
+    def test_paginated_segment_books_only_new_usage_and_repairs_old_index(self):
+        self.write([token(1,1_283_258_294,input_tokens=1_278_519_963,output_tokens=4_738_331)])
+        self.poll()
+        self.path=self.home/'sessions/rollout-continued.jsonl'
+        header=dict(type='session_meta',payload=dict(id='thread',history_base={'thread_id':'thread'}))
+        event=token(2,1_283_434_115,input_tokens=1_278_695_526,output_tokens=4_738_589)
+        event['payload']['info']['last_token_usage']=dict(total_tokens=175_821,input_tokens=175_563,output_tokens=258,cached_input_tokens=170_000)
+        self.write([header,event,token(2,1_283_434_215,input_tokens=1_278_695_626,output_tokens=4_738_589)])
+        result=self.poll();self.assertEqual(result['days']['2026-10-02'],175_921)
+        with closing(self.index.connect()) as db,db:
+            from token_analytics import usage_fingerprint
+            key=usage_fingerprint(event,1_283_434_115,event['payload']['info']['total_token_usage'])
+            db.execute('UPDATE usage SET tokens=1283434115 WHERE fingerprint=?',(key,))
+            db.execute('UPDATE quota_workload_events SET tokens=1283434115 WHERE fingerprint=?',(key,))
+            db.execute('DELETE FROM token_segment_repairs')
+        restarted=TokenUsageIndex(self.cache,self.home)
+        for _ in range(2):
+            result=restarted.poll(self.now)
+            self.assertEqual(result['days']['2026-10-01'],1_283_258_294)
+            self.assertEqual(result['days']['2026-10-02'],175_921)
+        with closing(restarted.connect()) as db:
+            self.assertEqual(db.execute('SELECT tokens,cached FROM quota_workload_events WHERE fingerprint=?',(key,)).fetchone(),(175_821,170_000))
+
     def test_repeated_poll_restart_append_and_partial_record(self):
         self.write([token(1,100)]);self.assertEqual(self.poll()['total'],100)
         self.assertEqual(TokenUsageIndex(self.cache,self.home).poll(self.now)['total'],100)

@@ -25,6 +25,25 @@ class ReliabilityTests(unittest.TestCase):
     def total(self,data):return sum(p['tokens'] for p in data['ranges']['all'])
     def membership(self,value,name='A'):
         self.write(json.dumps({'local-projects':{'a':{'name':name,'rootPaths':['D:/old']},'b':{'name':'B','rootPaths':['D:/new','D:/old']}},'thread-project-assignments':value}),'.codex-global-state.json')
+    def test_paginated_cost_upgrade_keeps_parent_and_removes_inherited_tokens(self):
+        from unittest.mock import patch
+        parent=self.write(self.lines(1000),'rollout-old-s.jsonl')
+        created=datetime.fromtimestamp(self.now-.5).astimezone().isoformat()
+        header=dict(type='session_meta',timestamp=created,payload=dict(id='s',cwd='D:/old',model='gpt-6.1-sol',
+                    history_base=dict(thread_id='s',end_byte_offset=parent.stat().st_size)))
+        event=json.loads(self.event(1100));event['timestamp']=created
+        event['payload']['info']['last_token_usage']=dict(total_tokens=100,input_tokens=80,output_tokens=20,cached_input_tokens=60)
+        child=self.write(json.dumps(header)+'\n'+json.dumps(event)+'\n','rollout-new-s_page.jsonl')
+        with patch('token_analytics.initial_delta',return_value=(1100,880,220,660)):
+            self.load([parent,child])
+        self.db.execute("UPDATE cost_source_active SET state=json_remove(json_set(state,'$.parser_revision',3),'$.history_base') WHERE path=?",(str(child.resolve()),))
+        self.assertEqual(self.total(snapshot(self.db,self.now,{},[parent,child],self.home)),1100)
+        for _ in range(2):
+            self.assertEqual(self.total(self.load([parent,child])),1100)
+            from project_cost_store import active_events
+            rows,conflicts=active_events(self.db)
+            self.assertEqual(sorted(row[5] for row in rows),[100,1000]);self.assertEqual(conflicts,0)
+
     def test_moves_detach_rename_and_restart_conserve_totals(self):
         p=self.write(self.lines());self.membership({'s':{'projectId':'a'}})
         with closing(sqlite3.connect(self.home/'state_5.sqlite')) as db,db:

@@ -58,17 +58,29 @@ class RateStore:
             PRIMARY KEY(source,session,turn))''')
         db.execute('CREATE INDEX IF NOT EXISTS rate_stamp ON rate_samples(stamp)')
         return obj
-    def put(self,record):
+    def put(self,record,inherited=None):
         # Retry/restart duplicate does not count twice. Conflicting counts are
         # rejected, never silently overwrite a previously accepted measurement.
         row=self.db.execute('SELECT input_tokens,output_tokens,reasoning_tokens,generation_ms,task_ms,first_token_ms,quality FROM rate_samples WHERE source=? AND session=? AND turn=?',tuple(record[k] for k in ('source','session','turn'))).fetchone()
         values=tuple(record[k] for k in ('input_tokens','output_tokens','reasoning_tokens','generation_ms','task_ms','first_token_ms','quality'))
         if row is not None:
-            if row!=values:raise ValueError('同一回合速率记录冲突，保留旧记录')
-            return False
+            if row==values:return False
+            if inherited is not None and row[:3]==inherited and row[3:]==values[3:]:
+                # Only replace the old, provably zero-based sample from this turn.
+                self.db.execute('''UPDATE rate_samples SET input_tokens=?,output_tokens=?,reasoning_tokens=?
+                    WHERE source=? AND session=? AND turn=? AND stamp=?''',
+                    (*values[:3],record['source'],record['session'],record['turn'],record['stamp']))
+                if not getattr(self,'transaction_owned',False):self.db.commit()
+                return True
+            raise ValueError('同一回合速率记录冲突，保留旧记录')
         self.db.execute('INSERT INTO rate_samples VALUES(?,?,?,?,?,?,?,?,?,?,?)',tuple(record[k] for k in ('source','session','turn','stamp','input_tokens','output_tokens','reasoning_tokens','generation_ms','task_ms','first_token_ms','quality')))
         if not getattr(self,'transaction_owned',False):self.db.commit()
         return True
+    def discard_inherited(self,source,session,turn,stamp,counts):
+        self.db.execute('''DELETE FROM rate_samples WHERE source=? AND session=? AND turn=? AND stamp=?
+            AND input_tokens=? AND output_tokens=? AND reasoning_tokens=?''',(source,session,turn,stamp,*counts))
+        if not getattr(self,'transaction_owned',False):self.db.commit()
+
     def query(self,start,end,*,bucket='day',tz=None):
         if bucket not in ('day','hour') or not number(start) or not number(end) or start>=end:raise ValueError('速率查询范围无效')
         if (end-start)>86400*3660:raise ValueError('速率查询范围过大')
@@ -123,32 +135,44 @@ class MetadataCollector:
             # response from another turn to the active turn's baseline.
             if payload.get('turn_id') and state['turn'] is not None and payload['turn_id']!=state['turn']:
                 return dict(recorded=False,reason='mismatched_usage_turn')
-            usage=(payload.get('info') or {}).get('total_token_usage') or {}
-            values=tuple(usage.get(k) for k in ('input_tokens','output_tokens','reasoning_output_tokens'))
+            info=payload.get('info') or {}
+            usage=info.get('total_token_usage') or {}
+            keys=('input_tokens','output_tokens','reasoning_output_tokens')
+            values=tuple(usage.get(k) for k in keys)
             if all(type(v) is int and 0<=v<2**53 for v in values) and values[2]<=values[1]:
                 old=state['water']
                 if old and any(v<prior for v,prior in zip(values,old)):state['base']=None
+                if old is None and state.get('continued') and state['turn'] is not None:
+                    state['inherited_baseline']=True
+                    last=info.get('last_token_usage')
+                    recent=tuple(last.get(k) for k in keys) if isinstance(last,dict) else ()
+                    if recent and all(type(v) is int and 0<=v<=total for v,total in zip(recent,values)) and recent[2]<=recent[1]:
+                        state['base']=tuple(total-v for total,v in zip(values,recent))
                 state['water']=values
             else:
                 state['base']=None
         elif kind in ('task_started','turn_started'):
             turn=payload.get('turn_id')
-            if turn and turn!=state['turn']:state.update(turn=turn,base=state['water'])
+            if turn and turn!=state['turn']:state.update(turn=turn,base=state['water'],inherited_baseline=False)
         elif kind in ('task_aborted','turn_aborted','task_failed','turn_failed','task_cancelled','turn_cancelled','task_canceled','turn_canceled'):
             if not payload.get('turn_id') or payload['turn_id']==state['turn']:
                 state.update(turn=None,base=None)
             return dict(recorded=False,reason='turn_terminated')
         elif kind=='task_complete':
             if payload.get('turn_id')!=state['turn'] or state['base'] is None or state['water'] is None:
-                if payload.get('turn_id')==state['turn']:state.update(turn=None,base=None)
+                if payload.get('turn_id')==state['turn']:
+                    if state.pop('inherited_baseline',False) and state['water'] is not None and state['turn']:
+                        self.store.discard_inherited(source,session,state['turn'],stamp,state['water'])
+                    state.update(turn=None,base=None)
                 return dict(recorded=False,reason='missing_turn_baseline')
             counts=tuple(a-b for a,b in zip(state['water'],state['base']))
             usage=dict(zip(('input_tokens','output_tokens','reasoning_output_tokens'),counts))
             # Retire before parsing/storing: a duplicate completion arriving
             # after another usage event must not attempt to rewrite this turn.
+            inherited=state['water'] if state.pop('inherited_baseline',False) else None
             state.update(turn=None,base=None)
             record=completion(payload,usage,source=source,session=session,stamp=stamp)
             if record is None:return dict(recorded=False,reason='missing_usage')
-            inserted=self.store.put(record)
+            inserted=self.store.put(record,inherited) if inherited is not None else self.store.put(record)
             return dict(recorded=inserted,generation_rate_available=False,reason='task_duration_only')
         return dict(recorded=False,reason='awaiting_completion')

@@ -2,7 +2,7 @@
 import json,time,sqlite3,hashlib
 from datetime import datetime,timedelta
 from token_rate import RateStore,MetadataCollector
-from token_analytics import stamp_of
+from token_analytics import continuation,stamp_of
 
 def migrate(db):
     store=RateStore.using(db)
@@ -23,10 +23,19 @@ def update(db,files,stop=lambda:False,budget=.15):
         offset,state=row if row else (0,None)
         try:
             if path.stat().st_size<offset:offset,state=0,None
+            saved=json.loads(state) if state else None
+            if saved and not saved.get('segment_checked'):
+                with path.open('rb') as header:
+                    try:continued=continuation(json.loads(header.readline(4*1024*1024)))
+                    except (ValueError,UnicodeError):continued=False
+                if continued:offset,saved=0,None
+                else:
+                    saved['segment_checked']=True
+                    db.execute('UPDATE rate_files SET state=? WHERE path=?',(json.dumps(saved,separators=(',',':')),key))
             if path.stat().st_size==offset:next_position=i+1;continue
             collector=MetadataCollector(store);session=path.stem
-            if state:
-                saved=json.loads(state);session=saved['session'];s=saved['stream']
+            if saved:
+                session=saved['session'];s=saved['stream']
                 for k in ('water','base'):
                     if s.get(k) is not None:s[k]=tuple(s[k])
                 collector.streams[(source,session)]=s
@@ -49,10 +58,12 @@ def update(db,files,stop=lambda:False,budget=.15):
                         if not isinstance(payload,dict) or stamp is None:continue
                         if obj.get('type')=='session_meta':
                             session=str(payload.get('id') or session)[:128]
-                            collector.streams.setdefault((source,session),dict(water=(0,0,0),turn=None,base=None))
+                            continued=continuation(obj)
+                            collector.streams.setdefault((source,session),dict(water=None if continued else (0,0,0),
+                                                                               turn=None,base=None,continued=continued))
                         elif obj.get('type')=='event_msg':collector.ingest(source,session,payload,stamp)
                     except (ValueError,TypeError,AttributeError,OverflowError):errors+=1
-            saved=dict(session=session,stream=collector.streams.get((source,session),dict(water=None,turn=None,base=None)))
+            saved=dict(session=session,segment_checked=True,stream=collector.streams.get((source,session),dict(water=None,turn=None,base=None)))
             db.execute('INSERT OR REPLACE INTO rate_files VALUES(?,?,?)',(key,offset,json.dumps(saved,separators=(',',':'))))
             if offset<path.stat().st_size and not waiting_tail:pending=True;break
             next_position=i+1

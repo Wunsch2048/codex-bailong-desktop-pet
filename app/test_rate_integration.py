@@ -37,6 +37,24 @@ class RateIntegration(unittest.TestCase):
         moved=Log('b');moved.data=self.log.data;update(self.db,[self.log,moved],budget=1)
         self.assertEqual(self.db.execute('SELECT COUNT(*) FROM rate_samples').fetchone()[0],2)
         self.assertEqual(snapshot(self.db,self.now)['yesterday_mean']['samples'],2)
+    def test_existing_paginated_turn_is_repaired_without_duplicate_samples(self):
+        from unittest.mock import patch
+        self.log.data=b''
+        self.log.append(dict(id='s',history_base=dict(thread_id='s')),'session_meta')
+        self.log.append(dict(type='task_started',turn_id='first'))
+        total=dict(input_tokens=1_000_100,output_tokens=5_020,reasoning_output_tokens=20)
+        recent=dict(input_tokens=100,output_tokens=20,reasoning_output_tokens=0)
+        self.log.append(dict(type='token_count',info=dict(total_token_usage=total,last_token_usage=recent)))
+        self.log.append(dict(type='task_complete',turn_id='first',duration_ms=10000))
+        with patch('rate_index.continuation',return_value=False):
+            update(self.db,[self.log],budget=1)
+        self.assertEqual(snapshot(self.db,self.now)['yesterday_mean']['rate'],502)
+        self.db.execute("UPDATE rate_files SET state=json_remove(state,'$.segment_checked')")
+        for _ in range(2):
+            self.assertEqual(update(self.db,[self.log],budget=1)['errors'],0)
+            self.assertEqual(self.db.execute('SELECT input_tokens,output_tokens FROM rate_samples').fetchall(),[(100,20)])
+            self.assertEqual(snapshot(self.db,self.now)['yesterday_mean']['rate'],2)
+
     def test_late_attach_counter_reset_and_partial_tail_do_not_invent_rate_or_starve_other_files(self):
         self.log.data=b'';turn(self.log,'unknown',200,10000);self.log.data+=b'{unfinished'
         other=Log('z');other.append(dict(id='real'),'session_meta');turn(other,'known',100,5000)

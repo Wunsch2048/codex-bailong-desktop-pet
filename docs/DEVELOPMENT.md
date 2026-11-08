@@ -6,6 +6,10 @@ Linux 使用独立入口：niri 为 `run_niri.py`，KDE Plasma 为 `run_kde.py`�
 
 Windows x64，Python 3.12（当前本地冻结环境为3.12.14）。先安装 requirements-enhanced.txt，所有命令从仓库根目录执行。原项目与授权边界见根目录 NOTICE.md。
 
+## 文档归档
+
+公开版本说明集中在 [releases](releases)，旧版专项说明集中在 [archive](archive)。发布同步时沿用这两处目录。打包仍会从归档读取历史说明，新增发布说明时请避免在其他目录重复保存同一份文件。
+
 ## 准备动画
 
 Git不保存大型动画。安装正式版本后，在设置中下载高清素材，再执行 `python tools/import_installed_assets.py`：工具验证并导入高清源和循环接缝，不读取账户、聊天或统计。也可以从 materials Release 下载高清ZIP，解压到 `outputs/白龙桌宠素材/`，其下应直接存在素材清单和quality各目录。不要把512px轻量素材冒充720px构建源。

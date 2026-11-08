@@ -463,7 +463,7 @@
     "previousPlaybackFile": "quality-v1/quota.webp"
   },
   "qualityRevision": 7,
-  "qualityBaseline": "动作质量修复/原始动作逻辑与质量基准.txt",
+  "qualityBaseline": "docs/archive/动作质量修复/原始动作逻辑与质量基准.txt",
   "workAnimations": [
     {
       "id": "work01",

@@ -87,10 +87,12 @@ class LiveRateHoverTests(unittest.TestCase):
 
     def test_brief_gap_can_reenter_but_real_leave_stops_watch(self):
         card=self.card();self.show_hint(card);self.position=QPoint(700,500)
-        card._watch_hint();QTest.qWait(40)
-        self.position=card.mapToGlobal(card.rect().center());card._watch_hint();QTest.qWait(200)
-        self.assertTrue(card.popup.isVisible())
-        self.position=QPoint(700,500);card._watch_hint();QTest.qWait(250)
+        card._watch_hint();self.assertTrue(card.hint_leave.isActive())
+        self.position=card.mapToGlobal(card.rect().center());card._watch_hint()
+        self.assertFalse(card.hint_leave.isActive());self.assertTrue(card.popup.isVisible())
+        self.position=QPoint(700,500);card._watch_hint()
+        self.assertTrue(card.hint_leave.isActive())
+        card.hint_leave.stop();card.hint_leave.timeout.emit()
         self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive())
 
     def test_popup_pointer_and_scroll_survive_same_surface_rebuild(self):

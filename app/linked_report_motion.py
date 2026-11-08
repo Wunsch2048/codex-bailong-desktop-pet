@@ -3,7 +3,7 @@ from PySide6.QtCore import QObject,QRect,QRectF,QPoint,QTimer,Qt
 from PySide6.QtGui import QPixmap,QPainter,QRegion
 from PySide6.QtWidgets import QWidget
 from panel_transition import NativeLanding,present_barrier
-from surface_morph import pixel_size,raster_offset
+from surface_morph import SurfaceMorph,SurfaceState,pixel_size,raster_offset
 from spring_motion import container_progress,stage
 from card_motion import paint_card
 
@@ -12,6 +12,7 @@ class LinkedReportMotion(QObject):
         super().__init__(report);self.report=report;self.active=False;self.committed=False;self.progress=0.
         self.old=None;self.new=None;self.start=None;self.end=None;self.canvas=None
         self.frame=None;self.weighted=None;self.saved_opacity=1.;self.saved_passthrough=False;self.status_tracking=False;self.tracked_rect=None
+        self.module_start=None;self.module_morph=None
         self.landing=NativeLanding(report.bubble);self.shield=NativeLanding(report.bubble)
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.setInterval(0);self.timer.timeout.connect(self.release)
     def park(self,surface):
@@ -23,6 +24,34 @@ class LinkedReportMotion(QObject):
         image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
         p=QPainter(image);paint_card(p,QRectF(0,0,size.width(),size.height()),None,1.)
         r.surface.render(p,QPoint(),QRegion(),QWidget.RenderFlag.DrawChildren);p.end();return image
+    def module_state(self,rect,image):
+        r=self.report
+        root=r.surface
+        bounds={};clips={}
+        surface_clip=QRectF(root.rect())
+        def collect(layout,prefix,clip,split=()):
+            for index in range(layout.count()):
+                widget=layout.itemAt(index).widget()
+                if widget is None or not widget.isVisibleTo(root):
+                    continue
+                key=f'{prefix}{index}'
+                if widget in split and widget.layout() is not None:
+                    collect(widget.layout(),key+'_',clip)
+                    continue
+                box=QRectF(widget.rect().translated(widget.mapTo(root,QPoint())))
+                if box.intersects(clip):
+                    bounds[key]=box.intersected(surface_clip)
+                    clips[key]=clip
+        collect(r.layout,'chrome_',surface_clip)
+        if r.scroll and r.scroll.widget():
+            viewport=r.scroll.viewport()
+            clip=QRectF(viewport.rect().translated(viewport.mapTo(root,QPoint()))).intersected(surface_clip)
+            body=r.scroll.widget()
+            if body.layout():
+                bounds.pop('chrome_2',None);clips.pop('chrome_2',None)
+                collect(body.layout(),'body_',clip,(getattr(r,'cycle_view',None),getattr(r,'project_view',None)))
+        return SurfaceState(QRectF(rect),image,QRectF(),QPixmap(),False,[],
+                            page='status',expanded=True,shared_bounds=bounds,visible_bounds=clips)
     def begin(self):
         r=self.report
         if not r.isVisible() or not r.requested or r._animating:return
@@ -30,6 +59,7 @@ class LinkedReportMotion(QObject):
         self.release();self.active=True;self.committed=False;self.progress=0.
         self.status_tracking=False;self.tracked_rect=None
         self.start=QRectF(r.content_geometry());self.old=self.capture()
+        self.module_start=self.module_state(self.start,self.old)
         if hasattr(r,'page_fade'):r.page_fade.clear()
         r.refresh_button.freeze_motion('host')
         if r.plot:r.plot.freeze_reveal()
@@ -56,7 +86,11 @@ class LinkedReportMotion(QObject):
             r.setUpdatesEnabled(enabled)
             self.new=self.capture();r.setUpdatesEnabled(False)
             self.end=QRectF(target)
+            if self.start.width()!=self.end.width():
+                self.module_morph=SurfaceMorph(self.module_start,self.module_state(self.end,self.new))
             self.canvas=self.start.united(self.end).adjusted(-r.PAD,-r.PAD,r.PAD,r.PAD).toAlignedRect()
+            if self.module_morph is not None:
+                self.module_morph.prepare_landing(self.canvas,r.devicePixelRatioF())
             self.committed=True
             ratio=r.devicePixelRatioF();self.frame=QPixmap(pixel_size(self.canvas.width(),ratio),pixel_size(self.canvas.height(),ratio));self.frame.setDevicePixelRatio(ratio);self.weighted=QPixmap(self.frame.size());self.weighted.setDevicePixelRatio(ratio)
         finally:r.setUpdatesEnabled(enabled)
@@ -85,6 +119,9 @@ class LinkedReportMotion(QObject):
             rect,image=(self.start,self.old) if self.progress<=0. else (self.end,self.new)
             screen=self.report.screen();origin=screen.geometry().topLeft() if screen else QPoint()
             p.drawPixmap(raster_offset(rect.topLeft(),self.canvas.topLeft(),p.device().devicePixelRatioF(),origin),image);return
+        if self.module_morph is not None and not self.status_tracking:
+            self.module_morph.paint(p,self.progress,self.canvas)
+            return
         rect=self.geometry().translated(-self.canvas.x(),-self.canvas.y())
         p.save()
         from PySide6.QtGui import QPainterPath
@@ -131,7 +168,9 @@ class LinkedReportMotion(QObject):
         if self.landing.image is not None and r.isVisible():
             r.repaint();present_barrier()
         self.park(self.landing);self.park(self.shield);r.refresh_button.resume_motion('host')
-        if not self.active:self.old=self.new=self.frame=self.weighted=None
+        if not self.active:
+            self.old=self.new=self.frame=self.weighted=None
+            self.module_start=self.module_morph=None
         if not self.active and r.isVisible() and r.plot:r.plot.start_reveal()
     def cancel(self):
         if self.active and self.committed and self.report.isVisible():self.finish()

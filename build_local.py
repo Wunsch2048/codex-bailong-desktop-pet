@@ -10,6 +10,10 @@ ROOT=Path(__file__).resolve().parent
 sys.path[:0]=[str(ROOT/'app'),str(ROOT)]
 from desktop_core import VERSION
 from deployment_state import atomic,verify_payload
+from bundled_tls import OPENSSL_DLLS
+
+TLS_ACCEPTANCE_FLAGS=('contextReady','certificateVerification','hostnameVerification','offline',
+                      'bundledQtOpenSsl','externalOpenSslFirstInPath')
 
 def safe_print(*args,**kwargs):
     """Escape unprintable text when a Windows console uses a legacy code page."""
@@ -110,11 +114,19 @@ def native_matrix(exe,label):
 def verify_tls_runtime(exe):
     output=ROOT/'本地实装/冻结TLS验收.json';output.unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(prefix='bailong-tls-check-') as folder:
+        conflict=Path(folder)/'external-openssl'
+        conflict.mkdir()
+        # Use loadable DLLs under the same names. The child must still map
+        # only the pair beside its EXE, even with this directory first in PATH.
+        for name in OPENSSL_DLLS:
+            shutil.copy2(exe.parent/name,conflict/name)
         env=os.environ.copy();env.update(LOCALAPPDATA=folder,CODEX_HOME=str(Path(folder)/'codex'),BAILONG_ISOLATED='1')
+        env['PATH']=str(conflict)+os.pathsep+env.get('PATH','')
+        env['BAILONG_TLS_TEST_CONFLICT_DIR']=str(conflict)
         subprocess.run([str(exe),'--reset-diagnostics',str(output),'--tls-only'],cwd=exe.parent,env=env,check=True,timeout=20,creationflags=0x08000000)
     proof=read(output)
-    if not all(proof.get(k) is True for k in ('contextReady','certificateVerification','hostnameVerification','offline')):raise ValueError('冻结程序TLS初始化或证书验证验收失败')
-    return dict(passed=True,offline=True,certificateVerification=True,hostnameVerification=True)
+    if not all(proof.get(k) is True for k in TLS_ACCEPTANCE_FLAGS):raise ValueError('冻结程序TLS初始化或证书验证验收失败')
+    return dict(passed=True,**{key:proof[key] for key in TLS_ACCEPTANCE_FLAGS})
 
 def snapshot_source():
     dest=ROOT/'本地实装/源码快照'/(VERSION+'-'+time.strftime('%Y%m%d-%H%M%S'));dest.mkdir(parents=True)
@@ -219,7 +231,7 @@ def install_verified(proof,folder):
     # to a passing regression receipt for the current production/test tree.
     regression=read(ROOT/'本地实装/回归验收/current-regressions.json')
     plan=validate_regression(regression,proof.get('validation'))
-    if plan.get('tls') and not all(proof.get('tlsRuntime',{}).get(k) is True for k in ('passed','certificateVerification','hostnameVerification','offline')):raise ValueError('当前构建缺少冻结程序TLS验收')
+    if plan.get('tls') and not all(proof.get('tlsRuntime',{}).get(k) is True for k in ('passed',*TLS_ACCEPTANCE_FLAGS)):raise ValueError('当前构建缺少冻结程序TLS验收')
     if proof.get('validation') and plan.get('native') and (len(proof.get('nativeMatrix',[]))!=4 or not all(p.get('passed') for p in proof['nativeMatrix'])):raise ValueError('本轮要求的原生交互检查未通过')
     from installer import DATA,startup_preference
     from directory_deploy import deploy_directory

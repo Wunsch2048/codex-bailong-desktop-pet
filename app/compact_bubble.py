@@ -214,12 +214,14 @@ class StatusScroller(QLabel):
             if sid not in keys:
                 row=self.rows.pop(sid);row.animation.stop();row.hide();row.deleteLater()
         start={sid:row.y() for sid,row in self.rows.items()}
+        row_stride=43 if full else self.line_height
         for index,(sid,text) in enumerate(items):
             row=self.rows.get(sid)
             if row is None:
                 row=StatusScroller(self.width(),self);row.single_line=True
                 row.expand.connect(self.expand.emit);row.conversationRequested.connect(self.conversationRequested.emit);self.rows[sid]=row
-                start[sid]=index*self.line_height
+                start[sid]=index*row_stride
+                row.move(0,start[sid])
             row.setFixedWidth(max(1,self.width()-(30 if extra else 0)))
             info=metadata.get(sid,{})
             row.expanded_row=full;row.row_last=index==len(items)-1;row.conversation_state=info.get('state','')
@@ -234,9 +236,16 @@ class StatusScroller(QLabel):
         self.current=self.incoming=joined;self.pending=None;self.initialized=True
         target=max(1,len(items))*(43 if full else self.line_height)+(9 if full else 0)
         if old_keys!=keys or changed_mode or not self.isVisible():
-            self.animation.stop();self.row_positions={sid:(start[sid],index*(43 if full else self.line_height)) for index,sid in enumerate(keys)}
+            # A fixed-height list swaps slots together. An existing
+            # row sliding to its new slot would cross the incoming row.
+            swap_slots=target==self.height()
+            self.animation.stop()
+            self.row_positions={
+                sid:(index*row_stride if swap_slots else start[sid],index*row_stride)
+                for index,sid in enumerate(keys)
+            }
             self._from_height=self.height();self._to_height=target
-            if self.isVisible() and not changed_mode:
+            if self.isVisible() and not changed_mode and not swap_slots:
                 self.progress=0.;play_animation(self.animation)
             else:self._advance(1.)
         self.overflow.raise_();self.update()
@@ -415,6 +424,10 @@ def source_button(parent=None,compact=False):
     button.clicked.connect(lambda:QDesktopServices.openUrl(QUrl(SOURCE_URL)));return button
 
 class CompactBubble(Bubble):
+    def nativeEvent(self,event_type,message):
+        from native_window_style import preserve_layered_style
+        if preserve_layered_style(self,event_type,message):return True,0
+        return super().nativeEvent(event_type,message)
     reportRequested=Signal()
     quotaCompareRequested=Signal()
     refreshAllRequested=Signal()
@@ -570,7 +583,8 @@ class CompactBubble(Bubble):
         return self.expanded and self.status_view.full and self.panel_page=='status' and self.isVisible() and self.status_view.height()!=target
     def show_page(self,key,widget):
         if self.size_transition.running:self._pending_navigation=(key,widget);self._pending_mode=None;return
-        if self.report:self.report.dismiss()
+        # Settings uses the same linked report morph as expanded status.
+        if self.report and key!='settings':self.report.dismiss()
         self.size_transition.begin()
         entering=self.panel_page=='status'
         if entering:self._editor_origin=dict(expanded=self.expanded,bubble_mode=self.bubble_mode,
@@ -866,6 +880,24 @@ class CompactBubble(Bubble):
         if self.panel_page!='status':self._redraw_editor();return
         if self.is_minimal():self._redraw_minimal();return
         if self.is_island():self._redraw_island();return
+        # Ordinary updates replace several visible child widgets. Keep the
+        # last composed frame until the replacement layout is ready to paint.
+        atomic_refresh = (
+            not self.expanded and self.enabled and self.isVisible()
+            and self.host_visible() and not self.size_transition.preparing
+            and self.updatesEnabled()
+        )
+        if atomic_refresh:
+            self.setUpdatesEnabled(False)
+        try:
+            self._redraw_status_card()
+        finally:
+            if atomic_refresh:
+                self.setUpdatesEnabled(True)
+        if atomic_refresh and self.isVisible():
+            self.repaint()
+
+    def _redraw_status_card(self):
         self._last_compact_surface=None
         self.inline_explanations.preserve_for_rebuild()
         self._redrawing=True
@@ -956,6 +988,8 @@ class CompactBubble(Bubble):
                 self.details_tabs._restore_index(index);self.details_tabs._last_index=index
                 self.add(self.details_tabs)
         self._redrawing=False;self._fit_height()
+        if self.quota_summary_card is not None and not self.size_transition.preparing:
+            self.quota_summary_card._sync_hover()
         self.set_quota_busy(self.quota_busy);self.set_reset_busy(self.reset_busy);self.set_token_busy(self.token_busy)
         owner=self.owner_pet()
         if self.enabled and self.host_visible():self.show()

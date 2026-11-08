@@ -18,6 +18,49 @@ def settle():
     app.processEvents()
 
 class BubbleTests(unittest.TestCase):
+    def test_overflow_switch_keeps_both_card_sizes_in_fixed_slots(self):
+        b=self.bubble
+        b.show();settle()
+        for sid in ('a','b','c'):
+            b.roster.observe(dict(session=sid,state='working',title=sid))
+        b.refresh_status()
+        for expanded in (False,True):
+            if expanded:
+                b.toggle_details();settle()
+            view=b.status_view
+            stride=43 if expanded else view.line_height
+            for expected in (['c','a'],['b','c'],['a','b']):
+                view.overflow.click()
+                self.assertEqual(list(view.rows),expected)
+                self.assertEqual([view.rows[sid].y() for sid in expected],[0,stride])
+                self.assertEqual(view.animation.state(),view.animation.State.Stopped)
+
+    def test_visible_normal_card_refresh_cannot_paint_half_rebuilt_content(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QObject,QEvent
+
+        b=self.bubble
+        b.show();settle()
+        paints=[]
+        class WatchPaint(QObject):
+            def eventFilter(self,watched,event):
+                if event.type()==QEvent.Type.Paint:paints.append(b.layout.count())
+                return False
+        watcher=WatchPaint()
+        b.installEventFilter(watcher)
+        clear=b.clear
+        def clear_and_flush():
+            clear()
+            b.repaint()
+        try:
+            with patch.object(b,'clear',side_effect=clear_and_flush):
+                b.redraw()
+            self.assertTrue(paints)
+            self.assertGreater(min(paints),0)
+            self.assertTrue(b.isVisible() and b.updatesEnabled())
+        finally:
+            b.removeEventFilter(watcher)
+
     def test_pet_speech_temporarily_replaces_rows_then_restores_latest_session(self):
         b=self.bubble;b.show();settle()
         b.roster.observe(dict(session='a',state='working',title='任务A',display='正在编辑文件'))

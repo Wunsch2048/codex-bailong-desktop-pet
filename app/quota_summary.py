@@ -3,9 +3,9 @@ from settings_controls import play_animation
 from theme_registry import color as theme_color
 from theme_runtime import set_theme_style,theme_style_source
 import math,time
-from PySide6.QtCore import Qt,QRectF,QSize,QPoint,QPointF,Signal,QTimer,QVariantAnimation,QEasingCurve,QAbstractAnimation
-from PySide6.QtGui import QPainter,QPen,QColor,QFontMetrics,QPixmap,QCursor
-from PySide6.QtWidgets import QWidget,QToolButton
+from PySide6.QtCore import Qt,QRectF,QSize,QPoint,QPointF,Signal,QTimer,QVariantAnimation,QEasingCurve,QAbstractAnimation,QEvent
+from PySide6.QtGui import QPainter,QPainterPath,QPen,QColor,QFontMetrics,QPixmap,QCursor
+from PySide6.QtWidgets import QApplication,QWidget,QToolButton
 from compact_bubble import font,INK,MUTED
 from quota_summary_data import quota_items,today_tokens
 from reset_watch import local_time
@@ -42,6 +42,7 @@ class QuotaSummary(QWidget):
         self.anomaly=anomaly;self.week_index=next((i for i,w in enumerate(self.items) if w['name']=='一周'),None)
         self.alert_height=0
         self.alert_badge=QToolButton(self);self.alert_badge.setObjectName('week_quota_alert')
+        self.alert_badge.installEventFilter(self)
         badge_text=(f"{anomaly.get('change',0):+.0f}%" if round(anomaly.get('change',0)) else '0%') if anomaly else ''
         self.alert_badge.setText(badge_text);self.alert_badge.setFont(font(10 if expanded else 11,not expanded))
         self.alert_badge.setFixedSize(max(32 if expanded else 38,QFontMetrics(self.alert_badge.font()).horizontalAdvance(badge_text)+(8 if expanded else 10)),15 if expanded else 18)
@@ -79,8 +80,8 @@ class QuotaSummary(QWidget):
         if self.anomaly and self.week_index is not None:text+='\n'+self.anomaly['description']
         self.setAccessibleName('账户剩余额度；点击查看额度详情');self.setAccessibleDescription(text)
     def row_rect(self,index):
-        shift=self.row_shift(index)
-        return QRectF(3,3+shift,self.width()-6,96) if len(self.items)==1 else QRectF(3,3+index*50+shift,self.width()-6,48)
+        height=self.height()/len(self.items)
+        return QRectF(0,index*height,self.width(),height)
     def row_shift(self,index):return 0
     def value_rect(self,index):
         single=len(self.items)==1;y=(0 if single else index*50)+self.row_shift(index)
@@ -131,19 +132,30 @@ class QuotaSummary(QWidget):
         transition=getattr(self.window(),'size_transition',None)
         if not transition or not (transition.running or transition.preparing):self.start_reveal()
         if any(i['expired'] for i in self.items):QTimer.singleShot(0,self,self._refresh_time)
+        self._sync_hover()
         QTimer.singleShot(0,self,self._sync_hover)
     def _sync_hover(self):
         if not self.isVisible():return
-        point=self.mapFromGlobal(QCursor.pos())
-        index=next((i for i in range(len(self.items)) if self.row_rect(i).contains(point)),None) if self.underMouse() else None
+        cursor=QCursor.pos()
+        hit=QApplication.widgetAt(cursor)
+        self._set_hover_at(self.mapFromGlobal(cursor) if hit is self or (hit is not None and self.isAncestorOf(hit)) else None)
+    def _set_hover_at(self,point):
+        index=next((i for i in range(len(self.items)) if self.row_rect(i).contains(point)),None) if point is not None else None
         if index!=self.active:self.active=index;self.update()
+    def eventFilter(self,watched,event):
+        if watched is self.alert_badge:
+            if event.type()==QEvent.Type.Enter:self._set_hover_at(event.position()+QPointF(self.alert_badge.pos()))
+            elif event.type()==QEvent.Type.Leave:QTimer.singleShot(0,self,self._sync_hover)
+        return super().eventFilter(watched,event)
     def hideEvent(self,event):
         self.timer.stop();self.animation.stop();self.active=None;self.pressed=False;super().hideEvent(event)
     def mouseMoveEvent(self,event):
-        index=next((i for i in range(len(self.items)) if self.row_rect(i).contains(event.position())),None)
-        if index!=self.active:self.active=index;self.update()
+        self._set_hover_at(event.position())
         super().mouseMoveEvent(event)
-    def leaveEvent(self,event):self.active=None;self.update();super().leaveEvent(event)
+    def enterEvent(self,event):
+        self._set_hover_at(event.position());super().enterEvent(event)
+    def leaveEvent(self,event):
+        QTimer.singleShot(0,self,self._sync_hover);super().leaveEvent(event)
     def mousePressEvent(self,event):
         if event.button()==Qt.MouseButton.LeftButton:self.pressed=True;self.update();event.accept()
     def mouseReleaseEvent(self,event):
@@ -170,12 +182,14 @@ class QuotaSummary(QWidget):
         if self._static_key==key:return
         image=QPixmap(max(1,int(self.width()*ratio+.5)),max(1,int(self.height()*ratio+.5)));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
         p=QPainter(image);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(theme_color('#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),11 if self.expanded else 10,11 if self.expanded else 10)
+        radius=11 if self.expanded else 10
+        shape=QPainterPath();shape.addRoundedRect(QRectF(self.rect()),radius,radius)
+        hover=QColor(theme_color('#e6dcec' if self.pressed else '#ede7f2'))
+        p.fillPath(shape,hover if len(self.items)==1 and self.active==0 else QColor(theme_color('#f5f2f7')))
+        if len(self.items)>1 and self.active is not None:
+            p.save();p.setClipRect(self.row_rect(self.active));p.fillPath(shape,hover);p.restore()
         single=len(self.items)==1
         for index,item in enumerate(self.items):
-            rect=self.row_rect(index)
-            if self.active==index:
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#ede7f2')));p.drawRoundedRect(rect,7,7)
             y=(0 if single else index*50)+self.row_shift(index)
             if not single:
                 self._draw_dual_row(p,index,item,y);continue

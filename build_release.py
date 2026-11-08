@@ -7,6 +7,7 @@ from desktop_core import VERSION
 from desktop_services import all_items
 from sustained_assets import seam_items
 from release_version import validate_new_version
+from bundled_tls import OPENSSL_DLLS
 def ssl_runtime_data(ssl_module=None):
     """Preserve data referenced by the build interpreter's SSL implementation."""
     import ssl
@@ -84,6 +85,13 @@ def build(legacy_formats=False,application_only=True):
     version_info=ROOT/'build/windows-version-info.txt';version_info.write_text(windows_version_resource(VERSION),encoding='utf-8')
     subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--icon',str(ROOT/'app/branding/bailong.ico'),'--version-file',str(version_info),'--onedir','--name','BailongEnhanced','--distpath','release','--workpath','build','--specpath','build','--paths','app','--exclude-module','imageio_ffmpeg',*tls_data,'app/enhanced.py'],cwd=ROOT,check=True)
     release=ROOT/'release/BailongEnhanced'
+    libraries=[release/'_internal'/name for name in OPENSSL_DLLS]
+    for library in libraries:
+        if not library.is_file():
+            raise FileNotFoundError(f'构建缺少随包 OpenSSL DLL：{library.name}')
+    # Qt checks the executable directory before System32 and PATH.
+    for library in libraries:
+        library.replace(release/library.name)
     from build_tray_host import build as build_tray_host
     tray_proof=build_tray_host(release/'tray/BailongTray.exe')
     (release/'tray/host-build.json').write_text(json.dumps(tray_proof,indent=2),encoding='utf-8')

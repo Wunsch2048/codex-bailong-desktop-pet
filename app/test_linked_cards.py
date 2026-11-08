@@ -14,6 +14,31 @@ class LinkedTests(unittest.TestCase):
         self.b=CompactBubble();self.b.move(120,630);self.b.show();APP.processEvents()
         self.r=DailyReport(self.b);self.b.report=self.r;self.r.set_snapshot(sample());self.r.open();self.r.animation.setCurrentTime(self.r.animation.duration());APP.processEvents()
     def tearDown(self):self.b.close();self.b.deleteLater();APP.processEvents()
+    def test_open_report_morphs_with_settings_and_back_to_normal(self):
+        b,r=self.b,self.r
+        settings=QWidget()
+        original_width=r.content_geometry().width()
+        for navigate in (lambda:b.show_page('settings',settings),b.return_to_status):
+            start=QRect(r.content_geometry())
+            navigate()
+            transition=b.size_transition
+            self.assertTrue(r.requested and r.follow.committed)
+            parts=r.follow.module_morph.shared_parts
+            self.assertIn('chrome_0',parts)
+            self.assertIn('chrome_1',parts)
+            self.assertGreaterEqual(sum(key.startswith('body_') for key in parts),2)
+            transition.animation.setCurrentTime(transition.animation.duration()//3)
+            host=transition.morph.geometry(transition.raw_progress)
+            middle=r.follow.geometry()
+            self.assertAlmostEqual(middle.width(),host.width(),delta=1)
+            self.assertAlmostEqual(middle.bottom()+r.GAP,host.top(),delta=1)
+            self.assertNotEqual(middle.width(),start.width())
+            self.assertNotEqual(middle.width(),transition.target_rect.width())
+            transition.complete()
+            r.follow.release()
+            self.assertTrue(r.requested and r.surface.isVisible())
+            self.assertEqual(r.content_geometry(),r.geometry_for_host(b.geometry()))
+        self.assertEqual(r.content_geometry().width(),original_width)
     def test_report_uses_visible_card_edges_and_stable_native_canvas_in_both_directions(self):
         b=self.b;r=self.r
         for _ in range(2):
@@ -76,7 +101,7 @@ class LinkedTests(unittest.TestCase):
         self.assertEqual(self.r.windowOpacity(),1.);self.assertIsNone(f.landing.image);self.assertIsNone(f.shield.image);self.assertFalse(f.active)
     def test_complementary_mix_has_no_alpha_or_background_brightness_pulse(self):
         from PySide6.QtCore import QRectF
-        f=self.r.follow;f.begin();f.commit(self.b.content_geometry().adjusted(-50,0,50,0))
+        f=self.r.follow;f.begin();f.commit(self.b.content_geometry().translated(-50,0))
         # Complete opaque snapshots of identical colour must stay identical;
         # source-over fading two half-opacity layers previously lost alpha.
         f.old.fill(Qt.GlobalColor.red);f.new.fill(Qt.GlobalColor.red)

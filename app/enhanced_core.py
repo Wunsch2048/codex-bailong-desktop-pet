@@ -95,6 +95,7 @@ class Session:
     message: str = '等待新的 Codex 消息'
     turn: str = ''
     closed_turn: str = ''
+    completed_turn: str = ''
     done: bool = True
     source_subagent: bool = False
     attached_parent: str = ''
@@ -223,6 +224,7 @@ class ActivityReducer:
         elif kind == 'event_msg' and typ in ('task_complete', 'task_completed'):
             changed=s.compacting
             s.compacting=False;s.waiting_reason=''
+            s.completed_turn=str(p.get('turn_id') or s.turn or '')
             if not s.done:
                 s.done = True
                 s.state, s.message = 'complete', '任务已完成，可以查看 Codex 回复啦。'
@@ -248,6 +250,8 @@ class ActivityReducer:
                     s.state, s.message = ('responding' if item.get('phase') == 'final_answer' else 'working'), text
                     changed = True
             elif it in ('CommandExecution', 'McpToolCall', 'FileChange', 'WebSearch', 'Extension'):
+                if s.completed_turn and str(p.get('turn_id') or '')==s.completed_turn:
+                    return events
                 label = {'CommandExecution': '执行命令', 'McpToolCall': '调用工具', 'FileChange': '修改文件', 'WebSearch': '查找资料', 'Extension': '使用扩展工具'}[it]
                 failed = item.get('status') in ('failed', 'error')
                 s.state, s.message = 'working', (label + ('暂未成功，继续处理中…' if failed else '已返回，继续处理中…'))

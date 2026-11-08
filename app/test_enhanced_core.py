@@ -8,6 +8,19 @@ def event(typ, **fields):
     return {'type':'event_msg','timestamp':'2026-10-18T10:00:00Z','payload':{'type':typ,**fields}}
 
 class CoreTests(unittest.TestCase):
+    def test_late_tool_completion_does_not_reopen_completed_turn(self):
+        r=ActivityReducer()
+        tool={'type':'CommandExecution','status':'completed'}
+        for kind in ('task_started','task_complete','item_completed'):
+            r.apply('a',event(kind,turn_id='old',item=tool))
+        self.assertTrue(r.sessions['a'].done)
+        self.assertEqual(r.sessions['a'].state,'complete')
+        r.apply('a',event('task_started',turn_id='new'))
+        r.apply('a',event('item_completed',turn_id='old',item=tool))
+        self.assertEqual(r.sessions['a'].state,'thinking')
+        r.apply('a',event('item_completed',turn_id='new',item=tool))
+        self.assertEqual(r.sessions['a'].state,'working')
+
     def test_complete_only_explicit_once_and_no_tool_failure_complete(self):
         r=ActivityReducer()
         r.apply('a',event('task_started',turn_id='1'))

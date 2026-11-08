@@ -68,6 +68,10 @@ class NativeLanding(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus);self.hide()
+    def nativeEvent(self,event_type,message):
+        from native_window_style import preserve_layered_style
+        if preserve_layered_style(self,event_type,message):return True,0
+        return super().nativeEvent(event_type,message)
     def prepare(self,rect):
         top=bool(self.parentWidget().windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
         if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=top:self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,top)

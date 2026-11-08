@@ -5,7 +5,7 @@ import time,unittest
 from datetime import datetime
 from unittest.mock import patch
 from PySide6.QtCore import Qt,QPoint,QPointF,QEvent,QAbstractAnimation
-from PySide6.QtGui import QMouseEvent,QHelpEvent,QPainter
+from PySide6.QtGui import QMouseEvent,QHelpEvent,QPainter,QCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QToolTip,QLabel
 from compact_bubble import CompactBubble
@@ -87,6 +87,7 @@ class QuotaCardTests(unittest.TestCase):
     def test_hover_replaces_countdown_with_precise_time_inside_card_only(self):
         now=2000000000.;stamp=now+3660
         card=self.card([dict(name='5小时',remaining=72,resetsAt=stamp)],clock=lambda:now)
+        card._set_hover_at(None)
         relative=card.items[0]['reset_text'];exact=local_time(stamp)+' 重置'
         self.assertIn(relative,painted_text(card));self.assertNotIn(exact,painted_text(card))
         point=card.row_rect(0).center().toPoint();move_to(card,point)
@@ -94,7 +95,27 @@ class QuotaCardTests(unittest.TestCase):
         with patch.object(QToolTip,'showText') as show:
             APP.sendEvent(card,QHelpEvent(QEvent.Type.ToolTip,point,card.mapToGlobal(point)));show.assert_not_called()
         self.assertEqual(card.toolTip(),'')
-        APP.sendEvent(card,QEvent(QEvent.Type.Leave));self.assertIn(relative,painted_text(card))
+        with patch.object(QApplication,'widgetAt',return_value=None):
+            APP.sendEvent(card,QEvent(QEvent.Type.Leave));drain()
+        self.assertIn(relative,painted_text(card))
+    def test_hover_covers_edges_and_stays_active_across_the_badge(self):
+        for expanded in (False,True):
+            card=QuotaSummary([dict(name='一周',remaining=73)],expanded=expanded,
+                              anomaly=dict(change=-10,description='额度变化'))
+            self.windows.append(card);card.resize(145,card.height());card.show();drain()
+            card._set_hover_at(None)
+            normal=card.grab().toImage()
+            move_to(card,QPoint(0,card.height()//2))
+            hovered=card.grab().toImage()
+            self.assertEqual(card.active,0)
+            for point in (QPoint(0,card.height()//2),QPoint(card.width()//2,card.height()-1)):
+                self.assertNotEqual(normal.pixel(point),hovered.pixel(point))
+            with patch.object(QCursor,'pos',return_value=card.alert_badge.mapToGlobal(card.alert_badge.rect().center())), \
+                 patch.object(QApplication,'widgetAt',return_value=card.alert_badge):
+                APP.sendEvent(card,QEvent(QEvent.Type.Leave))
+                self.assertEqual(card.active,0)
+                drain()
+                self.assertEqual(card.active,0)
     def test_hidden_card_stops_countdown_and_progress_animation(self):
         card=self.card([dict(name='一周',remaining=82,resetsAt=time.time()+3600)])
         card.begin_reveal();card.start_reveal();card.animation.setCurrentTime(100)

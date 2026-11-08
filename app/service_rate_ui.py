@@ -3,7 +3,7 @@ from html import escape
 from datetime import datetime
 import time
 from PySide6.QtCore import Qt,QRect,QRectF,QPoint,QPropertyAnimation,QEasingCurve,QEvent
-from PySide6.QtGui import QPainter,QColor,QPen,QTextDocument,QCursor
+from PySide6.QtGui import QPainter,QColor,QPen,QTextDocument,QCursor,QFontMetricsF
 from compact_bubble import font
 from theme_registry import palette
 from public_status import shared,bubble_position,service_colors
@@ -67,7 +67,7 @@ def service_bubble(Base):
             if previous:text+='<p>上次记录 '+datetime.fromtimestamp(previous['checked']).strftime('%m/%d %H:%M')+' '+escape(previous['title'])+'</p>'
             incidents=value.get('incidents',[])
             for row in incidents:text+='<h4>'+escape(row['name'])+'</h4><p>'+escape(row['body']).replace('\n','<br>')+'</p>'
-            if not incidents and tone=='ok':text+='<p>公开状态页未报告异常。</p>'
+            if not incidents and tone=='ok':text+='<p>公开状态页未报告 Codex 异常。</p>'
             text+='<p style="color:'+theme['muted']+'">公开状态与本机会话速率分别统计。这里可查看服务进展，具体会话表现见速率列表。</p><p style="color:'+theme['muted']+'">来源 status.openai.com</p>'
             self.doc.setDefaultFont(font(11));self.doc.setDefaultStyleSheet('body{color:'+theme['ink']+'}h3{font-size:12px;font-weight:600;margin:5px 0}h4{font-size:11px;margin:8px 0 3px}p{margin:5px 0;line-height:135%}')
             self.doc.setHtml('<body>'+text+'</body>');self.doc.setTextWidth(self.width_limit-22)
@@ -101,7 +101,9 @@ def service_bubble(Base):
                 p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setOpacity(self.level);theme=palette();y=self.height()-29
                 p.fillRect(QRectF(2,y,self.width()-4,23),QColor(theme['surface']));p.setPen(QColor(theme['border']));p.drawLine(10,y,self.width()-10,y)
                 value=self.service.value;ink,dot=service_colors(theme,value['tone']);p.setFont(font(11));p.setPen(QColor(theme['muted']));p.drawText(11,y+18,'服务')
-                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(dot));p.drawEllipse(QRectF(43,y+10,5,5));p.setPen(QColor(ink));p.drawText(54,y+18,value['title'])
+                baseline=y+18
+                center=baseline+QFontMetricsF(p.font(),p.device()).tightBoundingRect(value['title']).center().y()+.5
+                p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(dot));p.drawEllipse(QRectF(43,center-2.5,5,5));p.setPen(QColor(ink));p.drawText(54,baseline,value['title'])
                 checked=value.get('checked');stamp=datetime.fromtimestamp(checked).strftime('%H:%M') if checked else '未更新'
                 p.setPen(QColor(theme['muted']));p.drawText(QRectF(self.width()-80,y+2,69,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,stamp+(' ›' if self.focusable else ''));return
             theme=palette();p=QPainter(self);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver);p.setOpacity(self.level);p.setRenderHint(QPainter.RenderHint.Antialiasing)

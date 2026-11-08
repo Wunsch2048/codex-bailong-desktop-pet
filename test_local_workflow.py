@@ -42,7 +42,7 @@ class LocalWorkflowTests(unittest.TestCase):
         (self.root/'app/tray_host.cs').write_text('// fixed tray source fixture')
         (self.root/'build_tray_host.py').write_text('# tray compiler fixture')
         self.stage=self.root/'release/BailongEnhanced';self.stage.mkdir(parents=True);(self.stage/'BailongEnhanced.exe').write_bytes(b'compiled-placeholder')
-        self.proof=dict(version=local.VERSION,executableSha256=local.sha(self.stage/'BailongEnhanced.exe'),tlsRuntime=dict(passed=True,certificateVerification=True,hostnameVerification=True,offline=True))
+        self.proof=dict(version=local.VERSION,executableSha256=local.sha(self.stage/'BailongEnhanced.exe'),tlsRuntime=dict(passed=True,**dict.fromkeys(local.TLS_ACCEPTANCE_FLAGS,True)))
         self.patch=patch.object(local,'ROOT',self.root);self.patch.start()
         receipt=self.root/'本地实装/回归验收/current-regressions.json';receipt.parent.mkdir(parents=True)
         receipt.write_text(json.dumps(dict(passed=True,scope='full',expectedModules=['test_local_workflow','test_release_retention','test_release_version'],modules=3,tests=1,sourceHashes=local.source_hashes())),encoding='utf-8')
@@ -134,5 +134,30 @@ class LocalWorkflowTests(unittest.TestCase):
         pem=module.with_name('codex-rejected-cas.pem');pem.write_bytes(b'public certificate data')
         self.assertEqual(ssl_runtime_data(module),['--add-data',str(pem)+';.'])
         pem.unlink();module.write_text('standard ssl implementation');self.assertEqual(ssl_runtime_data(module),[])
+
+class FrozenTlsAcceptanceTests(unittest.TestCase):
+    def verify(self, flags):
+        from contextlib import nullcontext
+        with patch.object(local.tempfile,'TemporaryDirectory',return_value=nullcontext(str(local.ROOT/'isolated-tls'))), \
+             patch.object(Path,'mkdir'), patch.object(Path,'unlink'), \
+             patch.object(local.shutil,'copy2') as copy, patch.object(local.subprocess,'run') as run, \
+             patch.object(local,'read',return_value=flags):
+            exe=local.ROOT/'fake-release'/'BailongEnhanced.exe'
+            result=local.verify_tls_runtime(exe)
+            env=run.call_args.kwargs['env']
+            self.assertEqual(env['PATH'].split(local.os.pathsep)[0],env['BAILONG_TLS_TEST_CONFLICT_DIR'])
+            self.assertEqual(
+                {args.args for args in copy.call_args_list},
+                {(exe.parent/name,Path(env['BAILONG_TLS_TEST_CONFLICT_DIR'])/name) for name in local.OPENSSL_DLLS},
+            )
+            return result
+
+    def test_requires_a_frozen_probe_in_the_conflict_environment(self):
+        flags=dict.fromkeys(local.TLS_ACCEPTANCE_FLAGS,True)
+        self.assertTrue(self.verify(flags)['passed'])
+        for missing in ('externalOpenSslFirstInPath','bundledQtOpenSsl'):
+            with self.subTest(missing=missing),self.assertRaisesRegex(ValueError,'TLS'):
+                self.verify({key:value for key,value in flags.items() if key!=missing})
+
 
 if __name__=='__main__':unittest.main()

@@ -1,7 +1,7 @@
 """Real Qt/native card routes, isolated synthetic data; no external services."""
 import json,time
 from pathlib import Path
-from PySide6.QtCore import QObject,QEvent,QTimer,QRect,Qt
+from PySide6.QtCore import QObject,QEvent,QTimer,QRect,Qt,QAbstractNativeEventFilter
 from PySide6.QtWidgets import QApplication,QWidget,QToolButton
 
 def sample():
@@ -52,6 +52,23 @@ def run(destination):
                 checks['bodyNeverOverlapsHeaderAtHandoff']=checks.get('bodyNeverOverlapsHeaderAtHandoff',True) and t.cover.y()>nav.geometry().bottom()
             return False
     recorder=Recorder();app.installEventFilter(recorder)
+    # Observe the APPLIED native style, not just Qt's final flags. A very
+    # brief non-layered interval was invisible in end-frame screenshots.
+    native_style_drops=[]
+    class NativeStyleRecorder(QAbstractNativeEventFilter):
+        def nativeEventFilter(self,event_type,message):
+            if app.platformName()!='windows':return False,0
+            import ctypes
+            from ctypes import wintypes
+            msg=wintypes.MSG.from_address(int(message))
+            if msg.message==0x7d and (msg.wParam&0xffffffff)==0xffffffec and msg.lParam:
+                styles=(ctypes.c_uint32*2).from_address(msg.lParam)
+                if styles[0]&0x80000 and not styles[1]&0x80000:
+                    widget=QWidget.find(int(msg.hWnd))
+                    if widget in (b,r,b.size_transition.landing,r.follow.landing,r.follow.shield) and widget.isVisible():
+                        native_style_drops.append(dict(route=routes[min(route,len(routes)-1)][0],old=hex(styles[0]),new=hex(styles[1])))
+            return False,0
+    native_recorder=NativeStyleRecorder();app.installNativeEventFilter(native_recorder)
     def compositor_sample(surface,image,point,label):
         # Only sample known opaque pixels on our own card over our own solid
         # background. No desktop screenshot or external window is captured.
@@ -75,11 +92,12 @@ def run(destination):
             surface.grab().save(str(folder/(name+'-report.png')))
     def finish(failure=None):
         timer.stop();checks['targetControlsNeverExposedDuringPreparation']=preparation_exposures==0
+        checks['visibleLayeredStyleNeverDropped']=not native_style_drops
         checks['nativeGeometryChangesUpdatesDisabled']=all(not e['updates'] for e in native_events)
         checks['nativeReportPresentationPixels']=bool(pixel_samples) and max(s['error'] for s in pixel_samples)<=3
         result=dict(version=VERSION,passed=failure is None and all(checks.values()),error=failure,checks=checks,seconds=round(time.monotonic()-started,3),dpr=b.devicePixelRatioF(),nativePlatform=app.platformName(),realClock=True,
-                    frames=frames,preparationExposures=preparation_exposures,nativeEvents=native_events,compositorSamples=pixel_samples,syntheticData=True,displayFrameRateMeasured=False)
-        Path(destination).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8');app.removeEventFilter(recorder);p.close();backdrop.close();app.exit(0 if result['passed'] else 1)
+                    frames=frames,preparationExposures=preparation_exposures,nativeEvents=native_events,nativeStyleDrops=native_style_drops,compositorSamples=pixel_samples,syntheticData=True,displayFrameRateMeasured=False)
+        Path(destination).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8');app.removeNativeEventFilter(native_recorder);app.removeEventFilter(recorder);p.close();backdrop.close();app.exit(0 if result['passed'] else 1)
     def next_route():
         nonlocal route,launched,seen,previous_report,native_report
         route+=1;launched=False;seen=False;previous_report=None;native_report=None

@@ -21,6 +21,10 @@ if __name__=='__main__' and '--watch-codex' in sys.argv:
     from codex_startup import main as watch_codex
     raise SystemExit(watch_codex())
 
+from bundled_tls import OPENSSL_DLLS, check_startup as check_bundled_tls
+if __name__=='__main__' and not check_bundled_tls():
+    raise SystemExit(1)
+
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPoint, QRectF, QUrl
 from PySide6.QtGui import QIcon, QPainter, QPixmap, QCursor, QFontDatabase, QDesktopServices, QColor, QPen
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QProgressBar, QLabel
@@ -1005,6 +1009,36 @@ def main():
                 import ssl
                 context=ssl.create_default_context()
                 result=dict(state='available',code='ok',contextReady=True,certificateVerification=context.verify_mode==ssl.CERT_REQUIRED,hostnameVerification=context.check_hostname,readOnly=True,offline=True)
+                if sys.platform=='win32' and getattr(sys,'frozen',False):
+                    from PySide6.QtCore import QCoreApplication
+                    from PySide6.QtNetwork import QSslSocket
+                    import psutil
+                    application=QCoreApplication.instance() or QCoreApplication([])
+                    if not QSslSocket.setActiveBackend('openssl') or not QSslSocket.supportsSsl():
+                        raise RuntimeError('Qt OpenSSL backend did not initialize')
+                    names=set(OPENSSL_DLLS)
+                    expected={Path(sys.executable).resolve().parent/name for name in names}
+                    loaded={Path(m.path).resolve() for m in psutil.Process().memory_maps()
+                            if Path(m.path).name.lower() in names}
+                    if loaded!=expected:
+                        raise RuntimeError('Qt/Python loaded OpenSSL outside the application directory')
+                    result['bundledQtOpenSsl']=True
+                    conflict=os.environ.get('BAILONG_TLS_TEST_CONFLICT_DIR')
+                    if conflict:
+                        entries=[Path(entry).resolve() for entry in os.environ.get('PATH','').split(os.pathsep) if entry]
+                        # PyInstaller and PySide6 prepend bundled directories.
+                        # None of those may contain another OpenSSL copy.
+                        internal=Path(sys._MEIPASS).resolve()
+                        first_external=None
+                        for entry in entries:
+                            if not entry.is_relative_to(internal):
+                                first_external=entry
+                                break
+                            if any((entry/name).exists() for name in OPENSSL_DLLS):
+                                raise RuntimeError('Unexpected duplicate OpenSSL DLL in bundled PATH')
+                        if first_external!=Path(conflict).resolve():
+                            raise RuntimeError('OpenSSL conflict directory is not the first external PATH entry')
+                        result['externalOpenSslFirstInPath']=True
             else:
                 feed=fetch_feed();result=dict(state='available',code='ok',events=len(feed['events']),scheduled=feed['scheduled'],seconds=round(time.monotonic()-started,3),readOnly=True)
         except Exception as error:result=reset_failure(error)

@@ -699,6 +699,9 @@ class DailyReport(QWidget):
     @measured('report_open_dispatch')
     def open(self,page='overview',_prepared=False):
         from panel_transition import present_barrier
+        if getattr(self,'_open_present_waiting',False):
+            if page==self.page:return
+            self._cancel_open_present()
         if not _prepared and not self.requested and not self.isVisible() and not self._animating and self._host_open_page is None:
             self._reset_model_visit()
         self._host_closing=False
@@ -715,9 +718,8 @@ class DailyReport(QWidget):
         native_open=not self.isVisible() and QApplication.platformName()=='windows'
         opacity=self.windowOpacity()
         try:
-            # A hidden layered HWND can retain its last fully open bitmap.
-            # Publish the zero-size reveal before making a cold show visible.
-            if native_open:self.setWindowOpacity(0.)
+            # Keep preparation hidden. A cold HWND has no Qt Expose yet, so
+            # repaint alone cannot establish the transparent opening frame.
             if not reversing:
                 if not _prepared:
                     count=len(book_catalog()['books'])
@@ -744,12 +746,44 @@ class DailyReport(QWidget):
                         transition.begin();transition.commit();return
                     owner.position_bubble()
                 self.sync_geometry();self._prepare_frame()
+            if native_open:
+                from native_landing import publish
+                self._open_native_seeded=False;self._open_native_error=''
+                try:self._open_native_seeded=publish(self,None)
+                except OSError as error:self._open_native_error=str(error)
+                # A reused Qt backing store can overwrite the seeded HWND
+                # during Expose. Keep that first flush masked until an actual
+                # exposed repaint, rather than restoring alpha before Expose.
+                self._open_present_opacity=opacity;self._open_present_waiting=True
+                self.setWindowOpacity(0.)
+                self.winId()
+                self.windowHandle().installEventFilter(self)
             self.show();self.raise_();self._input_passthrough(True)
             if not self.follow.active:self.follow.park(self.follow.shield)
-            if native_open:self.repaint();present_barrier()
+            if native_open:
+                QTimer.singleShot(0,self,self._open_present_ready)
+                return
+        except Exception:
+            self._cancel_open_present()
+            raise
         finally:
-            if native_open:self.setWindowOpacity(opacity)
+            if native_open and not getattr(self,'_open_present_waiting',False) and self.windowOpacity()!=opacity:self.setWindowOpacity(opacity)
         self._start_animation(1.)
+    def _open_present_ready(self):
+        if not getattr(self,'_open_present_waiting',False):return
+        if not self.isVisible() or not self.requested:return
+        handle=self.windowHandle()
+        if handle is None or not handle.isExposed():return
+        self._open_present_waiting=False
+        from panel_transition import present_barrier
+        self.repaint();present_barrier()
+        self.setWindowOpacity(self._open_present_opacity)
+        self._start_animation(1.)
+    def _cancel_open_present(self):
+        if not getattr(self,'_open_present_waiting',False):return False
+        self._open_present_waiting=False;opacity=self._open_present_opacity
+        self.hide();self.setWindowOpacity(opacity)
+        return True
     def _reset_model_visit(self):
         """Fresh panel entry resets UI state, independently of cached data."""
         self.selected_model=None;self.period='all'
@@ -764,6 +798,8 @@ class DailyReport(QWidget):
         if self._host_open_page is not None:
             self._host_open_page=None;self._host_prepared_page=None;self.requested=False;self._host_return=True;return
         if not self.requested and not self.isVisible():return
+        if self._cancel_open_present():
+            self.requested=False;self._restore_host();return
         if self.follow.active:
             if self.follow.committed:self._dismiss_after_host=True;return
             self.follow.cancel()
@@ -775,6 +811,10 @@ class DailyReport(QWidget):
         # Do not recreate the layered window with QWidget.setWindowFlags.
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,value)
         if self.windowHandle():self.windowHandle().setFlag(Qt.WindowType.WindowTransparentForInput,value)
+    def nativeEvent(self,event_type,message):
+        from native_window_style import preserve_layered_style
+        if preserve_layered_style(self,event_type,message):return True,0
+        return super().nativeEvent(event_type,message)
     @measured('report_prepare_frame')
     def _prepare_frame(self):
         self.refresh_button.freeze_motion('surface')
@@ -804,8 +844,7 @@ class DailyReport(QWidget):
         # time. Configure atomically so a quick reversal never jumps to 1/0.
         blocked=self.animation.blockSignals(True)
         self._motion_start=start;self._motion_target=target
-        # island_response is already exactly settled at .82. Preserve its
-        # visible trajectory, omit the motionless tail before chart handoff.
+        # The opening spring settles at .82, before the chart handoff.
         self.animation.setDuration(max(1,round((DISMISS_MS if target==0. else EXPAND_MS*.82)*min(1.,abs(target-start)))))
         self.animation.setStartValue(0.);self.animation.setEndValue(1.);self.animation.setCurrentTime(0)
         self.animation.blockSignals(blocked);self.fraction=start;play_animation(self.animation)
@@ -832,6 +871,11 @@ class DailyReport(QWidget):
     def _finished(self):
         from panel_transition import present_barrier
         guarded=self.requested and self._animating and QApplication.platformName()=='windows'
+        if guarded and not self._pending_rebuild:
+            # Keep the raster and live children in one HWND when the canvas
+            # is already at its final bounds. Only a layout change needs cover.
+            target=self.geometry_for_host(self.bubble.geometry())
+            guarded=self.geometry()!=target.adjusted(-self.PAD,-self.PAD,self.PAD,self.PAD)
         opacity=self.windowOpacity()
         if guarded:
             self.follow.shield.present(self.grab(),self.geometry());present_barrier()
@@ -911,6 +955,8 @@ class DailyReport(QWidget):
             if self.isVisible():self.repaint()
         finally:self._syncing=False
     def eventFilter(self,obj,event):
+        if getattr(self,'_open_present_waiting',False) and obj is self.windowHandle() and event.type()==QEvent.Type.Expose:
+            QTimer.singleShot(0,self,self._open_present_ready)
         if obj is self.bubble:
             if event.type() in (QEvent.Type.Move,QEvent.Type.Resize):
                 if not self.follow.active and (self.requested or self.isVisible()):self.sync_geometry()
@@ -918,6 +964,8 @@ class DailyReport(QWidget):
                 self._host_open_page=None;self._host_prepared_page=None;self._host_return=False;self.requested=False;self.hide()
         return False
     def hideEvent(self,event):
+        if getattr(self,'_open_present_waiting',False):
+            self._open_present_waiting=False;self.setWindowOpacity(self._open_present_opacity)
         self.page_fade.clear()
         self.follow.cancel()
         self.animation.stop();self.requested=False;self.fraction=0.;self._animating=False;self._frame=None

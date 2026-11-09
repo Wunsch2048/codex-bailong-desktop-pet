@@ -7,6 +7,24 @@ from PySide6.QtTest import QTest
 from roaming import WalkPlan
 import test_edge_dock as fixture
 
+class AutonomousBoundaryTests(unittest.TestCase):
+    def test_settings_blocks_resume_without_starving_idle_actions(self):
+        from types import SimpleNamespace
+        from desktop import DesktopPet
+        route=SimpleNamespace(pending_start=False,paused_until=1,queue=[(1,2)])
+        pet=SimpleNamespace(
+            isVisible=lambda:True,dragging=False,throwing=False,walking=False,
+            next_chain=0,buffer_until=0,status_hold=0,roaming=route,
+            settings=dict(status_actions=False,random_interval=10,action_gap=1),
+            _materials_missing=False,settings_dialog=SimpleNamespace(isVisible=lambda:True),
+            random_actions=True,wandering=True)
+        pet.start_walk=lambda:DesktopPet.start_walk(pet)
+        with patch('desktop.random.choices',return_value=['idle']) as pick:
+            DesktopPet.autonomous_boundary(pet,10)
+        pick.assert_called_once()
+        self.assertEqual(route.queue,[(1,2)])
+        self.assertEqual(pet.next_chain,21)
+
 class InteractionTests(unittest.TestCase):
     setUp=fixture.DockTests.setUp
     tearDown=fixture.DockTests.tearDown

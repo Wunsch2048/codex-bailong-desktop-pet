@@ -216,6 +216,12 @@ class FullscreenGate:
         self.require_video=bool(require_video)
         self.active=None;self.pending=None;self.since=0.;self.missing=None
     def update(self,frame,now):
+        if frame.get('reason')=='probe_error':
+            self.pending=None
+            if self.active:
+                if self.missing is None:self.missing=now
+                if now-self.missing>=3:self.active=None
+            return dict(self.active) if self.active else None
         key=(frame.get('hwnd',0),tuple(frame.get('monitor',())))
         active_key=(self.active['hwnd'],tuple(self.active['monitor'])) if self.active else None
         if not frame.get('fullscreen') or (self.active and key!=active_key):

@@ -305,9 +305,17 @@ class ResetThread(QThread):
 from compact_bubble import CompactBubble as HeadBubble
 
 class EnhancedPet(Pet):
+    @staticmethod
+    def read_settings(path):
+        try:
+            values=json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(values,dict):raise ValueError('invalid settings')
+            return values,False
+        except FileNotFoundError:return {},False
+        except (OSError,ValueError,RecursionError):return {},True
+
     def __init__(self,monitor=True):
-        try:self.settings=json.loads(CONFIG.read_text(encoding='utf-8'))
-        except (OSError,ValueError):self.settings={}
+        self.settings,self.settings_read_failed=self.read_settings(CONFIG)
         self.enhanced_ready=False
         super().__init__()
         self.setWindowTitle('白龙桌宠增强版')
@@ -419,10 +427,14 @@ class EnhancedPet(Pet):
             QTimer.singleShot(1800,self.refresh_quota)
         self.position_bubble()
 
-    def save_settings(self):
+    def collect_settings(self):
         self.settings.update(wandering=self.wandering,random_actions=self.random_actions,
                              commentary=self.commentary,sound=self.sound,bubble=self.bubble.enabled,
                              quota_visible=self.bubble.show_quota,position=[self.x(),self.y()])
+
+    def save_settings(self):
+        if self.settings_read_failed:return False
+        self.collect_settings()
         save_json(CONFIG,self.settings)
 
     def say(self,text,ms=4000):

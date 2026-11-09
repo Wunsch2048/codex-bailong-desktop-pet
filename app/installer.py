@@ -17,8 +17,15 @@ ROOT=install_root()
 DATA=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
 from desktop_core import VERSION
 def read_manifest(root=ROOT):
-    try:return json.loads((root/'installations.json').read_text(encoding='utf-8'))
-    except (OSError,ValueError):return dict(current='',versions=[])
+    try:
+        value=json.loads((root/'installations.json').read_text(encoding='utf-8'))
+        if (not isinstance(value,dict) or not isinstance(value.get('current'),str) or
+            not isinstance(value.get('versions'),list) or not all(isinstance(name,str) for name in value['versions'])):
+            raise ValueError('invalid installation manifest')
+        return value
+    except FileNotFoundError:return dict(current='',versions=[])
+    except (OSError,ValueError,RecursionError) as error:
+        raise OSError('现有安装记录无法读取，请恢复记录后重试。') from error
 def write_manifest(value,root=ROOT):
     root.mkdir(parents=True,exist_ok=True);temp=root/'installations.tmp'
     temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(temp,root/'installations.json')
@@ -51,6 +58,7 @@ def install(payload,root=ROOT,startup=False,copy_installer=True,before_commit=No
     from deployment_state import capture_entries,restore_entries,owned_destination,atomic,recover,verify_payload,stop_version
     root=Path(root).resolve();root.mkdir(parents=True,exist_ok=True);system=root==ROOT.resolve() if system is None else system
     recover(root,system)
+    read_manifest(root)
     name=VERSION+'-'+time.strftime('%Y%m%d-%H%M%S')
     if (root/'versions'/name).exists():name+='-'+str(time.time_ns())
     dest=owned_destination(root,name);dest.mkdir(parents=True)
@@ -120,8 +128,8 @@ def stop_existing(root=ROOT):
     """Close only running binaries inside this user's registered versions."""
     import psutil
     from codex_startup import stop_watchers
-    stop_watchers(root)
     root=Path(root).resolve();manifest=read_manifest(root);known=set()
+    stop_watchers(root)
     for name in manifest.get('versions',[]):
         try:known.add((checked_version(root,name)/'BailongEnhanced.exe').resolve())
         except (OSError,ValueError):continue
@@ -198,11 +206,16 @@ class Installer(QWidget):
     def __init__(self,quick=False,maintenance=False):
         super().__init__();self.quick=quick;self.maintenance=maintenance;self.setWindowTitle('白龙桌宠增强版 · '+('一键部署' if quick else '安装与维护'));self.resize(510,220 if quick else 340);layout=QVBoxLayout(self)
         self.status=QLabel('安装版本 '+VERSION+'\n安装到当前用户，无需管理员权限。\n每次升级保留上一版本；设置和聊天记录放在独立用户目录。');self.status.setWordWrap(True);layout.addWidget(self.status)
-        self.current_root=ROOT;self.existing=bool(read_manifest().get('current'))
+        self.current_root=ROOT;manifest_error=None;startup=False
+        try:
+            self.existing=bool(read_manifest().get('current'))
+            startup=startup_preference()
+        except (OSError,ValueError) as error:
+            manifest_error=error;self.existing=True
         location=QHBoxLayout();self.location=QLineEdit(str(ROOT));self.location.setReadOnly(True);self.location.setAccessibleName('程序安装目录');location.addWidget(self.location,1)
         self.browse=QPushButton('选择位置');self.browse.clicked.connect(self.choose_location);location.addWidget(self.browse);layout.addLayout(location)
         self.browse.setEnabled(maintenance or not self.existing)
-        self.startup=QCheckBox('登录 Windows 时自动启动');self.startup.setChecked(startup_preference());layout.addWidget(self.startup);self.startup.setVisible(not quick or not self.existing)
+        self.startup=QCheckBox('登录 Windows 时自动启动');self.startup.setChecked(startup);layout.addWidget(self.startup);self.startup.setVisible(not quick or not self.existing)
         self.install_button=QPushButton('安装 / 升级');self.install_button.clicked.connect(self.start);layout.addWidget(self.install_button)
         self.maintenance_buttons=[]
         b=QPushButton('回退到上一安装版本');self.maintenance_buttons.append(b);b.clicked.connect(self.rollback);layout.addWidget(b);b.setVisible(not quick)
@@ -211,6 +224,10 @@ class Installer(QWidget):
         if maintenance:
             self.install_button.hide();self.status.setText('白龙桌宠 '+VERSION+' · 轻量维护\n可回退或卸载；升级请运行下载的一键部署程序。\n设置、聊天记录与账号数据保存在独立用户目录。')
             self.move_button=QPushButton('迁移程序目录');self.move_button.clicked.connect(self.move_location);layout.addWidget(self.move_button);self.maintenance_buttons.append(self.move_button)
+        if manifest_error:
+            self.status.setText(str(manifest_error))
+            for button in [self.install_button,self.browse,*self.maintenance_buttons]:button.setEnabled(False)
+            return
         if quick:
             if self.existing:
                 self.status.setText('正在准备一键部署 '+VERSION+'…\n将沿用现有安装位置，已有设置和记录保留。')
@@ -314,9 +331,9 @@ class Installer(QWidget):
             if expected not in (default.resolve(),registered.resolve() if registered else None) and marker.get('kind')!='program':raise OSError('安装目录校验失败')
             from deployment_state import recover
             recover(ROOT,True)
+            m=read_manifest()
             from codex_startup import configure,stop_watchers
             configure(False);stop_watchers(ROOT)
-            m=read_manifest()
             # Close the app through its local control socket, never unrelated Python/Codex processes.
             from deployment_state import owned_destination
             active=owned_destination(ROOT,m['current']) if m['current'] else None

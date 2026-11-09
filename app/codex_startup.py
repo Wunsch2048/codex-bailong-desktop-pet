@@ -106,7 +106,7 @@ def desktop_sessions():
 class LaunchGate:
     def __init__(self):self.sessions=set();self.absent=0
     def observe(self,current):
-        if current is None:return False
+        if current is None:self.absent=0;return False
         if not current:
             self.absent+=1
             if self.absent>=2:self.sessions=set()

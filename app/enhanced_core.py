@@ -107,6 +107,8 @@ class Session:
     updated: float = 0
     runtime_active: bool|None = None
     runtime_turn: str = ''
+    historical_only: bool = False
+    turn_is_fallback: bool = False
 
     @property
     def source_hidden(self):return self.source_subagent or bool(self.attached_parent)
@@ -131,6 +133,7 @@ class ActivityReducer:
         """Explicit runtime idleness is reversible, never a synthetic completion."""
         s=self.sessions.get(sid)
         if not s or s.source_hidden or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
+        if active:s.historical_only=False
         if s.runtime_turn==turn and s.runtime_active is active:return []
         s.runtime_turn=turn;s.runtime_active=active
         return [self._status(sid,s)]
@@ -144,10 +147,11 @@ class ActivityReducer:
         s=self.sessions.get(sid)
         if not s or s.source_hidden or s.done or not turn or s.turn!=turn or status not in ('completed','failed','interrupted'):return []
         s.done=True;s.closed_turn=turn;s.compacting=False;s.waiting_reason=''
-        s.state='complete' if status=='completed' else 'interrupted'
-        s.message=s.display={'completed':'任务已完成','failed':'任务执行失败','interrupted':'任务已中断'}[status]
+        silent=status=='completed' and s.historical_only
+        s.state='idle' if silent else 'complete' if status=='completed' else 'interrupted'
+        s.message=s.display='等待新的 Codex 任务' if silent else {'completed':'任务已完成','failed':'任务执行失败','interrupted':'任务已中断'}[status]
         events=[]
-        if status=='completed':events.append(dict(kind='complete',session=sid,turn=turn,title=s.title,text=s.message))
+        if status=='completed' and not silent:events.append(dict(kind='complete',session=sid,turn=turn,title=s.title,text=s.message))
         return events+[self._status(sid,s)]
 
     def set_waiting(self,sid,reason,turn=''):
@@ -195,12 +199,18 @@ class ActivityReducer:
             if not historical:
                 events.append(self.last_quota)
         typ = p.get('type')
+        explicit_turn=str(p.get('turn_id') or '')
+        started=kind=='event_msg' and typ in ('task_started','turn_started')
+        if (kind=='event_msg' and explicit_turn and s.turn and not s.turn_is_fallback and explicit_turn!=s.turn
+            and typ in ('task_complete','task_completed','turn_aborted','task_aborted','turn_cancelled')):
+            return events
         if s.closed_turn and s.turn==s.closed_turn:
             new_turn=str(p.get('turn_id') or '') if kind=='event_msg' and typ in ('task_started','turn_started') else ''
             if new_turn and new_turn!=s.closed_turn:s.closed_turn=''
             else:return events
         changed = False
         user_message = False
+        was_done, previous_turn=s.done,s.turn
         if kind=='compacted':
             # A saved compaction record proves completion, never its start.
             if s.compacting:s.compacting=False;changed=True
@@ -211,7 +221,8 @@ class ActivityReducer:
         elif kind == 'event_msg' and typ in ('task_started', 'turn_started'):
             s.compacting=False;s.waiting_reason=''
             s.runtime_active=None;s.runtime_turn=''
-            s.turn = str(p.get('turn_id') or stamp)
+            s.turn = explicit_turn or str(stamp)
+            s.turn_is_fallback=not explicit_turn
             s.done = False
             s.state, s.message = 'thinking', '收到任务，正在思考…'
             changed = True
@@ -248,8 +259,12 @@ class ActivityReducer:
                     s.state, s.message = ('responding' if item.get('phase') == 'final_answer' else 'working'), text
                     changed = True
             elif it in ('CommandExecution', 'McpToolCall', 'FileChange', 'WebSearch', 'Extension'):
-                if s.completed_turn and str(p.get('turn_id') or '')==s.completed_turn:
-                    return events
+                turn=p.get('turn_id')
+                if isinstance(turn,str) and turn:
+                    if turn==s.completed_turn:return events
+                    # A bounded rollout tail can begin after task_started.
+                    # Keep the explicit ID so IPC and history can retire it.
+                    if not s.turn or s.turn_is_fallback:s.turn=turn;s.turn_is_fallback=False
                 label = {'CommandExecution': '执行命令', 'McpToolCall': '调用工具', 'FileChange': '修改文件', 'WebSearch': '查找资料', 'Extension': '使用扩展工具'}[it]
                 failed = item.get('status') in ('failed', 'error')
                 s.state, s.message = 'working', (label + ('暂未成功，继续处理中…' if failed else '已返回，继续处理中…'))
@@ -276,6 +291,9 @@ class ActivityReducer:
         # Preserve a completed operation through commentary until a real next
         # operation/thinking/final lifecycle event replaces it.
         if changed:
+            if not s.done:
+                if historical and (was_done or started and previous_turn!=s.turn):s.historical_only=True
+                elif not historical and (not explicit_turn or explicit_turn==s.turn):s.historical_only=False
             if user_message or typ in ('task_started','turn_started'):
                 s.display='正在思考';s.calls.clear()
             elif s.state=='complete':s.display='任务已完成'

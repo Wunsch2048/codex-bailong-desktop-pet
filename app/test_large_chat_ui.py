@@ -10,7 +10,7 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QWidget,QVBoxLayout
 from chat_config import CHAT_DEFAULT
-from chat_window import ChatWindow
+from chat_window import ChatWindow,SessionStore
 from theme_registry import activate,color
 from typography import install_ui_font
 
@@ -20,11 +20,33 @@ install_ui_font(APP)
 
 class MemorySessions:
     def __init__(self,*args):
-        self.sessions=[dict(id='demo',title='演示会话',messages=[])]
+        self.sessions=[dict(id='demo',title='演示会话',messages=[])];self.load_error=''
     def save(self):pass
     def new(self):
         value=dict(id=str(len(self.sessions)),title='新对话',messages=[])
         self.sessions.insert(0,value);return value
+
+
+class ChatHistorySafetyTests(unittest.TestCase):
+    def test_unreadable_or_invalid_history_cannot_be_replaced(self):
+        for source in (PermissionError('temporarily locked'),'{broken', '[{}]'):
+            with self.subTest(source=source),patch('chat_window.SessionStore._read',side_effect=[source]),patch('chat_window.atomic_json') as write:
+                store=SessionStore('unused','builtin')
+                self.assertTrue(store.load_error)
+                with self.assertRaises(OSError):store.new()
+                write.assert_not_called()
+                self.assertEqual(store.sessions,[])
+
+    def test_recovered_and_externally_changed_history(self):
+        original='[{"id":"old","title":"原会话","messages":[]}]'
+        with patch('chat_window.SessionStore._read',side_effect=[PermissionError(),original,original,original]),patch('chat_window.atomic_json') as write:
+            store=SessionStore('unused','builtin')
+            self.assertTrue(store.load())
+            store.new()
+            self.assertEqual([item['id'] for item in store.sessions][1:],['old'])
+            with self.assertRaises(OSError):store.new()
+            self.assertEqual(len(store.sessions),2)
+            write.assert_called_once()
 
 
 class LargeChatUiTests(unittest.TestCase):

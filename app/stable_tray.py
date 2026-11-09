@@ -39,6 +39,8 @@ class StableTray(QObject):
     def __init__(self,icon,parent=None):
         super().__init__(parent);self._icon=QIcon(icon);self._menu=None;self._visible=False;self._rect=QRect()
         self.ready=False;self.error='';self.process=None;self.socket=None;self._buffer=b'';self._attempts=0
+        self._restart_attempts=0
+        self._restart=QTimer(self);self._restart.setSingleShot(True);self._restart.timeout.connect(self._start_host)
         self.server=QLocalServer(self);self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self.server.newConnection.connect(self._connect)
         self.nonce=secrets.token_hex(24);self.pipe='BailongTray-'+str(os.getpid())+'-'+self.nonce[:12]
@@ -62,7 +64,14 @@ class StableTray(QObject):
     def setIcon(self,icon):self._icon=QIcon(icon);self._publish_icon()
     def show(self):
         if self._visible:return
-        self._visible=True
+        self._visible=True;self._restart_attempts=0
+        self._start_host()
+    def _start_host(self):
+        if not self._visible:return
+        # Let the previous host remove its shell icon before reusing the GUID.
+        if self.process is not None and self.process.poll() is None:
+            self._retry_host()
+            return
         try:
             from storage_locations import install_root
             source=Path(sys.executable).resolve().parent/'tray'/HOST_NAME
@@ -70,14 +79,24 @@ class StableTray(QObject):
             if not self.server.listen(self.pipe):raise OSError(self.server.errorString())
             self.process=subprocess.Popen([str(self.host),self.pipe,self.nonce,str(os.getpid())],creationflags=0x08000000)
         except (OSError,ValueError) as e:
-            self.error=str(e);self._visible=False;self.changed.emit()
+            self.server.close();self.error=str(e);self._retry_host();self.changed.emit()
+    def _retry_host(self):
+        if not self._visible:return
+        if self._restart_attempts>=4:self._visible=False;return
+        self._restart_attempts+=1
+        self._restart.start(500*self._restart_attempts)
     def _connect(self):
         candidate=self.server.nextPendingConnection()
         if self.socket is not None:candidate.disconnectFromServer();candidate.deleteLater();return
         self.socket=candidate;candidate.readyRead.connect(self._read)
         candidate.disconnected.connect(self._disconnected)
         if candidate.bytesAvailable():self._read()
-    def _disconnected(self):self.ready=False;self.error='托盘连接已结束';self.changed.emit()
+    def _disconnected(self):
+        socket=self.socket;self.socket=None;self._buffer=b'';self._rect=QRect()
+        if socket is not None:socket.deleteLater()
+        self.ready=False;self._attempts=0
+        if not self._visible:return
+        self.server.close();self.error='托盘连接已结束';self._retry_host();self.changed.emit()
     def _send(self,value):
         if self.socket is not None:self.socket.write((json.dumps(value,ensure_ascii=False)+'\n').encode('utf-8'));self.socket.flush()
     def _publish_icon(self):
@@ -97,6 +116,7 @@ class StableTray(QObject):
                 if kind=='connected':self._publish_icon()
                 else:
                     self.ready=bool(event.get('ok'));self.error='' if self.ready else 'Shell拒绝托盘注册：'+str(event.get('error'))
+                    if self.ready:self._restart_attempts=0
                     if not self.ready and self._attempts<4:
                         self._attempts+=1;QTimer.singleShot(250*self._attempts,self,self._publish_icon)
                     self.changed.emit()
@@ -128,7 +148,7 @@ class StableTray(QObject):
         menu.activateWindow();menu.setFocus(Qt.FocusReason.PopupFocusReason)
     def silentMessage(self,title,text):self._send(dict(kind='message',title=title[:63],text=text[:255]))
     def hide(self):
-        self._visible=False;self.ready=False;self._send(dict(kind='close'))
+        self._visible=False;self.ready=False;self._restart.stop();self._send(dict(kind='close'))
         if self.socket:self.socket.disconnectFromServer()
         self.server.close()
     def diagnostics(self):return dict(backend='fixed-host',ready=self.ready,error=self.error,guid=TRAY_GUID,path=str(getattr(self,'host','')),pid=self.process.pid if self.process else None)

@@ -159,10 +159,6 @@ class ChatSessionChoice(QComboBox):
         x=min(self.width()-6,metric.horizontalAdvance(text)+7);y=self.height()/2+2
         p.setPen(QPen(QColor(theme_color('#75618d')),1,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap));p.drawLine(QPointF(x-2,y-1),QPointF(x,y+1));p.drawLine(QPointF(x,y+1),QPointF(x+2,y-1))
 
-def load_json(path,default):
-    try:return json.loads(Path(path).read_text(encoding='utf-8'))
-    except (OSError,ValueError):return copy.deepcopy(default)
-
 def trim_messages(messages,count,chars):
     result=[];total=0
     for message in reversed(messages[-max(1,count):]):
@@ -178,12 +174,46 @@ def trim_messages(messages,count,chars):
 class SessionStore:
     def __init__(self,root,character):
         self.path=Path(root)/('sessions-'+__import__('hashlib').sha256(character.encode()).hexdigest()[:16]+'.json')
-        self.sessions=load_json(self.path,[])
-        if not isinstance(self.sessions,list):self.sessions=[]
-    def save(self):atomic_json(self.path,self.sessions)
+        self.sessions=[];self.load_error='';self._source=None
+        self.load()
+    def _read(self):
+        try:return self.path.read_text(encoding='utf-8')
+        except FileNotFoundError:return None
+    def load(self):
+        try:
+            source=self._read()
+            sessions=[] if source is None else json.loads(source)
+            if not isinstance(sessions,list) or any(
+                not isinstance(s,dict) or not isinstance(s.get('id'),str) or
+                not isinstance(s.get('title'),str) or not isinstance(s.get('messages'),list) or
+                any(not isinstance(m,dict) or not isinstance(m.get('role'),str) or
+                    not isinstance(m.get('content'),str) for m in s['messages'])
+                for s in sessions
+            ):
+                raise ValueError('invalid chat history')
+        except (OSError,ValueError,RecursionError):
+            self.load_error='聊天历史无法读取，原文件已保留。恢复读取后可点「新建会话」重试。'
+            return False
+        self.sessions=sessions;self._source=source;self.load_error=''
+        return True
+    def save(self):
+        if self.load_error:raise OSError(self.load_error)
+        try:current=self._read()
+        except (OSError,UnicodeError) as error:raise OSError('无法核对原聊天记录') from error
+        if current!=self._source:
+            self.load_error='聊天记录已在别处修改。可点「新建会话」重新读取。'
+            raise OSError(self.load_error)
+        atomic_json(self.path,self.sessions)
+        self._source=json.dumps(self.sessions,ensure_ascii=False,indent=2)
+    @staticmethod
+    def blank():
+        return dict(id=uuid.uuid4().hex,title='新对话',messages=[],at=time.time())
     def new(self):
-        session=dict(id=uuid.uuid4().hex,title='新对话',messages=[],at=time.time())
-        self.sessions.insert(0,session);self.save();return session
+        session=self.blank()
+        self.sessions.insert(0,session)
+        try:self.save()
+        except OSError:self.sessions.pop(0);raise
+        return session
 
 from chat_transport import ChatStream
 
@@ -362,7 +392,9 @@ class ChatInput(QPlainTextEdit):
 class ChatWindow(QWidget):
     def __init__(self,pet,root,embedded=False):
         super().__init__(pet,Qt.WindowType.Widget if embedded else Qt.WindowType.Window);self.pet=pet;self.embedded=embedded;self.root=Path(root);self.character=str(pet.settings.get('character','builtin'))
-        self.store=SessionStore(root,self.character);self.session=self.store.sessions[0] if self.store.sessions else self.store.new()
+        self.store=SessionStore(root,self.character)
+        self.session=self.store.sessions[0] if self.store.sessions else self.store.blank()
+        if not self.store.sessions and not self.store.load_error:self.store.sessions.append(self.session)
         self.stream=None;self.partial='';self.busy=False;self.provider_dialog=None
         self._stream_pending=[];self._rendered_text='';self._rendered_session=None
         self.stream_timer=QTimer(self);self.stream_timer.setSingleShot(True);self.stream_timer.setInterval(33);self.stream_timer.timeout.connect(self.flush_stream)
@@ -408,6 +440,7 @@ class ChatWindow(QWidget):
         self.follow=QCheckBox('跟随桌宠');self.follow.setChecked(pet.settings.get('chat_follow',False));self.follow.toggled.connect(self.save_follow);layout.addWidget(self.follow)
         if embedded:self.follow.hide()
         self.reload();self.follow_timer=QTimer(self);self.follow_timer.timeout.connect(self.follow_pet)
+        if self.store.load_error:self.status.setText(self.store.load_error)
         if not embedded:self.follow_timer.start(250)
     def refresh_service_summary(self):
         try:
@@ -473,7 +506,16 @@ class ChatWindow(QWidget):
         if self.busy:self.stop()
         selected=next((s for s in self.store.sessions if s['id']==self.sessions.currentData()),None)
         if selected:self.session=selected;self.render()
-    def new(self):self.confirmation.cancel();self.stop();self.session=self.store.new();self.reload()
+    def new(self):
+        self.confirmation.cancel();self.stop()
+        if self.store.load_error:
+            if not self.store.load():self.status.setText(self.store.load_error);return
+            self.session=self.store.sessions[0] if self.store.sessions else self.store.blank()
+            if not self.store.sessions:self.store.sessions.append(self.session)
+            self.reload();self.status.setText('聊天历史已重新读取。');return
+        try:self.session=self.store.new()
+        except OSError as error:self.status.setText('新建会话失败：'+str(error));return
+        self.reload()
     def clear(self):
         key=self.session['id'];name=self.session['title']
         self.confirmation.request(f'清空会话“{name}”的全部消息？会保留会话；正在生成的回复也将停止，此操作不可撤销。',lambda:self.clear_confirmed(key),'确认清空')
@@ -526,6 +568,7 @@ class ChatWindow(QWidget):
             from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(self.session['messages'][-1]['content'])
     def start(self,text,retry):
+        if self.store.load_error:self.status.setText(self.store.load_error);return
         try:config=load_chat_config(self.root)
         except OSError as error:self.status.setText('聊天配置无法读取，原文件和输入已保留。'+str(error));return
         provider=next((p for p in config.get('providers',[]) if p['id']==config.get('active')),None)
@@ -544,11 +587,13 @@ class ChatWindow(QWidget):
         try:stream.start(provider,key,payload)
         except (ValueError,OSError) as error:
             self.busy=False;stream.deleteLater();self.stream=None;self.status.setText(str(error));self.render();return
+        previous_messages,previous_title=self.session['messages'],self.session['title']
         self.session['messages']=messages;self.session['title']=text[:24]
         try:self.store.save()
         except OSError:
+            self.session['messages']=previous_messages;self.session['title']=previous_title
             self.stream=None;self.busy=False;stream.cancel();stream.deleteLater()
-            self.status.setText('聊天记录保存失败；输入已保留，请检查磁盘空间和目录权限。');self.render();return
+            self.status.setText(self.store.load_error or '聊天记录保存失败；输入已保留，请检查磁盘空间和目录权限。');self.render();return
         self.input.clear()
         self.status.setText('白龙正在回复…');self.reload()
     def on_delta(self,stream,value):

@@ -40,7 +40,7 @@ def cleanup_plan(root):
             if p.is_symlink() or p.is_junction() or not p.is_dir():continue
             try:info=json.loads((p/'backup.json').read_text(encoding='utf-8'))
             except (OSError,ValueError):continue
-            if info.get('complete') is True:candidates.append((p,info))
+            if isinstance(info,dict) and info.get('complete') is True:candidates.append((p,info))
         for i,(p,info) in enumerate(candidates):
             if i>=2 and info.get('previous') not in keep:backups.append(p.name)
     return dict(current=m.get('current',''),versions=versions,backups=backups,kept=sorted(keep-{''}))

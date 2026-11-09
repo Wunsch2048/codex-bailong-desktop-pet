@@ -6,6 +6,31 @@ from index_maintenance import IndexMaintenance,prune_slice,identity,digest
 from project_cost import migrate
 from project_cost_store import migrate as migrate_sources,active_events
 
+class SwapRecoveryTests(unittest.TestCase):
+    def test_failed_replacement_and_rollback_keep_recoverable_journal(self):
+        from unittest.mock import Mock
+        job=object.__new__(IndexMaintenance)
+        job.path=Path('active');job.journal=Path('journal');job.done=False
+        candidate,backup,retired=map(Path,('candidate','backup','retired'))
+        job.file=dict(candidate=candidate,backup=backup,retired=retired).__getitem__
+        job.state=dict(phase='ready',source='original',sha256='verified')
+        journal={};present={job.path,candidate,backup,job.journal}
+        job.save=Mock(side_effect=lambda:journal.update(job.state))
+        failures={(candidate,job.path),(retired,job.path)}
+        def replace(source,target):
+            if (source,target) in failures:raise PermissionError('locked')
+            present.remove(source);present.add(target)
+        db=sqlite3.connect(':memory:')
+        with patch('index_maintenance.identity',return_value='original'),patch('index_maintenance.digest',return_value='verified'),patch('index_maintenance.sqlite3.connect',return_value=db),patch('index_maintenance.os.replace',side_effect=replace),patch.object(Path,'exists',lambda path:path in present),patch.object(Path,'read_text',side_effect=lambda *a:json.dumps(journal)):
+            self.assertFalse(job.swap())
+            self.assertEqual(journal['phase'],'swapping')
+            self.assertIn(retired,present)
+            self.assertNotIn(job.path,present)
+            failures.clear()
+            self.assertEqual(job.step(stop=lambda:True)['state'],'paused')
+            self.assertIn(job.path,present)
+            self.assertEqual(journal['phase'],'ready')
+
 class MaintenanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.path=self.root/'tokens.sqlite3'

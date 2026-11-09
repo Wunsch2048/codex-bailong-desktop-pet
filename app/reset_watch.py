@@ -202,16 +202,27 @@ def fetch_feed(opener=None):
 class ResetTracker:
     def __init__(self,path):
         self.path=Path(path)
+        self.state={'initialized':False,'seen':[],'schedules':[]}
+        self.read_blocked=not self.load()
+
+    def load(self):
         try:
             state=json.loads(self.path.read_text(encoding='utf-8'))
-            if not isinstance(state,dict) or not isinstance(state.get('seen'),list):raise ValueError()
+            if not isinstance(state,dict) or any(
+                not isinstance(state.get(key,[]),list) or
+                any(not isinstance(value,str) for value in state.get(key,[]))
+                for key in ('seen','schedules','resolved')
+            ):raise ValueError()
             self.state=state
-        except (OSError,ValueError):self.state={'initialized':False,'seen':[],'schedules':[]}
+        except FileNotFoundError:return True
+        except (OSError,ValueError,RecursionError):return False
+        return True
 
     @property
     def snapshot(self):return self.state.get('snapshot')
 
     def update(self,feed,now=None):
+        if self.read_blocked:self.read_blocked=not self.load()
         now=time.time() if now is None else now
         seen=set(self.state.get('seen',[]))
         schedules=set(self.state.get('schedules',[]))
@@ -243,6 +254,9 @@ class ResetTracker:
             alerts.append({'kind':'scheduled','title':'Codex 有新的重置安排','text':schedule_text(snapshot,now)})
         state={'initialized':True,'seen':ordered,'schedules':schedule_ids,'resolved':resolved,'snapshot':snapshot}
         from desktop_core import atomic_json
+        if self.read_blocked:
+            self.state=state
+            raise ResetCacheError(snapshot,[])
         try:atomic_json(self.path,state)
         except OSError:
             self.state=state

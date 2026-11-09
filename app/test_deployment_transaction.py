@@ -4,6 +4,20 @@ from unittest.mock import patch,Mock
 import installer,deployment_state as state
 from desktop_core import VERSION
 
+class ManifestSafetyTests(unittest.TestCase):
+    def test_only_missing_manifest_means_fresh_install(self):
+        with patch.object(Path,'read_text',side_effect=FileNotFoundError):
+            self.assertEqual(installer.read_manifest(Path('unused')),dict(current='',versions=[]))
+        for source in (PermissionError(),'{broken','{"current":"","versions":[1]}'):
+            read=Mock(side_effect=source if isinstance(source,Exception) else None,return_value=source)
+            with self.subTest(source=source),patch.object(Path,'read_text',read):
+                with self.assertRaisesRegex(OSError,'现有安装记录无法读取'):installer.read_manifest(Path('unused'))
+
+    def test_unreadable_manifest_never_stops_existing_watcher(self):
+        with patch.object(Path,'read_text',side_effect=PermissionError),patch('codex_startup.stop_watchers') as stop:
+            with self.assertRaises(OSError):installer.stop_existing(Path('unused'))
+        stop.assert_not_called()
+
 class TransactionTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.old=self.root/'versions/old/BailongEnhanced.exe';self.old.parent.mkdir(parents=True);self.old.write_bytes(b'old')

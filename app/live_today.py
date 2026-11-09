@@ -29,11 +29,11 @@ class LiveTodayTotal:
             total=a+b
         try:stamp=datetime.fromisoformat(obj['timestamp'].replace('Z','+00:00')).timestamp()
         except (KeyError,ValueError,TypeError,AttributeError):return
-        if not math.isfinite(stamp):return
+        if not math.isfinite(stamp) or stamp>time.time()+5:return
         with self.lock:
             path=str(path);previous=self.water.get(path);self.water[path]=max(previous or 0,total);self.water.move_to_end(path)
             while len(self.water)>256:self.water.popitem(last=False)
-            if historical or previous is None or total<=previous or stamp>time.time()+5:return
+            if historical or previous is None or total<=previous:return
             identity=json.dumps([obj['timestamp'],total,a,b],separators=(',',':'));key=hashlib.sha256(identity.encode()).hexdigest()
             self.events.setdefault(key,(stamp,total-previous))
             while len(self.events)>2048:self.events.popitem(last=False)

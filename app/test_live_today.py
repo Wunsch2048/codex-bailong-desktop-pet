@@ -7,6 +7,18 @@ from live_today import LiveTodayTotal
 def event(total,stamp):
     return dict(timestamp=datetime.fromtimestamp(stamp).astimezone().isoformat(),payload=dict(type='token_count',info=dict(total_token_usage=dict(total_tokens=total,input_tokens=total-10,output_tokens=10))))
 
+class FutureSampleTests(unittest.TestCase):
+    def test_future_sample_does_not_raise_counter_baseline(self):
+        from unittest.mock import patch
+        live=LiveTodayTotal('unused')
+        now=1780000000
+        with patch('live_today.time.time',return_value=now):
+            live.ingest('a',event(100,now-2),historical=True)
+            live.ingest('a',event(10000,now+3600))
+            live.ingest('a',event(140,now))
+        self.assertEqual(live.water['a'],140)
+        self.assertEqual(list(live.events.values()),[(now,40)])
+
 class TodayOverlayTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/'usage.db';self.now=time.time();self.day=datetime.fromtimestamp(self.now).strftime('%Y-%m-%d')

@@ -13,8 +13,19 @@ class Socket:
     def write(self,data):self.sent.append(data)
     def flush(self):pass
     def disconnectFromServer(self):self.closed=True
+    def deleteLater(self):pass
 
 class StableTrayTests(unittest.TestCase):
+    def test_disconnect_releases_connection_and_restarts_until_hidden(self):
+        tray=self.tray();tray._visible=True;tray.ready=True
+        tray.socket=Socket(b'');tray._buffer=b'old fragment'
+        tray._disconnected()
+        self.assertIsNone(tray.socket);self.assertEqual(tray._buffer,b'')
+        self.assertFalse(tray.isVisible());self.assertTrue(tray._restart.isActive())
+        with patch('storage_locations.install_root',return_value=Path('install')),patch('stable_tray.prepare_host',return_value=Path('BailongTray.exe')),patch('stable_tray.subprocess.Popen') as start:
+            tray._start_host();start.assert_called_once()
+        tray.hide()
+        self.assertFalse(tray._restart.isActive());tray.deleteLater()
     def tray(self):
         image=QPixmap(24,24);image.fill(QColor('#75618d'));return StableTray(QIcon(image))
     def test_authenticated_handshake_sends_existing_icon_and_ready(self):

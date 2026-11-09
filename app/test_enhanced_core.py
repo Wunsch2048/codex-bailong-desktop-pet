@@ -8,6 +8,41 @@ def event(typ, **fields):
     return {'type':'event_msg','timestamp':'2026-10-18T10:00:00Z','payload':{'type':typ,**fields}}
 
 class CoreTests(unittest.TestCase):
+    def test_late_log_terminal_cannot_end_new_turn(self):
+        r=ActivityReducer()
+        r.apply('a',event('task_started',turn_id='old'))
+        r.apply('a',event('task_started',turn_id='new'))
+        for kind in ('task_complete','turn_aborted'):
+            self.assertEqual(r.apply('a',event(kind,turn_id='old')),[])
+            self.assertFalse(r.sessions['a'].done)
+        self.assertEqual(r.apply('a',event('task_complete',turn_id='new'))[0]['turn'],'new')
+
+    def test_repair_historical_terminal_is_silent_until_live_activity(self):
+        r=ActivityReducer()
+        tool={'type':'CommandExecution','status':'completed'}
+        for sid in ('old','live'):
+            self.assertEqual(r.apply(sid,event('item_completed',turn_id='one',item=tool),historical=True),[])
+        result=r.terminate('old','completed','one')
+        self.assertEqual([(e['kind'],e['state'],e['active']) for e in result],[('status','idle',1)])
+        r.runtime_events('live',True,'one')
+        self.assertEqual([e['kind'] for e in r.terminate('live','completed','one')],['complete','status'])
+
+    def test_tool_only_tail_recovers_exact_turn_for_runtime_and_terminal(self):
+        r=ActivityReducer()
+        tool={'type':'CommandExecution','status':'completed'}
+        result=r.apply('a',event('item_completed',turn_id='one',item=tool))
+        self.assertEqual((result[-1]['turn'],result[-1]['active']),('one',1))
+        self.assertFalse(result[-1]['turn_started'])
+        self.assertFalse(r.terminate('a','completed','old'))
+        quiet=r.runtime_events('a',False,'one')
+        self.assertEqual((quiet[0]['state'],quiet[0]['active']),('idle',0))
+        r.apply('b',event('task_started',turn_id='two'))
+        result=r.terminate('a','interrupted','one')
+        self.assertEqual([(e['kind'],e['state'],e['active']) for e in result],[('status','interrupted',1)])
+        self.assertFalse(r.apply('a',event('item_completed',turn_id='one',item=tool)))
+        result=r.terminate('b','interrupted','two')
+        self.assertEqual(result[-1]['active'],0)
+
     def test_late_tool_completion_does_not_reopen_completed_turn(self):
         r=ActivityReducer()
         tool={'type':'CommandExecution','status':'completed'}

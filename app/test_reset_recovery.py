@@ -7,6 +7,14 @@ from PySide6.QtWidgets import QApplication
 from reset_watch import fetch_feed,ResetFetchError,ResetCacheError,ResetTracker,reset_failure
 APP=QApplication.instance() or QApplication([])
 class ResetRecoveryTests(unittest.TestCase):
+ def test_unreadable_cache_is_never_replaced_and_rejoins_when_readable(self):
+  original=json.dumps(dict(initialized=True,seen=['old'],schedules=[],resolved=[]))
+  with patch('pathlib.Path.read_text',side_effect=[PermissionError(),PermissionError(),original]),patch('desktop_core.atomic_json') as write:
+   tracker=ResetTracker('unused')
+   with self.assertRaises(ResetCacheError):tracker.update(dict(events=[],scheduled=None))
+   write.assert_not_called()
+   tracker.update(dict(events=[],scheduled=None))
+   self.assertEqual(write.call_args.args[1]['seen'],['old'])
  def test_fresh_fetch_recreates_proxy_handler(self):
   with patch('urllib.request.build_opener') as factory:
    factory.return_value.open.side_effect=lambda *a,**k:io.BytesIO(b'{"events":[],"scheduled":null}')

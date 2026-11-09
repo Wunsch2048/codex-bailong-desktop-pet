@@ -201,17 +201,25 @@ class IndexMaintenance:
         self.state['source']=identity(self.path);self.state['phase']='swapping';self.save()
         try:
             os.replace(self.path,self.file('retired'))
-            try:os.replace(self.file('candidate'),self.path)
-            except BaseException:
-                os.replace(self.file('retired'),self.path);self.state['phase']='ready';self.save();raise
         except OSError:
             self.state['phase']='ready';self.save();return False
+        try:
+            os.replace(self.file('candidate'),self.path)
+        except BaseException as error:
+            try:os.replace(self.file('retired'),self.path)
+            except OSError:
+                # Keep the swapping journal until the old file is back.
+                if isinstance(error,OSError):return False
+                raise error
+            self.state['phase']='ready';self.save()
+            if isinstance(error,OSError):return False
+            raise
         self.state['phase']='installed';self.save();self.complete();return True
 
     def step(self,stop=lambda:False,budget=.15):
         if self.done:return dict(state='completed',pending=False)
         deadline=time.monotonic()+budget
-        if self.state is None:self.recover()
+        if self.state is None or self.state['phase']=='swapping':self.recover()
         if self.done:return dict(state='completed',pending=False)
         if stop():return dict(state='paused',pending=True)
         if not self.path.exists():

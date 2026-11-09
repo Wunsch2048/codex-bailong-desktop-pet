@@ -17,6 +17,28 @@ def until(check):
     timer.start();QTimer.singleShot(5000,loop.quit);loop.exec();timer.stop()
     return check()
 
+class MaterialRollbackTests(unittest.TestCase):
+    def test_rollback_write_failure_restores_runtime_and_reports_error(self):
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        old=(Path('old'),Path('old/light'))
+        store=SimpleNamespace(cache=Path('new'),root=Path('new/light'),state=Path('state'),
+                              current='light',catalog={},patch_previous=None,known_available=lambda tier:True)
+        controller=MaterialController(store)
+        controller._move_restore=old
+        controller._move_plan={'target':store.cache}
+        controller.publish(phase='pending')
+        with patch('storage_locations.save_material_root',side_effect=PermissionError('write denied')) as save:
+            controller.failed('entry frame failed')
+        save.assert_called_once_with(store.state,old[0])
+        self.assertEqual((store.cache,store.root),old)
+        self.assertIsNone(controller._move_restore)
+        self.assertIsNone(controller._move_plan)
+        self.assertEqual(controller.state['phase'],'error')
+        self.assertIn('旧目录设置未能写回',controller.state['message'])
+        self.assertIn('entry frame failed',controller.state['message'])
+
 class MaterialControllerTests(unittest.TestCase):
     def test_ui_snapshots_and_progress_never_rescan_material_files(self):
         with patch.object(self.store,'available',side_effect=AssertionError('UI performed disk scan')):

@@ -99,7 +99,7 @@ class DesktopPet(EnhancedPet):
         self.bubble.conversationRequested.connect(self.open_conversation)
         self.bubble.optionRequested.connect(self.set_option)
         self.bubble.modeChanged.connect(self.save_bubble_mode)
-        if self.settings.get('schema')!=2 and CONFIG.exists():
+        if not self.settings_read_failed and self.settings.get('schema')!=2 and CONFIG.exists():
             shutil.copy2(CONFIG,STATE_DIR/'settings-before-0.5.0.json')
         self.settings=normalized(self.settings)
         from settings_controls import set_motion_mode,settle_motion
@@ -333,13 +333,17 @@ class DesktopPet(EnhancedPet):
         if not self.isVisible() or self.dragging or self.throwing or self.walking or (getattr(self,'edge_dock',None) and self.edge_dock.active):return False
         if now<max(self.next_chain,self.buffer_until,self.status_hold):return False
         if self.settings.get('status_actions',True) and (self.reactions.busy(now) or self.bubble.status_indicator.is_busy()):return False
-        if self.roaming.pending_start or self.roaming.paused_until is not None:
-            self.start_walk();return self.walking
-        if self.roaming.queue:self.start_walk();return self.walking
+        route_pending=self.roaming.pending_start or self.roaming.paused_until is not None or bool(self.roaming.queue)
+        if route_pending:
+            self.start_walk()
+            if self.walking:return True
+            if self.roaming.pending_start:
+                transition=self.bubble.size_transition
+                if transition.running or transition.preparing:return False
         self.next_chain=now+self.settings['random_interval']+self.settings['action_gap']
         choices=['idle'];weights=[30]
         if self.random_actions:choices+=['turn','variant'];weights+=[10,40]
-        if self.wandering and not self.settings['no_move']:choices+=['walk'];weights+=[20]
+        if self.wandering and not route_pending and not self.settings['no_move']:choices+=['walk'];weights+=[20]
         selected=random.choices(choices,weights)[0]
         if selected=='walk':self.start_walk();return self.walking
         if selected=='turn':
@@ -816,7 +820,8 @@ class DesktopPet(EnhancedPet):
         self.next_chain=time.monotonic()+self.settings['random_interval'];self.next_talk=time.monotonic()+self.settings['talk_min']
         self.schedule_animation()
         if save:
-            try:self.save_settings()
+            try:
+                if self.save_settings() is False:raise OSError('原设置无法读取，本次未写入。恢复文件后请重启桌宠。')
             except (OSError,ValueError):
                 self.settings=previous;self._card_anchor=copy.deepcopy(previous.get('card_anchor'));self.apply_settings({},save=False);raise
         if changing_theme:self._theme_preview=None;self._theme_preview_pending=False
@@ -888,8 +893,9 @@ class DesktopPet(EnhancedPet):
         return result
 
     def save_settings(self):
+        if self.settings_read_failed:return False
         if not self.enhanced_ready:return
-        super().save_settings()
+        self.collect_settings()
         self.settings['facing']=self.walk_direction
         screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen();a=screen.availableGeometry()
         self.settings['screen_position']=relative_position(self.x(),self.y(),self.width(),self.height(),(a.x(),a.y(),a.width(),a.height()),screen.name())
@@ -1178,10 +1184,8 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError) as error:
             QMessageBox.warning(self.settings_dialog,'打开数据目录失败',str(error));return False
     def open_install_manager(self):
-        """只在 Windows 打开已登记的安装管理程序"""
-        from app_updates import program_updates_supported
         try:
-            if not program_updates_supported():raise OSError('当前平台请使用对应版本的安装与维护方式。')
+            if sys.platform!='win32':raise OSError('当前平台请使用对应版本的安装与维护方式。')
             from installer import checked_version,read_manifest
             from storage_locations import install_root
             root=install_root();m=read_manifest(root)
@@ -1193,12 +1197,10 @@ class DesktopPet(EnhancedPet):
         self._tray_update_hint=('有更新 '+str(state.get('latest','')) if state.get('phase')=='available' else '')
         self._refresh_tray_icon()
     def install_app_update(self,path):
-        """核对平台和已验证的暂存目录后启动程序安装"""
         import subprocess
         from process_launch import launch_own
-        from app_updates import cache_paths,UpdateError,program_updates_supported
+        from app_updates import cache_paths,UpdateError
         try:
-            if not program_updates_supported():raise UpdateError('当前平台不支持 Windows 程序更新，请手动更新程序')
             release=self.updates.release
             if release is None:raise OSError('更新信息已失效，请重新检查')
             if release.kind=='program':
@@ -1344,9 +1346,6 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError,TypeError) as error:
             QMessageBox.warning(self.settings_dialog,'导出诊断失败','无法保存诊断：'+str(error));return None
     def cleanup_installations(self):
-        """只清理 Windows 安装器登记且经用户确认的历史版本"""
-        from app_updates import program_updates_supported
-        if not program_updates_supported():self.say('当前平台不支持 Windows 历史版本清理，请手动管理旧程序。',6000);return
         from installer import ROOT as install_root,DATA
         from installation_cleanup import cleanup_plan,CleanupJob
         if getattr(self,'_cleanup_job',None):self.say('历史版本清理正在进行。',3000);return
@@ -1370,7 +1369,8 @@ class DesktopPet(EnhancedPet):
     def backup_settings(self):
         try:
             path=STATE_DIR/('settings-backup-'+time.strftime('%Y%m%d-%H%M%S')+'.json')
-            self.save_settings();value=json.loads(CONFIG.read_text(encoding='utf-8'))
+            if self.save_settings() is False:raise OSError('原设置无法读取，无法备份。')
+            value=json.loads(CONFIG.read_text(encoding='utf-8'))
             if not isinstance(value,dict):raise ValueError('设置文件格式无效')
             atomic_json(path,value)
             self.say('设置备份已保存到配置目录。',5000);return path

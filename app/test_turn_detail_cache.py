@@ -23,6 +23,20 @@ class TurnCacheTests(unittest.TestCase):
     def test_new_tokens_show_previous_result_until_replacement_arrives(self):
         cache=TurnDetails();cache.finish(self.key(),self.rows());turns,exact=cache.lookup(self.key(2,'b'));self.assertFalse(exact);self.assertEqual(turns[0]['id'],'t')
         cache.finish(self.key(2,'b'),[dict(id='sid',turns=[dict(id='new')])]);self.assertTrue(cache.lookup(self.key(2,'b'))[1]);self.assertEqual(len(cache.entries),1)
+    def test_latest_revision_runs_even_without_any_view_observer(self):
+        cache=TurnDetails();jobs=[]
+        def factory():
+            job=Job();jobs.append(job);return job
+        old=cache.request(self.key(),factory)
+        cache.request(self.key(2,'b'),factory)
+        newest=self.key(3,'c')
+        cache.request(newest,factory)
+        cache.pump()
+        self.assertEqual(len(jobs),1)
+        old.ready.emit(self.rows())
+        self.assertEqual(len(jobs),2)
+        jobs[1].ready.emit([dict(id='sid',turns=[dict(id='new')])])
+        self.assertEqual(cache.lookup(newest),([dict(id='new')],True))
     def test_price_source_and_range_never_borrow_wrong_costs(self):
         cache=TurnDetails();cache.finish(self.key(),self.rows());self.assertEqual(cache.lookup(self.key(price='new')),(None,False));self.assertEqual(cache.lookup(('other','sid','all','p',1,'a')),(None,False));self.assertEqual(cache.lookup(('source','sid','7d','p',1,'a')),(None,False))
     def test_finished_request_survives_the_view_that_requested_it(self):

@@ -12,6 +12,38 @@ import codex_startup as cs
 from quick_actions import website_url
 
 APP=QApplication.instance() or QApplication([])
+
+class StartupAndSaveBoundaryTests(unittest.TestCase):
+    def test_unreadable_or_invalid_settings_blocks_automatic_save(self):
+        for source in (PermissionError(),'{broken','[]'):
+            path=Mock();path.read_text.side_effect=[source] if isinstance(source,Exception) else None
+            if isinstance(source,str):path.read_text.return_value=source
+            values,blocked=DesktopPet.read_settings(path)
+            self.assertEqual(values,{})
+            self.assertTrue(blocked)
+            pet=Mock(settings_read_failed=blocked)
+            with patch('desktop.atomic_json') as write:
+                self.assertFalse(DesktopPet.save_settings(pet))
+            write.assert_not_called()
+
+    def test_unknown_presence_breaks_the_consecutive_absence_sequence(self):
+        gate=cs.LaunchGate();same={(1,2)}
+        self.assertEqual([gate.observe(state) for state in (same,set(),None,set(),same)],
+                         [True,False,False,False,False])
+        self.assertEqual([gate.observe(state) for state in (set(),set(),same)],[False,False,True])
+
+    def test_settings_write_failure_has_no_earlier_partial_commit(self):
+        from types import SimpleNamespace
+        from PySide6.QtCore import QRect
+        screen=SimpleNamespace(availableGeometry=lambda:QRect(0,0,1000,1000),name=lambda:'mock')
+        pet=Mock(enhanced_ready=True,settings_read_failed=False,settings={'theme':'star'},walk_direction=1)
+        pet.frameGeometry.return_value=QRect(0,0,200,200)
+        for name,value in dict(x=10,y=20,width=200,height=200).items():getattr(pet,name).return_value=value
+        with patch('desktop.QApplication.screenAt',return_value=screen),patch('enhanced.save_json') as early,patch('desktop.atomic_json',side_effect=PermissionError) as save:
+            with self.assertRaises(PermissionError):DesktopPet.save_settings(pet)
+        pet.collect_settings.assert_called_once_with();early.assert_not_called();save.assert_called_once()
+        self.assertEqual(save.call_args.args[1]['screen_position']['screen'],'mock')
+
 def settle(pet):
     for _ in range(4):APP.processEvents();pet.bubble.size_transition.complete()
     APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)

@@ -420,10 +420,11 @@ class ProjectCosts(QWidget):
         if wanted is None or key[:4]!=wanted[:4]:return
         self.detail_job=None
         if not self.session or self.session['id']!=key[1]:return
-        if 'error' in result:self.turn_error=result['error']
+        if 'error' in result:
+            if key!=wanted:return
+            self.turn_error=result['error']
         else:self.session=dict(self.session,turns=result['turns'],syncing=key!=wanted)
         if not self.isVisible():self._detail_key=None;return
-        if key!=wanted and self.isVisible():self.load_turns(self.session)
         self._detail_key=None;self.refresh()
     def session_body(self,session):
         from datetime import datetime

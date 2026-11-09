@@ -361,24 +361,19 @@ class SettingsDialog(QDialog):
         self.field_tabs['talk_lines']=self._building_index;self.field_titles['talk_lines']='自定义台词';self.lines.textChanged.connect(lambda:self.edited('talk_lines'))
 
     def build_page_5(self):
-        """维护页保留当前平台可执行的更新、安装和数据入口"""
-        from app_updates import program_updates_supported
         pet=self.pet
-        program_supported=program_updates_supported()
         maintenance=self.tab('更新与维护')
-        self.section(maintenance,'软件更新' if program_supported else '动画更新','检查 GitHub 公开稳定版；下载和安装由你主动发起。' if program_supported else '只检查兼容的动画补丁；程序需手动更新。')
-        if program_supported:self.check(maintenance,'update_checks','自动检查更新（不自动下载）')
+        self.section(maintenance,'软件更新','检查 GitHub 公开稳定版；下载和安装由你主动发起。')
+        self.check(maintenance,'update_checks','自动检查更新（不自动下载）')
         if hasattr(pet,'updates'):
             from update_widgets import UpdatePanel
             self.update_panel=UpdatePanel(pet.updates);maintenance.addRow(self.update_panel)
         self.section(maintenance,'诊断与数据','维护操作立即执行；不属于设置草稿。')
         button=QPushButton('导出诊断');button.setToolTip('导出诊断报告，不含对话和密钥');button.clicked.connect(pet.export_diagnostics);maintenance.addRow(button)
-        if program_supported and hasattr(pet,'open_install_manager'):
+        if hasattr(pet,'open_install_manager'):
             button=QPushButton('程序位置与安装管理');button.clicked.connect(pet.open_install_manager);maintenance.addRow(button)
         data=self.disclosure_form(maintenance,'数据与恢复')
-        actions=[('打开数据目录','打开配置与聊天记录目录',pet.open_data),('备份设置','不含密钥与对话',pet.backup_settings),('恢复设置','恢复设置备份',pet.restore_settings)]
-        if program_supported:actions.append(('查看可清理内容','清理历史版本与备份，先预览',pet.cleanup_installations))
-        for title,hint,slot in actions:
+        for title,hint,slot in [('打开数据目录','打开配置与聊天记录目录',pet.open_data),('备份设置','不含密钥与对话',pet.backup_settings),('恢复设置','恢复设置备份',pet.restore_settings),('查看可清理内容','清理历史版本与备份，先预览',pet.cleanup_installations)]:
             button=QPushButton(title);button.setToolTip(hint);button.clicked.connect(slot);data.addRow(button)
         maintenance.addRow(QLabel('当前版本 '+VERSION))
 
@@ -513,6 +508,8 @@ class SettingsDialog(QDialog):
         for key in ('startup','codex_startup'):
             values.setdefault(key,self.draft.baseline.get(key,False) if self.draft else False)
         self.draft=SettingsDraft(values);self.fill(self.draft.values);self.refresh_library();self.update_draft_state()
+        if getattr(self.pet,'settings_read_failed',False):
+            self.status.setText('原设置无法读取，当前使用临时默认值。恢复文件后请重启桌宠。')
     def sync_from_pet(self,changes=None,read_startup=False):
         if self.draft is None:return
         previous=self.draft.values.copy()

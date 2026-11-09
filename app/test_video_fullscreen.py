@@ -9,6 +9,14 @@ APP=QApplication.instance() or QApplication([])
 M=(0,0,1920,1080)
 def frame(**values):return dict(dict(hwnd=700,monitor=M,fullscreen=True,video=True,reason='player'),**values)
 class ClassifierTests(unittest.TestCase):
+    def test_probe_exception_keeps_known_fullscreen_until_recovery_or_timeout(self):
+        g=VideoGate();g.update(frame(),0);g.update(frame(),1)
+        failed=dict(hwnd=0,fullscreen=False,video=None,reason='probe_error')
+        self.assertTrue(g.update(failed,2))
+        self.assertTrue(g.update(frame(),2.5))
+        self.assertTrue(g.update(failed,3))
+        self.assertIsNone(g.update(failed,6))
+        self.assertIsNone(g.update(frame(),7))
     def controls(self,width=1920,offscreen=False):
         from types import SimpleNamespace as S
         values=[S(CurrentName=name,CurrentControlType=kind,CurrentIsOffscreen=offscreen,

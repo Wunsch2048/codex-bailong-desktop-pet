@@ -9,12 +9,39 @@ from test_app_updates import payload
 from app_updates import parse_release,cache_paths
 APP=journeys.APP
 
+class UpdateCancellationTests(unittest.TestCase):
+    def test_result_queued_before_cancel_does_not_enter_pending_or_launch(self):
+        from types import SimpleNamespace
+        from PySide6.QtCore import QObject,Qt,Signal
+        from app_updates import Release
+        from update_controller import UpdateController
+
+        class Worker(QObject):
+            result=Signal(object)
+
+        for kind in ('animation','program','full'):
+            with self.subTest(kind=kind),patch('animation_updates.effective_version',return_value='1.0.0'):
+                controller=UpdateController('1.0.0',Path('unused'),allow_auto=False)
+                release=Release('1.1.0','v1.1.0','','',1,'',kind=kind)
+                worker=Worker()
+                worker.result.connect(controller._result,Qt.ConnectionType.QueuedConnection)
+                controller.release=release
+                controller.job=SimpleNamespace(release=release,cancel=threading.Event(),deleteLater=lambda:None)
+                controller.install_requested=True
+                launched=[]
+                controller.animationReady.connect(launched.append)
+                controller.installerReady.connect(launched.append)
+                worker.result.emit('verified')
+                controller.cancel()
+                APP.processEvents()
+                controller._finished()
+                self.assertEqual(controller.state['phase'],'cancelled')
+                self.assertEqual(launched,[])
+                with patch.object(controller,'_bind'):
+                    self.assertTrue(controller.download_install())
+
 class UpdateIntegration(unittest.TestCase):
-    def setUp(self):
-        """用隔离能力夹具检查 Windows 更新界面及安装流程"""
-        support=patch('app_updates.program_updates_supported',return_value=True)
-        support.start();self.addCleanup(support.stop)
-        journeys.InteractionTests.setUp(self)
+    setUp=journeys.InteractionTests.setUp
     tearDown=journeys.InteractionTests.tearDown
     settings=journeys.InteractionTests.settings
     def wait(self,check):

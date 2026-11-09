@@ -120,8 +120,11 @@ class MaterialController(QObject):
         restore=getattr(self,'_move_restore',None)
         if restore:
             from storage_locations import save_material_root
-            self.store.cache,self.store.root=restore;save_material_root(self.store.state,self.store.cache)
+            self.store.cache,self.store.root=restore
             self._move_restore=None;self._move_plan=None
+            try:save_material_root(self.store.state,self.store.cache)
+            except (OSError,ValueError):
+                text='当前继续使用原动画，两处素材均已保留。旧目录设置未能写回，重启后可能仍指向新目录。'+str(text)
         self.publish(phase='error',message=str(text)[:220])
     def _finished(self):
         job=self.job;self.job=None

@@ -20,7 +20,7 @@ class UpdateCancellationTests(unittest.TestCase):
             result=Signal(object)
 
         for kind in ('animation','program','full'):
-            with self.subTest(kind=kind),patch('animation_updates.effective_version',return_value='1.0.0'):
+            with self.subTest(kind=kind),patch('animation_updates.effective_version',return_value='1.0.0'),patch('app_updates.program_updates_supported',return_value=True):
                 controller=UpdateController('1.0.0',Path('unused'),allow_auto=False)
                 release=Release('1.1.0','v1.1.0','','',1,'',kind=kind)
                 worker=Worker()
@@ -41,7 +41,11 @@ class UpdateCancellationTests(unittest.TestCase):
                     self.assertTrue(controller.download_install())
 
 class UpdateIntegration(unittest.TestCase):
-    setUp=journeys.InteractionTests.setUp
+    def setUp(self):
+        """用隔离能力夹具检查 Windows 更新界面及安装流程"""
+        support=patch('app_updates.program_updates_supported',return_value=True)
+        support.start();self.addCleanup(support.stop)
+        journeys.InteractionTests.setUp(self)
     tearDown=journeys.InteractionTests.tearDown
     settings=journeys.InteractionTests.settings
     def wait(self,check):

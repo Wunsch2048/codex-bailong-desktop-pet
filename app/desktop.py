@@ -1184,8 +1184,10 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError) as error:
             QMessageBox.warning(self.settings_dialog,'打开数据目录失败',str(error));return False
     def open_install_manager(self):
+        """只在 Windows 打开已登记的安装管理程序"""
+        from app_updates import program_updates_supported
         try:
-            if sys.platform!='win32':raise OSError('当前平台请使用对应版本的安装与维护方式。')
+            if not program_updates_supported():raise OSError('当前平台请使用对应版本的安装与维护方式。')
             from installer import checked_version,read_manifest
             from storage_locations import install_root
             root=install_root();m=read_manifest(root)
@@ -1197,10 +1199,12 @@ class DesktopPet(EnhancedPet):
         self._tray_update_hint=('有更新 '+str(state.get('latest','')) if state.get('phase')=='available' else '')
         self._refresh_tray_icon()
     def install_app_update(self,path):
+        """核对平台和已验证的暂存目录后启动程序安装"""
         import subprocess
         from process_launch import launch_own
-        from app_updates import cache_paths,UpdateError
+        from app_updates import cache_paths,UpdateError,program_updates_supported
         try:
+            if not program_updates_supported():raise UpdateError('当前平台不支持 Windows 程序更新，请手动更新程序')
             release=self.updates.release
             if release is None:raise OSError('更新信息已失效，请重新检查')
             if release.kind=='program':
@@ -1346,6 +1350,9 @@ class DesktopPet(EnhancedPet):
         except (OSError,ValueError,TypeError) as error:
             QMessageBox.warning(self.settings_dialog,'导出诊断失败','无法保存诊断：'+str(error));return None
     def cleanup_installations(self):
+        """只清理 Windows 安装器登记且经用户确认的历史版本"""
+        from app_updates import program_updates_supported
+        if not program_updates_supported():self.say('当前平台不支持 Windows 历史版本清理，请手动管理旧程序。',6000);return
         from installer import ROOT as install_root,DATA
         from installation_cleanup import cleanup_plan,CleanupJob
         if getattr(self,'_cleanup_job',None):self.say('历史版本清理正在进行。',3000);return

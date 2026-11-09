@@ -40,7 +40,8 @@ class ResetAssociationTests(unittest.TestCase):
   self.assertTrue(reset_has_priority(e.decorate(self.pending())))
   c=context(windows,e.state,NOW,'live');self.assertEqual(c['start_source'],'detected');self.assertEqual(c['start'],NOW)
  def test_public_confirmation_still_clears_notice_independently(self):
-  t=ResetTracker.__new__(ResetTracker);t.path=Path('unused-reset-feed.json');t.state={'initialized':False,'seen':[],'schedules':[]}
+  with patch.object(Path,'read_text',side_effect=FileNotFoundError):
+   t=ResetTracker(Path('unused-reset-feed.json'))
   pending=self.pending()['pending']
   with patch('desktop_core.atomic_json'):
    t.update(dict(events=[],scheduled=pending),NOW)

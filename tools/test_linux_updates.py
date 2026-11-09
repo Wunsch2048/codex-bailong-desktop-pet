@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+from threading import Event
 import unittest
 from unittest.mock import Mock, patch
 
@@ -110,7 +111,7 @@ class LinuxUpdateTests(unittest.TestCase):
         self.controller.release = replace(self.animation, kind='program')
         self.controller.install_requested = True
         for selected, value in ((None, self.controller.release), (self.controller.release, '/unused/setup.exe')):
-            self.controller.job = SimpleNamespace(release=selected)
+            self.controller.job = SimpleNamespace(release=selected,cancel=Event())
             self.controller._result(value)
             self.assertEqual(self.controller.state['phase'], 'error')
             self.assertFalse(self.controller.install_requested)

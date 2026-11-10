@@ -107,7 +107,11 @@ class RollTests(unittest.TestCase):
         today=b.today_tokens_card;live=b.live_rate_card
         today.set_data(dict(month=day[:7],days={day:90530000}));b.token_snapshot=dict(month=day[:7],days={day:90530000})
         b.live_output_rate=dict(rate=20);live.set_data(b.live_output_rate)
-        for card in (today,live):card.roll.animation.setCurrentTime(60)
+        for card in (today,live):
+            # Keep the animation running while Qt processes repeated layouts
+            # on a slow build host. This test checks continuity, not duration.
+            card.roll.animation.setDuration(5000)
+            card.roll.animation.setCurrentTime(60)
         for repeat in range(3):
             b.redraw();APP.processEvents()
             for card in (today,live):

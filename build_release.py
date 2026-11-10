@@ -34,12 +34,14 @@ def build_windows_bundle(version):
     """Create the user-facing Windows ZIP (installer plus docs) and combined checksums."""
     output=ROOT/'release';name=f'bailong-desktop-pet-{version}-windows-x64.zip'
     installer=output/f'白龙桌宠-{version}-一键部署.exe'
+    version_note=ROOT/'docs/releases'/f'v{version}.md'
+    if not version_note.is_file():version_note=ROOT/'发布说明'/f'v{version}.md'
     assets={
         '安装管理.cmd':ROOT/'发布说明/安装管理.cmd',
         '快速部署说明.txt':ROOT/'发布说明/快速部署说明.txt',
         '新增功能说明.txt':ROOT/'发布说明/新增功能说明.txt',
         '迭代历史.txt':ROOT/'发布说明/迭代历史.txt',
-        '本次更新说明.md':ROOT/'发布说明'/f'v{version}.md',
+        '本次更新说明.md':version_note,
         '来源与授权说明.txt':ROOT/'发布说明/来源与授权说明.txt',
         '原项目素材说明.txt':ROOT/'app/licenses/upstream-v0.4.1-assets.txt',
         installer.name:installer,
@@ -99,6 +101,7 @@ def build(legacy_formats=False,application_only=True):
     shutil.copy2(ROOT/'app/branding/bailong.ico',release/'app/branding/bailong.ico')
     from package_trim import trim_qt
     trimmed=trim_qt(release)
+    (ROOT/'包体优化').mkdir(exist_ok=True)
     (ROOT/'包体优化/依赖裁剪验收.json').write_text(json.dumps(trimmed,ensure_ascii=False,indent=2),encoding='utf-8')
     # Ship the active playback assets. Raw originals remain in the source
     # project and older installed versions, rather than duplicating both sets.
@@ -112,75 +115,75 @@ def build(legacy_formats=False,application_only=True):
         record=next(f for f in catalog['tiers']['light']['files'] if f['path']==name)
         packed=DEST/name;assert record['sha256']==__import__('asset_pack').digest(packed)
         target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(packed,target)
-    shutil.copy2(ROOT/'状态响应优化/更新说明.txt',release/'持续状态响应说明.txt')
-    shutil.copy2(ROOT/'应用内更新/更新说明.txt',release/'应用内更新说明.txt')
-    shutil.copy2(ROOT/'持续状态动画/更新说明.txt',release/'连续状态动画说明.txt')
-    shutil.copy2(ROOT/'卡片独立与极简/更新说明.txt',release/'独立卡片与极简模式说明.txt')
-    shutil.copy2(ROOT/'日报防闪与自然循环/更新说明.txt',release/'日报防闪与自然循环说明.txt')
-    shutil.copy2(ROOT/'轻量与高清分离/更新说明.txt',release/'轻量与高清素材说明.txt')
-    shutil.copy2(ROOT/'纯程序更新/更新说明.txt',release/'纯程序更新说明.txt')
-    local_notes=ROOT/'本地实装/更新说明.txt'
+    shutil.copy2(ROOT/'docs/archive/状态响应优化/更新说明.txt',release/'持续状态响应说明.txt')
+    shutil.copy2(ROOT/'docs/archive/应用内更新/更新说明.txt',release/'应用内更新说明.txt')
+    shutil.copy2(ROOT/'docs/archive/持续状态动画/更新说明.txt',release/'连续状态动画说明.txt')
+    shutil.copy2(ROOT/'docs/archive/卡片独立与极简/更新说明.txt',release/'独立卡片与极简模式说明.txt')
+    shutil.copy2(ROOT/'docs/archive/日报防闪与自然循环/更新说明.txt',release/'日报防闪与自然循环说明.txt')
+    shutil.copy2(ROOT/'docs/archive/轻量与高清分离/更新说明.txt',release/'轻量与高清素材说明.txt')
+    shutil.copy2(ROOT/'docs/archive/纯程序更新/更新说明.txt',release/'纯程序更新说明.txt')
+    local_notes=ROOT/'docs/archive/本地实装/更新说明.txt'
     if local_notes.exists():shutil.copy2(local_notes,release/'本地实装与交互修复说明.txt')
-    notes=ROOT/'动作质量修复/原始动作逻辑与质量基准.txt'
-    shutil.copy2(ROOT/'新增动作接入/更新说明.txt',release/'新增动作与Codex联动说明.txt')
+    notes=ROOT/'docs/archive/动作质量修复/原始动作逻辑与质量基准.txt'
+    shutil.copy2(ROOT/'docs/archive/新增动作接入/更新说明.txt',release/'新增动作与Codex联动说明.txt')
     shutil.copy2(ROOT/'发布说明/版本编号规则.json',release/'版本编号规则.json')
     shutil.copy2(ROOT/'app/licenses/upstream-v0.4.1-assets.txt',release/'上游v0.4.1素材说明.txt')
     if notes.exists():shutil.copy2(notes,release/'原始动作逻辑与质量基准.txt')
-    status_notes=ROOT/'状态联动更新/规则与验收说明.txt'
+    status_notes=ROOT/'docs/archive/状态联动更新/规则与验收说明.txt'
     if status_notes.exists():shutil.copy2(status_notes,release/'Codex状态联动说明.txt')
-    scale_notes=ROOT/'动作尺寸修复/尺寸修复说明.txt'
+    scale_notes=ROOT/'docs/archive/动作尺寸修复/尺寸修复说明.txt'
     if scale_notes.exists():shutil.copy2(scale_notes,release/'动作尺寸修复说明.txt')
-    token_notes=ROOT/'Token图表更新/图表说明.txt'
+    token_notes=ROOT/'docs/archive/Token图表更新/图表说明.txt'
     if token_notes.exists():shutil.copy2(token_notes,release/'Token图表说明.txt')
-    height_notes=ROOT/'气泡同步过渡/过渡说明.txt'
+    height_notes=ROOT/'docs/archive/气泡同步过渡/过渡说明.txt'
     if height_notes.exists():shutil.copy2(height_notes,release/'气泡高度过渡说明.txt')
-    details_notes=ROOT/'详情分类更新/详情分类说明.txt'
+    details_notes=ROOT/'docs/archive/详情分类更新/详情分类说明.txt'
     if details_notes.exists():shutil.copy2(details_notes,release/'详情分类说明.txt')
-    panel_notes=ROOT/'面板集成更新/集成说明.txt'
+    panel_notes=ROOT/'docs/archive/面板集成更新/集成说明.txt'
     if panel_notes.exists():shutil.copy2(panel_notes,release/'面板集成说明.txt')
-    performance_notes=ROOT/'配色与窗口过渡/更新说明.txt'
+    performance_notes=ROOT/'docs/archive/配色与窗口过渡/更新说明.txt'
     if performance_notes.exists():shutil.copy2(performance_notes,release/'配色过渡与性能说明.txt')
-    flicker_notes=ROOT/'过渡闪烁修复/修复说明.txt'
+    flicker_notes=ROOT/'docs/archive/过渡闪烁修复/修复说明.txt'
     if flicker_notes.exists():shutil.copy2(flicker_notes,release/'过渡闪烁修复说明.txt')
-    icon_notes=ROOT/'完成提醒确认/更新说明.txt'
+    icon_notes=ROOT/'docs/archive/完成提醒确认/更新说明.txt'
     if icon_notes.exists():shutil.copy2(icon_notes,release/'状态图标动画说明.txt')
-    report_notes=ROOT/'日报与圆环布局/更新说明.txt'
+    report_notes=ROOT/'docs/archive/日报与圆环布局/更新说明.txt'
     if report_notes.exists():shutil.copy2(report_notes,release/'Token日报说明.txt')
-    report_animation_notes=ROOT/'日报动画防闪烁/修复说明.txt'
+    report_animation_notes=ROOT/'docs/archive/日报动画防闪烁/修复说明.txt'
     if report_animation_notes.exists():shutil.copy2(report_animation_notes,release/'日报动画修复说明.txt')
-    chart_response_notes=ROOT/'日报图表响应修复/修复说明.txt'
+    chart_response_notes=ROOT/'docs/archive/日报图表响应修复/修复说明.txt'
     if chart_response_notes.exists():shutil.copy2(chart_response_notes,release/'日报图表响应修复说明.txt')
-    island_notes=ROOT/'灵动岛气泡更新/更新与质量检查说明.txt'
+    island_notes=ROOT/'docs/archive/灵动岛气泡更新/更新与质量检查说明.txt'
     if island_notes.exists():shutil.copy2(island_notes,release/'灵动岛气泡与动画说明.txt')
-    deployment_notes=ROOT/'一键部署更新/快速部署说明.txt'
+    deployment_notes=ROOT/'docs/archive/一键部署更新/快速部署说明.txt'
     if deployment_notes.exists():shutil.copy2(deployment_notes,release/'快速部署说明.txt')
     shutil.copytree(ROOT/'app/sounds',release/'app/sounds',dirs_exist_ok=True)
     shutil.copytree(ROOT/'app/fonts',release/'app/fonts',dirs_exist_ok=True)
     shutil.copytree(ROOT/'app/licenses',release/'app/licenses',dirs_exist_ok=True)
     shutil.copy2(ROOT/'app/book_catalog.json',release/'app/book_catalog.json')
     shutil.copy2(ROOT/'app/material_catalog.json',release/'app/material_catalog.json')
-    shutil.copy2(ROOT/'额度卡片重设计/更新说明.txt',release/'额度卡片与快捷说明.txt')
-    shutil.copy2(ROOT/'子会话完成提醒修复/更新说明.txt',release/'子会话完成提醒修复说明.txt')
-    shutil.copy2(ROOT/'交互整理第一批/更新说明.txt',release/'交互整理第一批说明.txt')
-    shutil.copy2(ROOT/'交互整理第二批/更新说明.txt',release/'交互整理第二批说明.txt')
-    shutil.copy2(ROOT/'交互整理第三批/更新说明.txt',release/'交互整理第三批说明.txt')
-    shutil.copy2(ROOT/'包体优化/更新说明.txt',release/'包体优化说明.txt')
-    shutil.copy2(ROOT/'回弹过渡/更新说明.txt',release/'窗口回弹过渡说明.txt')
-    shutil.copy2(ROOT/'卡片动效统一/更新说明.txt',release/'卡片动效统一说明.txt')
-    shutil.copy2(ROOT/'过渡收尾修复/更新说明.txt',release/'过渡收尾修复说明.txt')
-    shutil.copy2(ROOT/'胶囊双向过渡修复/更新说明.txt',release/'胶囊双向过渡修复说明.txt')
-    shutil.copy2(ROOT/'动画负载与日报优化/更新说明.txt',release/'动画负载与日报优化说明.txt')
-    shutil.copy2(ROOT/'收回闪烁修复/更新说明.txt',release/'收回闪烁修复说明.txt')
-    shutil.copy2(ROOT/'日报概览完整展开/更新说明.txt',release/'日报概览完整展开说明.txt')
-    shutil.copy2(ROOT/'开口弧额度环/更新说明.txt',release/'开口弧额度环说明.txt')
-    shutil.copy2(ROOT/'三圆状态动画/更新说明.txt',release/'三圆状态动画说明.txt')
-    shutil.copy2(ROOT/'状态图标连续变形/更新说明.txt',release/'状态图标连续变形说明.txt')
-    shutil.copy2(ROOT/'统一刷新与精简顶栏/更新说明.txt',release/'统一刷新与精简顶栏说明.txt')
-    shutil.copy2(ROOT/'Token入口精简/更新说明.txt',release/'Token入口精简说明.txt')
-    shutil.copy2(ROOT/'导航标签清理/更新说明.txt',release/'导航标签清理说明.txt')
-    shutil.copy2(ROOT/'视频全屏让位/更新说明.txt',release/'视频全屏让位说明.txt')
-    shutil.copy2(ROOT/'视频全屏修复/更新说明.txt',release/'Firefox视频全屏修复说明.txt')
-    lifecycle_notes=ROOT/'上下文压缩与会话跳转/更新说明.txt'
+    shutil.copy2(ROOT/'docs/archive/额度卡片重设计/更新说明.txt',release/'额度卡片与快捷说明.txt')
+    shutil.copy2(ROOT/'docs/archive/子会话完成提醒修复/更新说明.txt',release/'子会话完成提醒修复说明.txt')
+    shutil.copy2(ROOT/'docs/archive/交互整理第一批/更新说明.txt',release/'交互整理第一批说明.txt')
+    shutil.copy2(ROOT/'docs/archive/交互整理第二批/更新说明.txt',release/'交互整理第二批说明.txt')
+    shutil.copy2(ROOT/'docs/archive/交互整理第三批/更新说明.txt',release/'交互整理第三批说明.txt')
+    shutil.copy2(ROOT/'docs/archive/包体优化/更新说明.txt',release/'包体优化说明.txt')
+    shutil.copy2(ROOT/'docs/archive/回弹过渡/更新说明.txt',release/'窗口回弹过渡说明.txt')
+    shutil.copy2(ROOT/'docs/archive/卡片动效统一/更新说明.txt',release/'卡片动效统一说明.txt')
+    shutil.copy2(ROOT/'docs/archive/过渡收尾修复/更新说明.txt',release/'过渡收尾修复说明.txt')
+    shutil.copy2(ROOT/'docs/archive/胶囊双向过渡修复/更新说明.txt',release/'胶囊双向过渡修复说明.txt')
+    shutil.copy2(ROOT/'docs/archive/动画负载与日报优化/更新说明.txt',release/'动画负载与日报优化说明.txt')
+    shutil.copy2(ROOT/'docs/archive/收回闪烁修复/更新说明.txt',release/'收回闪烁修复说明.txt')
+    shutil.copy2(ROOT/'docs/archive/日报概览完整展开/更新说明.txt',release/'日报概览完整展开说明.txt')
+    shutil.copy2(ROOT/'docs/archive/开口弧额度环/更新说明.txt',release/'开口弧额度环说明.txt')
+    shutil.copy2(ROOT/'docs/archive/三圆状态动画/更新说明.txt',release/'三圆状态动画说明.txt')
+    shutil.copy2(ROOT/'docs/archive/状态图标连续变形/更新说明.txt',release/'状态图标连续变形说明.txt')
+    shutil.copy2(ROOT/'docs/archive/统一刷新与精简顶栏/更新说明.txt',release/'统一刷新与精简顶栏说明.txt')
+    shutil.copy2(ROOT/'docs/archive/Token入口精简/更新说明.txt',release/'Token入口精简说明.txt')
+    shutil.copy2(ROOT/'docs/archive/导航标签清理/更新说明.txt',release/'导航标签清理说明.txt')
+    shutil.copy2(ROOT/'docs/archive/视频全屏让位/更新说明.txt',release/'视频全屏让位说明.txt')
+    shutil.copy2(ROOT/'docs/archive/视频全屏修复/更新说明.txt',release/'Firefox视频全屏修复说明.txt')
+    lifecycle_notes=ROOT/'docs/archive/上下文压缩与会话跳转/更新说明.txt'
     if lifecycle_notes.exists():shutil.copy2(lifecycle_notes,release/'上下文压缩与会话跳转说明.txt')
     for name in ('使用说明.txt','DSH对标清单.txt','验收记录.txt'):
         if (ROOT/name).exists():shutil.copy2(ROOT/name,release/name)

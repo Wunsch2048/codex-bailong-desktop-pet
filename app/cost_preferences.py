@@ -3,7 +3,7 @@ import json,math,os,tempfile
 from pathlib import Path
 _cached=None
 
-def path():return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'/'cost-pricing.json'
+def path():return __import__('platform_paths').data_dir()/'cost-pricing.json'
 def defaults():return dict(currency='USD',mode='manual',fx=1.,prices={})
 def validate(value):
     result=defaults();result.update(value)

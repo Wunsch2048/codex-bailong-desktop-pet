@@ -33,7 +33,8 @@ def classify_error(message,phase='request'):
 def log_attempt(attempt,seconds,error=None,log_path=None):
     if log_path is False:return
     # Program directories and shared resources are immutable deployment payloads.
-    root=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
+    from platform_paths import data_dir
+    root=data_dir()
     path=Path(log_path) if log_path else root/'额度查询日志.jsonl'
     event={'time':datetime.now().isoformat(timespec='seconds'),'attempt':attempt,'seconds':round(seconds,3),'result':'success' if error is None else error.code}
     if error:

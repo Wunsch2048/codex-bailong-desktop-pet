@@ -63,7 +63,7 @@ class OfficialApiPrices(OfficialCreditRates):
 
 
 def cache_path():
-    return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced/official-api-prices.json'
+    return __import__('platform_paths').data_dir()/'official-api-prices.json'
 
 
 @lru_cache(maxsize=1)

@@ -1,4 +1,4 @@
-import io,json,os,subprocess,tempfile,unittest
+import io,json,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
@@ -8,6 +8,7 @@ import codex_connection as connection
 
 PROFILE=dict(source='wsl',home='',cli='',wsl_distro='Ubuntu',wsl_user='alice',wsl_home='/home/alice/.codex',wsl_cli='/home/alice/.nvm/versions/node/v22/bin/codex',wsl_path='/home/alice/.nvm/versions/node/v22/bin:/usr/local/bin:/usr/bin:/bin')
 
+@unittest.skipIf(sys.platform=='darwin','WSL sources are Windows-only; the macOS guard is covered by WslPlatformGuardTests')
 class WslCodexTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);wsl._cache.clear()
@@ -128,6 +129,7 @@ class WslCodexTests(unittest.TestCase):
         with patch('codex_connection.is_wsl_source',return_value=True),patch('threading.Thread') as launch:
             DesktopPet.poll_codex_presence(fake);launch.assert_not_called()
 
+@unittest.skipIf(sys.platform=='darwin','WSL sources are Windows-only; the macOS guard is covered by WslPlatformGuardTests')
 class WslSettingsTests(unittest.TestCase):
     import test_second_batch as fixtures
     setUp=fixtures.VisualInteractionTests.setUp
@@ -160,5 +162,35 @@ class WslSettingsTests(unittest.TestCase):
             s.validate_paths();self.finish(s)
         self.assertEqual(save.call_args.args[0]['source'],'wsl');self.assertEqual(s.wsl_fields['wsl_cli'].text(),PROFILE['wsl_cli'])
         self.assertIn('重启',s.path_status.text())
+
+class WslPlatformGuardTests(unittest.TestCase):
+    """Runs everywhere: a WSL profile copied from Windows never reaches wsl.exe on macOS; Windows and Linux keep WSL."""
+    def test_macos_ignores_a_saved_wsl_source(self):
+        import process_launch # imported before sys.platform is patched, as on a real host
+        with tempfile.TemporaryDirectory() as home,patch('codex_connection.sys.platform','darwin'),patch('codex_connection.saved_paths',return_value=PROFILE),\
+             patch.dict(os.environ,{'BAILONG_CODEX_HOME':home}),\
+             patch('wsl_codex.running',side_effect=AssertionError('wsl.exe probed')),patch('wsl_codex.command',side_effect=AssertionError('wsl.exe command')):
+            self.assertFalse(connection.wsl_supported())
+            self.assertFalse(connection.is_wsl_source())
+            self.assertFalse(connection.is_wsl_source(wsl.unc('Ubuntu','/home/alice/.codex')))
+            self.assertEqual(connection.data_home(),Path(home).resolve())
+            self.assertEqual(connection.cli_command('codex','--version'),['codex','--version'])
+            self.assertEqual(connection.child_environment()['CODEX_HOME'],str(Path(home).resolve()))
+    def test_macos_rejects_saving_a_wsl_source(self):
+        with patch('codex_connection.sys.platform','darwin'),patch('wsl_codex.validate',side_effect=AssertionError('WSL validation')):
+            with self.assertRaisesRegex(ValueError,'WSL'):connection.validate_paths(PROFILE)
+    def test_macos_settings_do_not_list_wsl_distributions(self):
+        from desktop_settings import PathsJob
+        job=PathsJob(dict(operation='list_wsl'));failed=[]
+        job.failed.connect(failed.append);job.result.connect(lambda value:self.fail('listed WSL distributions'))
+        with patch('codex_connection.sys.platform','darwin'),patch('wsl_codex.distributions',side_effect=AssertionError('wsl.exe --list')):job.run()
+        self.assertEqual(len(failed),1);self.assertIn('WSL',failed[0])
+    def test_windows_and_linux_keep_the_wsl_source(self):
+        for platform in ('win32','linux'):
+            with self.subTest(platform=platform),patch('codex_connection.sys.platform',platform),patch('codex_connection.saved_paths',return_value=PROFILE):
+                self.assertTrue(connection.wsl_supported())
+                self.assertTrue(connection.is_wsl_source())
+                self.assertEqual(str(connection.data_home()),wsl.unc('Ubuntu','/home/alice/.codex'))
+                self.assertTrue(connection.is_wsl_source(connection.data_home()))
 
 if __name__=='__main__':unittest.main()

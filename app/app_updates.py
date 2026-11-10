@@ -205,7 +205,7 @@ def prepare_release(release,current,opener,cancel,app_root,state_dir=None,progra
                 release=replace(release.fallback,reason='本地素材不兼容或程序包说明不可用，改用完整安装包')
         if release.animation_info_url:
             from animation_updates import prepare
-            state_dir=state_dir or Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
+            state_dir=state_dir or __import__('platform_paths').data_dir()
             release=prepare(release,release.version if release.kind=='program' else (program_version or current),state_dir,opener,cancel)
         release=ensure_checksum(release,opener,cancel)
     return release

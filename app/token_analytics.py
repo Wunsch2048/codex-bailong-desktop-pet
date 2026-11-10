@@ -209,18 +209,37 @@ def scan_file(index,db,path,stop):
     index.format_known[key]=recognized
     return recognized
 
-def report_snapshot(db,now):
+def daily_model_rows(db,start,end,include_end=False):
+    upper='<=' if include_end else '<'
+    lower='stamp>=? AND ' if start is not None else ''
+    args=(start,end) if start is not None else (end,)
+    return db.execute(f"SELECT date(stamp,'unixepoch','localtime'),model,SUM(tokens),SUM(input_tokens),SUM(output_tokens),MIN(known) FROM usage WHERE {lower}stamp{upper}? GROUP BY 1,2 ORDER BY 1,2",args).fetchall()
+
+
+def hourly_usage(db,start,end,include_end=False):
+    upper='<=' if include_end else '<'
+    hours=[0]*24
+    models=[{} for _ in hours]
+    for hour,model,total in db.execute(
+        f"SELECT strftime('%H',stamp,'unixepoch','localtime'),model,SUM(tokens) FROM usage WHERE stamp>=? AND stamp{upper}? GROUP BY 1,2",
+        (start,end)):
+        slot=int(hour);name=model or UNKNOWN
+        hours[slot]+=total
+        models[slot][name]=models[slot].get(name,0)+total
+    return hours,models
+
+
+def report_snapshot(db,now,rows=None):
     current=datetime.fromtimestamp(now);end=current.replace(hour=0,minute=0,second=0,microsecond=0);start=end-timedelta(days=1)
-    rows=list(db.execute("SELECT date(stamp,'unixepoch','localtime'),model,SUM(tokens),SUM(input_tokens),SUM(output_tokens),MIN(known) FROM usage WHERE stamp<=? GROUP BY 1,2 ORDER BY 1,2",(now,)))
+    if rows is None:rows=daily_model_rows(db,None,now,include_end=True)
     daily=[dict(day=d,model=m or UNKNOWN,total=t,input=i,output=o,known=bool(k)) for d,m,t,i,o,k in rows]
     model_totals={}
     for r in daily:model_totals[r['model']]=model_totals.get(r['model'],0)+r['total']
     sessions=db.execute("SELECT COUNT(DISTINCT session) FROM usage WHERE stamp<=? AND session!=''",(now,)).fetchone()[0]
     messages=db.execute('SELECT COUNT(*) FROM messages WHERE stamp>=? AND stamp<?',(start.timestamp(),end.timestamp())).fetchone()[0]
-    hours=[0]*24
-    for h,t in db.execute("SELECT strftime('%H',stamp,'unixepoch','localtime'),SUM(tokens) FROM usage WHERE stamp>=? AND stamp<? GROUP BY 1",(start.timestamp(),end.timestamp())):hours[int(h)]=t
+    hours,hour_models=hourly_usage(db,start.timestamp(),end.timestamp())
     total=sum(r['total'] for r in daily)
-    return dict(day=start.strftime('%Y-%m-%d'),hours=hours,daily_models=daily,
+    return dict(day=start.strftime('%Y-%m-%d'),hours=hours,hour_models=hour_models,daily_models=daily,
                 sessions=sessions,active_days=len({r['day'] for r in daily}),all_total=total,
                 favorite_model=max(model_totals,key=model_totals.get) if model_totals else '暂无记录',
                 messages=messages,yesterday_total=sum(hours),peak_hour=max(range(24),key=lambda h:hours[h]) if any(hours) else None,

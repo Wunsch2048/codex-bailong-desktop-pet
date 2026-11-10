@@ -4,6 +4,16 @@ from pathlib import Path
 from unittest.mock import patch
 from windows_entries import write_shortcut,read_shortcut,install_entries,startup_entry,legacy_command
 
+class StartupStagingTests(unittest.TestCase):
+ def test_startup_replacement_failure_never_stages_inside_startup(self):
+  path=Path('Programs/Startup/auto.lnk').absolute()
+  with patch('windows_entries._plain',side_effect=lambda p:Path(p).absolute()),patch.object(Path,'mkdir'),patch.object(Path,'exists',return_value=False),patch.object(Path,'unlink') as remove,patch('windows_entries.legacy_command',return_value=None),patch('windows_entries._link_action'),patch('windows_entries.os.replace',side_effect=PermissionError('locked')) as replace:
+   with self.assertRaisesRegex(PermissionError,'locked'):
+    startup_entry(path,path.with_suffix('.vbs'),[str(Path(sys.executable))],True)
+  staged,target=replace.call_args.args
+  self.assertEqual(target,path);self.assertEqual(staged.parent,path.parent.parent)
+  remove.assert_called_once_with(missing_ok=True)
+
 @unittest.skipUnless(sys.platform=='win32','Windows shell shortcuts')
 class EntryIconTests(unittest.TestCase):
  def test_replaces_arguments_and_icon_in_chinese_path_without_shell_process(self):

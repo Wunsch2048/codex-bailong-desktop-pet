@@ -46,7 +46,7 @@ class ReadReceiptTests(unittest.TestCase):
         self.assertIsNone(read_unread_sessions(self.home));self.assertFalse(seen_completed_turns(self.home,[('a','turn')]))
         self.state([]);p=self.home/'.codex-global-state.json';p.write_text('{broken',encoding='utf-8');self.assertIsNone(read_unread_sessions(self.home))
     def test_rollout_file_names_map_to_desktop_thread_identity(self):
-        sid='00000000-0000-4000-8000-000000000001';self.assertEqual(session_id('rollout-2026-10-16T12-00-00-'+sid),sid)
+        sid='01a143e6-20e5-7843-8da6-ed8bc6ce277b';self.assertEqual(session_id('rollout-2026-10-16T12-00-00-'+sid),sid)
     def test_paginated_desktop_history_restores_named_active_thread_with_legacy_flag_zero(self):
         from session_read_state import active_conversations
         with sqlite3.connect(self.home/'thread_history_1.sqlite') as db:

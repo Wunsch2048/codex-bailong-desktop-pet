@@ -39,22 +39,13 @@ class QuotaSummary(QWidget):
         self.expanded=expanded
         self.windows=[dict(w) for w in windows];self.caption=caption;self.clock=clock or time.time
         self.items=quota_items(self.windows,self.clock());self.cache=progress_cache if progress_cache is not None else {}
-        self.anomaly=anomaly;self.week_index=next((i for i,w in enumerate(self.items) if w['name']=='一周'),None)
+        self.anomaly=None;self.week_index=next((i for i,w in enumerate(self.items) if w['name']=='一周'),None)
         self.alert_height=0
         self.alert_badge=QToolButton(self);self.alert_badge.setObjectName('week_quota_alert')
         self.alert_badge.installEventFilter(self)
-        badge_text=(f"{anomaly.get('change',0):+.0f}%" if round(anomaly.get('change',0)) else '0%') if anomaly else ''
-        self.alert_badge.setText(badge_text);self.alert_badge.setFont(font(10 if expanded else 11,not expanded))
-        self.alert_badge.setFixedSize(max(32 if expanded else 38,QFontMetrics(self.alert_badge.font()).horizontalAdvance(badge_text)+(8 if expanded else 10)),15 if expanded else 18)
+        self.alert_badge.setFont(font(10 if expanded else 11,not expanded))
         self.alert_badge.setCursor(Qt.CursorShape.PointingHandCursor)
-        increase=bool(anomaly and anomaly.get('change',0)>0)
-        reference=bool(anomaly and anomaly.get('kind')=='reference')
-        self.alert_badge.setAccessibleName('周额度参考差异，查看额度对比' if reference else '周额度推测总量'+('上涨' if increase else '下降')+'提醒，查看额度对比')
-        self.refresh_theme_colors()
         self.alert_badge.clicked.connect(self.anomalyRequested.emit)
-        self.alert_badge.setVisible(bool(anomaly and self.week_index is not None))
-        if anomaly:
-            self.alert_badge.setAccessibleDescription(anomaly['description']);self.alert_badge.setToolTip(anomaly['description'])
         self.active=None;self.pressed=False;self.values={};self.starts={};self.targets={};self._due_sent=set()
         self._static_key=None;self._revision=0;self.layer_builds=0
         self.setMouseTracking(True);self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -65,7 +56,28 @@ class QuotaSummary(QWidget):
             key=item['id'];target=item['progress'] or 0.
             self.targets[key]=target;self.starts[key]=self.cache.get(key,target) if item['progress'] is not None else 0.
             self.values[key]=self.starts[key]
-        self._accessible();self.animate(0.)
+        self._update_anomaly(anomaly);self.animate(0.)
+    def set_anomaly(self,anomaly):
+        if self.anomaly!=anomaly:self._update_anomaly(anomaly)
+    def _update_anomaly(self,anomaly):
+        self.anomaly=anomaly;expanded=self.expanded
+        change=anomaly.get('change',0) if anomaly else 0
+        badge_text=(f'{change:+.0f}%' if round(change) else '0%') if anomaly else ''
+        self.alert_badge.setText(badge_text)
+        self.alert_badge.setFixedSize(max(32 if expanded else 38,QFontMetrics(self.alert_badge.font()).horizontalAdvance(badge_text)+(8 if expanded else 10)),15 if expanded else 18)
+        self.alert_badge.move(self.alert_rect().topLeft().toPoint())
+        reference=bool(anomaly and anomaly.get('kind')=='reference')
+        self.alert_badge.setAccessibleName('周额度参考差异，查看额度对比' if reference else '周额度推测总量'+('上涨' if change>0 else '下降')+'提醒，查看额度对比')
+        description=anomaly['description'] if anomaly else ''
+        self.alert_badge.setAccessibleDescription(description);self.alert_badge.setToolTip(description)
+        self.alert_badge.setProperty('quotaComparisonTitle','额度参考' if reference else '额度对照')
+        self.alert_badge.setProperty('quotaComparisonHint',anomaly.get('hover_note',description) if anomaly else '')
+        self.alert_badge.setProperty('quotaComparisonValue',f'{change:+.1f}%' if anomaly else None)
+        self.refresh_theme_colors()
+        self.alert_badge.setVisible(bool(anomaly and self.week_index is not None))
+        hints=getattr(self.window(),'inline_explanations',None)
+        if hints is not None:hints.refresh_target(self.alert_badge)
+        self._revision+=1;self._accessible();self.update()
     def refresh_theme_colors(self):
         from theme_registry import palette,mix
         p=palette();up=bool(self.anomaly and self.anomaly.get('change',0)>0)
@@ -301,7 +313,7 @@ class TodayTokens(QWidget):
             p.setFont(font(11));p.setPen(QColor(colors['muted']));p.drawText(QRectF(7,0,25,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日')
             p.setFont(font(10));entry_width=QFontMetrics(p.font()).horizontalAdvance('›');entry_x=self.width()-7-entry_width
             p.drawText(QRectF(entry_x,0,entry_width,self.height()),Qt.AlignmentFlag.AlignVCenter,'›')
-            p.setFont(font(11));p.setPen(QColor(colors['ink']));rect=QRectF(35,0,max(0,entry_x-38),self.height())
+            p.setFont(font(11));p.setPen(QColor(colors['ink']));rect=QRectF(35,1,max(0,entry_x-38),self.height())
             value=self.data['display']+(' 部分' if self.data['partial'] else '')
             self.roll.paint(p,rect);return
         p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
@@ -312,9 +324,11 @@ class TodayTokens(QWidget):
             # Footer half-width: retain today amount and the 24h action, omit duplicate Token label.
             p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
             p.setFont(font(10));p.setPen(theme_color(MUTED));p.drawText(QRectF(6,0,22,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日')
-            entry='›' if getattr(self,'expanded',False) else '24h ›';entry_width=QFontMetrics(p.font()).horizontalAdvance(entry);entry_x=self.width()-6-entry_width
-            p.drawText(QRectF(entry_x,0,entry_width,self.height()),Qt.AlignmentFlag.AlignVCenter,entry)
-            p.setFont(font(12,True));p.setPen(theme_color(INK));rect=QRectF(32,0,max(0,entry_x-36),self.height())
+            metrics=QFontMetrics(p.font());entry_width=metrics.horizontalAdvance('24h ›');entry_x=self.width()-6-entry_width
+            arrow_width=metrics.horizontalAdvance('›')
+            p.drawText(QRectF(entry_x,1,entry_width-arrow_width,self.height()),Qt.AlignmentFlag.AlignVCenter,'24h')
+            p.drawText(QRectF(entry_x+entry_width-arrow_width,0,arrow_width,self.height()),Qt.AlignmentFlag.AlignVCenter,'›')
+            p.setFont(font(12,True));p.setPen(theme_color(INK));rect=QRectF(32,1,max(0,entry_x-36),self.height())
             if self.roll.width(p.font(),value)>rect.width():p.setFont(font(10,True))
             self.roll.paint(p,rect);return
         self.roll.paint(p,QRectF(77,0,self.width()-128,self.height()))

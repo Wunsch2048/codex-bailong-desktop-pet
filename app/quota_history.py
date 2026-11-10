@@ -167,6 +167,10 @@ def token_span(db,start,end,models=False):
     return db.execute('SELECT COALESCE(SUM(tokens),0),COUNT(*) FROM usage WHERE stamp>? AND stamp<=?',(start,end)).fetchone()
 
 
+REFERENCE_BADGE_MIN=5
+STRICT_BADGE_REMAINING=70
+
+
 def summarize_cycles(db,now=None,complete=True,pending=False):
     from quota_workload import profile
     now=time.time() if now is None else now
@@ -184,8 +188,9 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
         drop=first[2]-last[2]
         fresh=closed or now-last[0]<=900
         rise_pending=bool(c.get('rise_candidate'))
-        valid=bool(complete and not pending and fresh and not rise_pending and
-            not c.get('corrected') and drop>=5 and observed>0)
+        reference_valid=bool(complete and not pending and fresh and not rise_pending and
+            not c.get('corrected') and drop>=1 and observed>0)
+        valid=reference_valid and drop>=5
         estimate=round(observed*100/drop) if valid else None
         mix=token_span(db,first[0],last[0],True)
         model=mix[0][0] if mix else ''
@@ -198,6 +203,7 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
         result.append(dict(id=c['id'],start=c['start'],end=end,through=last[0],reset_at=c['deadline'],
             kind=c['kind'],closed=closed,remaining=last[2],used=used,records=records,
             estimated_total=estimate,per_percent=estimate/100 if estimate else None,
+            reference_total=round(observed*100/drop) if reference_valid else None,
             estimate_low=round(observed*100/(drop+1)) if valid else None,
             estimate_high=round(observed*100/max(1,drop-1)) if valid else None,
             observed_tokens=observed,drop=round(max(0,drop),1),sample_count=len(samples),distinct_readings=len({s[2] for s in samples}),
@@ -218,21 +224,52 @@ def capacity_reference(current,previous,pending=False):
     if not previous.get('closed'):return dict(result,reason='上一周期尚未结束')
     if not current.get('plan') or current.get('plan')!=previous.get('plan'):
         return dict(result,reason='两轮套餐不同或套餐记录缺失')
-    for cycle in (current,previous):
+    values=[]
+    for cycle,min_drop in ((current,1),(previous,5)):
         value=cycle.get('estimated_total')
+        if min_drop==1 and value is None:value=cycle.get('reference_total')
         if (not cycle.get('complete') or not cycle.get('fresh') or cycle.get('corrected') or
-                cycle.get('rise_pending') or cycle.get('drop',0)<5 or
+                cycle.get('rise_pending') or cycle.get('drop',0)<min_drop or
                 not isinstance(value,(int,float)) or isinstance(value,bool) or
                 not math.isfinite(value) or value<=0):
             return dict(result,reason='两轮需有完整、有效的容量估算')
-    return dict(change=round((current['estimated_total']/previous['estimated_total']-1)*100,1),
+        values.append(value)
+    return dict(change=round((values[0]/values[1]-1)*100,1),
                 reason='两轮各按当轮用法估算，差异也会受模型和档位影响',
                 preliminary=any(c.get('drop',0)<20 for c in (current,previous)))
 
 
+def cycle_label(cycle):
+    from reset_watch import local_time
+    start=local_time(cycle.get('start'))
+    return start+' 开始的周期' if start else '上一周期'
+
+
+def comparison_baseline(current,history):
+    """Use the nearest qualified cycle in the current plan's history."""
+    from quota_workload import mismatch
+    reason='尚无上一周期记录'
+    for index,old in enumerate(history):
+        if old.get('plan') and old['plan']!=current['plan']:
+            if index==0:reason='套餐已变更，暂不比较'
+            break
+        if not old.get('closed') or not old.get('eligible') or not old.get('complete') or old.get('corrected') or not old.get('plan'):
+            blocked='上一周期记录不足，暂不比较'
+        elif (old['kind']=='extra')!=(current['kind']=='extra') or 'changed' in (old['kind'],current['kind']):
+            blocked='上一周期的重置类型不同，暂不比较'
+        elif old['model']!=current['model'] or abs(old['model_share']-current['model_share'])>.15:
+            blocked='上一周期的主模型或使用比例不同，暂不比较'
+        elif old.get('output_share') is None or current.get('output_share') is None or abs(old['output_share']-current['output_share'])>.1:
+            blocked='上一周期的输入输出比例不同，暂不比较'
+        else:
+            blocked=mismatch(current,old)
+            if not blocked:return old,''
+        if index==0:reason=blocked
+    return None,reason
+
+
 def compare_cycles(result):
     """Re-evaluate policy even when a closed capacity came from cache."""
-    from quota_workload import mismatch
     for i,item in enumerate(result):
         reference=capacity_reference(item,result[i-1] if i else None)
         item.update(reference_change=reference['change'],reference_reason=reference['reason'],
@@ -254,24 +291,17 @@ def compare_cycles(result):
             else:reason='有效用量记录不足，暂不比较'
             item['comparison_reason']=reason
             continue
-        if not i:continue
-        old=result[i-1]
-        if old['plan']!=item['plan']:
-            item['comparison_reason']='套餐已变更，暂不比较';continue
-        if not old['closed'] or not old['eligible']:
-            item['comparison_reason']='上一周期记录不足，暂不比较';continue
-        if old['model']!=item['model'] or abs(old['model_share']-item['model_share'])>.15:
-            item['comparison_reason']='上一周期的主模型或使用比例不同，暂不比较';continue
-        if old['output_share'] is None or abs(old['output_share']-item['output_share'])>.1:
-            item['comparison_reason']='上一周期的输入输出比例不同，暂不比较';continue
-        if (old['kind']=='extra')!=(item['kind']=='extra') or old['kind']=='changed' or item['kind']=='changed':
-            item['comparison_reason']='上一周期的重置类型不同，暂不比较';continue
-        blocked=mismatch(item,old)
-        if blocked:
-            item.update(comparison_reason=blocked,comparison_block=blocked);continue
+        old,blocked=comparison_baseline(item,reversed(result[:i]))
+        if old is None:
+            item['comparison_reason']=blocked
+            if blocked.startswith(('缺少','使用条件','模型使用','缓存或','速度或')):
+                item['comparison_block']=blocked
+            continue
         base=old['estimated_total']
+        reference=capacity_reference(item,old)
         item.update(change=round((item['estimated_total']/base-1)*100,1),baseline=base,
-            comparison_reason='较上一周期',baseline_count=1,baseline_cycle_id=old['id'])
+            comparison_reason='相近用法下，较'+cycle_label(old),baseline_count=1,baseline_cycle_id=old['id'],
+            reference_change=reference['change'],reference_reason=reference['reason'],reference_preliminary=reference['preliminary'])
 
 
 def snapshot(db,cycle,now,complete,progress):
@@ -302,19 +332,12 @@ def anomaly(cycles,now=None,decline_threshold=10,increase_threshold=15):
     """Compare the preceding cycle, with independent change thresholds."""
     now=time.time() if now is None else now
     if len(cycles)<2:return None
-    current,previous=cycles[:2]
-    if current['closed'] or not previous['closed']:return None
-    if not 0<=now-current['through']<=900:return None
-    for row in (current,previous):
-        if not row['eligible'] or not row['complete'] or row.get('corrected') or not row.get('plan'):return None
-    if current['plan']!=previous['plan']:return None
-    if current['model']!=previous['model'] or abs(current['model_share']-previous['model_share'])>.15:return None
-    if current.get('output_share') is None or previous.get('output_share') is None:return None
-    if abs(current['output_share']-previous['output_share'])>.1:return None
-    if (current['kind']=='extra')!=(previous['kind']=='extra'):return None
-    if current['kind']=='changed' or previous['kind']=='changed':return None
-    from quota_workload import mismatch
-    if mismatch(current,previous):return None
+    current=cycles[0]
+    if current['closed'] or not 0<=now-current['through']<=900:return None
+    if current['remaining']>STRICT_BADGE_REMAINING:return None
+    if not current['eligible'] or not current['complete'] or current.get('corrected') or not current.get('plan'):return None
+    previous,_=comparison_baseline(current,cycles[1:])
+    if previous is None:return None
     estimate=current['estimated_total'];base=previous['estimated_total']
     if not estimate or not base:return None
     change=round((estimate/base-1)*100,6)
@@ -323,7 +346,8 @@ def anomaly(cycles,now=None,decline_threshold=10,increase_threshold=15):
     return dict(change=round(change,1),current=estimate,previous=base,through=current['through'],
         reset_at=current['reset_at'],plan=current['plan'],cycle=current['id'],remaining=current['remaining'],
         comparison_version=1,text=f"推测容量 {change:+.0f}%",
-        description=f"相近使用条件下，本轮推测 Token 容量较上一周期{'少' if change<0 else '多'} {abs(change):.1f}%。两轮均观察至少20个百分点，已检查模型分布、缓存、输入输出及速度和推理档位。\n仍会受任务差异和其他设备使用影响，不是官方额度变动确认。")
+        baseline_cycle_id=previous['id'],hover_note=f"对照 {cycle_label(previous)}\n相近用法下的 Token 容量推测。",
+        description=f"相近使用条件下，本轮推测 Token 容量较{cycle_label(previous)}{'少' if change<0 else '多'} {abs(change):.1f}%。两轮均观察至少20个百分点，已检查模型分布、缓存、输入输出及速度和推理档位。\n仍会受任务差异和其他设备使用影响，不是官方额度变动确认。")
 
 
 def visible_anomaly(snapshot,windows,now=None,decline_threshold=10,increase_threshold=15):
@@ -342,6 +366,7 @@ def visible_anomaly(snapshot,windows,now=None,decline_threshold=10,increase_thre
     if not deadline or deadline<=now or abs(deadline-warning['reset_at'])>1800:return None
     remaining=week.get('remaining')
     if remaining is not None and remaining>warning.get('remaining',100)+5:return None
+    if remaining is not None and remaining>STRICT_BADGE_REMAINING:return None
     if not 0<=now-warning['through']<=900:return None
     return warning
 
@@ -360,8 +385,10 @@ def visible_quota_change(snapshot,windows,now=None,decline_threshold=10,increase
     if len(cycles)<2:return None
     current,previous=cycles[:2]
     if current.get('closed') or not 0<=now-current.get('through',0)<=900:return None
+    baseline,reason=comparison_baseline(current,cycles[1:]) if current.get('eligible') else (None,current.get('comparison_reason',''))
+    previous=baseline or previous
     reference=capacity_reference(current,previous)
-    if reference['change'] is None:return None
+    if reference['change'] is None or abs(reference['change'])<REFERENCE_BADGE_MIN:return None
     week=next((w for w in windows if w.get('name')=='一周'),None)
     if not week or week.get('plan')!=current.get('plan'):return None
     from reset_watch import epoch
@@ -369,9 +396,19 @@ def visible_quota_change(snapshot,windows,now=None,decline_threshold=10,increase
     if not deadline or deadline<=now or not reset or abs(deadline-reset)>1800:return None
     remaining=week.get('remaining')
     if remaining is not None and remaining>current.get('remaining',100)+5:return None
+    if baseline:
+        change=(current['estimated_total']/baseline['estimated_total']-1)*100
+        if max(current['remaining'],remaining if remaining is not None else 0)>STRICT_BADGE_REMAINING:
+            reason='周剩余降到 70% 后再判断涨跌'
+        elif -decline_threshold<round(change,6)<increase_threshold:reason='差异未达到提醒门槛'
+        else:reason='两轮估算范围仍有重叠'
     label='初步参考差异' if reference['preliminary'] else '参考差异'
+    detail='额度只下降了少量百分点，读数取整会放大差异。' if current['drop']<5 else '两轮各按当轮用法估算。'
     return dict(kind='reference',change=reference['change'],preliminary=reference['preliminary'],
-                description=f"{label} {reference['change']:+.1f}%。\n两轮各按当轮用法估算，差异会受模型和档位影响。点击查看额度详情。")
+                hover_note=f"对照 {cycle_label(previous)}\n"+(reason.rstrip('。')+'。' if reason else detail),
+                description=f"{label} {reference['change']:+.1f}%，对照{cycle_label(previous)}。\n"
+                + (reason.rstrip('。')+'。\n' if reason else '')
+                + detail+'点击查看额度详情。')
 
 
 def inherit_live_plan(windows,live,observed):

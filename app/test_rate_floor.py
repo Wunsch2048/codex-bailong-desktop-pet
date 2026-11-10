@@ -10,6 +10,31 @@ from datetime import datetime
 APP=QApplication.instance() or QApplication([])
 
 class RateFloorTests(unittest.TestCase):
+    def test_hourly_plots_match_model_swatches_and_keep_hover_compact(self):
+        from daily_report import ReportPlot
+        from rate_chart import model_swatch
+        from token_charts import TokenPlot
+        now=datetime(2026,10,30,13).timestamp()
+        hours=[0]*24;hours[10]=6000;hours[11]=1800
+        models=[{} for _ in hours];models[10]={'sol':4000,'astra':2000}
+        models[11]={'luna':700,'astra':900,'sol':200}
+        rates=[None]*24;rates[10]=dict(rate=22.,median_rate=20.,first_token_ms=900)
+        report=dict(day='2026-10-29',hours=hours,hour_models=models,rates=dict(yesterday=rates))
+        snapshot=dict(today='2026-10-30',hours=hours,hour_models=models,report=report,rates=dict(today=rates))
+        for plot in (ReportPlot(report),TokenPlot(snapshot,'day',now=now)):
+            plot.resize(250,94);plot.ensure_layers()
+            rows=plot._combo_records[10]['rows']
+            self.assertEqual(rows,[('Token 用量','6.0K Token',None),('sol','4.0K',model_swatch(0)),
+                                   ('astra','2.0K',model_swatch(1)),('回合均速','22.0 tok/s',None),
+                                   ('回合中位速率','20.0 tok/s',None)])
+            self.assertEqual([(name,color) for name,_,color in plot._combo_records[11]['rows'][1:]],
+                             [('sol',model_swatch(0)),('astra',model_swatch(1)),('luna',model_swatch(2))])
+            image=QImage(250,94,QImage.Format.Format_ARGB32);image.fill(Qt.GlobalColor.transparent)
+            painter=QPainter(image);painter.drawPicture(0,0,plot._combo_bars);painter.end()
+            chart=plot.chart_rect();x=round(plot._combo_records[10]['rect'].center().x())
+            self.assertEqual(image.pixelColor(x,round(chart.top()+chart.height()*.2)).name(),QColor(model_swatch(1)).name())
+            self.assertEqual(image.pixelColor(x,round(chart.top()+chart.height()*.6)).name(),QColor(model_swatch(0)).name())
+            plot.close()
     def test_unknown_runs_have_floor_geometry_but_keep_unknown_readout_and_real_zero(self):
         now=datetime(2026,10,30,13).timestamp();items=[None]*24;items[2]=dict(rate=20);items[3]=dict(rate=0);items[7]=dict(rate=30)
         card=TokenChartCard(dict(today='2026-10-30',hours=[10]*24,rates=dict(today=items)),period='day',now=now);card.resize(121,78);card.show();APP.processEvents();p=card.plot;p.grab()

@@ -5,7 +5,7 @@ from pathlib import Path
 from contextlib import closing
 from datetime import datetime,timezone
 from types import SimpleNamespace
-from session_read_state import attached_conversations,non_user_sessions,active_conversations
+from session_read_state import attached_conversations,non_user_sessions,active_conversations,terminal_conversations
 from enhanced_core import ActivityReducer,RolloutTail,Session
 from activity_targets import ActivityTargets
 
@@ -44,6 +44,28 @@ class AttachmentTests(unittest.TestCase):
             db.executemany('INSERT INTO thread_turns VALUES(?,?,?,?)',[(ROOT,'a','inProgress',1),(CHILD,'b','inProgress',1),(FORK,'c','inProgress',1)])
         seeds=active_conversations(self.home)
         self.assertEqual({e['session'] for e in seeds},{ROOT,FORK});self.assertTrue(all(e['active']==2 for e in seeds))
+    def test_continuation_restores_parent_and_retires_exact_turn(self):
+        branch='44444444-4444-4444-8444-444444444444'
+        folder=self.home/'sessions';folder.mkdir()
+        page=folder/f'rollout-{ROOT}_{branch}.jsonl'
+        page.write_text(json.dumps(dict(type='session_meta',payload=dict(id=ROOT,history_base=dict(thread_id=ROOT))))+'\n',encoding='utf-8')
+        tail=RolloutTail(self.home);tail.poll()
+        self.assertEqual(tail.continuations,{branch:ROOT})
+        with closing(sqlite3.connect(self.home/'thread_history_1.sqlite')) as db,db:
+            db.execute('CREATE TABLE thread_turns(thread_id TEXT,turn_id TEXT,status TEXT,rollout_ordinal INT)')
+            db.executemany('INSERT INTO thread_turns VALUES(?,?,?,?)',[(ROOT,'old','interrupted',5),(branch,'current','inProgress',6),(CHILD,'internal','inProgress',7)])
+        seed,=active_conversations(self.home,tail.continuations)
+        self.assertEqual((seed['session'],seed['turn'],seed['active']),(ROOT,'current',1))
+        reducer=tail.reducer
+        state=reducer.restore_active(ROOT,seed)
+        self.assertEqual(reducer._status(ROOT,state)['state'],'working')
+        self.assertFalse(terminal_conversations(self.home,[(ROOT,'current')],tail.continuations))
+        with closing(sqlite3.connect(self.home/'thread_history_1.sqlite')) as db,db:
+            db.execute("UPDATE thread_turns SET status='completed' WHERE thread_id=?",(branch,))
+        self.assertFalse(active_conversations(self.home,tail.continuations))
+        sid,turn,status=terminal_conversations(self.home,[(ROOT,'current')],tail.continuations)[0]
+        self.assertEqual([event['kind'] for event in reducer.terminate(sid,status,turn)],['status'])
+        self.assertIsNone(reducer.restore_active(ROOT,seed))
     def test_attachment_never_counts_or_receives_live_targets_or_completion(self):
         r=ActivityReducer();r.sessions[ROOT]=Session(state='working',turn='a',done=False)
         r.sessions[CHILD]=Session(state='thinking',turn='b',done=False,attached_parent=ROOT,waiting_reason='input')

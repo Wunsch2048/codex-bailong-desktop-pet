@@ -42,5 +42,25 @@ class DecodeGeometryTests(unittest.TestCase):
         owner=Owner();queued=[]
         with patch('desktop.QTimer.singleShot',side_effect=lambda delay,context,callback:queued.append(callback)):owner.request_decode_sync()
         queued[0]();owner.player.resize.assert_not_called()
+    def test_remote_dpi_mismatch_moves_companion_in_anchor_physical_coordinates(self):
+        from ctypes import cast,POINTER
+        from ctypes.wintypes import RECT
+        from native_coordinates import align_companion_position
+        api=Mock();rects={1:(-1400,288,-1195,493),2:(-200,622,470,1132)}
+        def read(hwnd,result):
+            cast(result,POINTER(RECT))[0]=RECT(*rects[hwnd]);return True
+        api.GetWindowRect.side_effect=read
+        api.GetDpiForWindow.side_effect=lambda hwnd:96 if hwnd==1 else 240
+        align_companion_position(1,2,(-32,-212),(268,204),1,api)
+        api.SetWindowPos.assert_called_once_with(2,None,-1432,76,268,204,0x215)
+        api.SetWindowPos.reset_mock()
+        rects[2]=(-1432,76,-762,586)
+        api.GetDpiForWindow.side_effect=lambda hwnd:96
+        align_companion_position(1,2,(-32,-212),(268,204),1,api)
+        api.SetWindowPos.assert_called_once_with(2,None,-1432,76,268,204,0x216)
+        api.SetWindowPos.reset_mock()
+        rects[2]=(-1432,76,-1164,280)
+        align_companion_position(1,2,(-32,-212),(268,204),1,api)
+        api.SetWindowPos.assert_not_called()
 
 if __name__=='__main__':unittest.main()

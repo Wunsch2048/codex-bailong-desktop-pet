@@ -259,11 +259,8 @@ class ReportUiTests(unittest.TestCase):
         opacity=r.windowOpacity();observed=[];show=r.show
         def native_show():
             observed.append((r.windowOpacity(),r.fraction,r.surface.isHidden(),r._frame is not None));show()
-        with patch('daily_report.QApplication.platformName',return_value='windows'),patch('panel_transition.present_barrier'),patch.object(r,'show',side_effect=native_show):
-            r.open()
-            self.assertEqual(observed,[(0.,0.,True,True)]);self.assertEqual(r.windowOpacity(),0.)
-            with patch.object(r.windowHandle(),'isExposed',return_value=True):r._open_present_ready()
-        self.assertAlmostEqual(r.windowOpacity(),opacity)
+        with patch('daily_report.QApplication.platformName',return_value='windows'),patch('panel_transition.present_barrier'),patch.object(r,'show',side_effect=native_show):r.open()
+        self.assertEqual(observed,[(0.,0.,True,True)]);self.assertAlmostEqual(r.windowOpacity(),opacity)
     def test_native_reopen_failure_does_not_leave_report_invisible(self):
         from unittest.mock import patch
         r=self.r;r.setWindowOpacity(.7);opacity=r.windowOpacity()

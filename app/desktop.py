@@ -374,6 +374,8 @@ class DesktopPet(EnhancedPet):
         if sys.platform=='win32' and self.enhanced_ready and not self.dragging:
             from ctypes import wintypes
             msg=wintypes.MSG.from_address(int(message))
+            if msg.message in (0x007E,0x02E0): # WM_DISPLAYCHANGE, WM_DPICHANGED
+                self.request_display_reflow()
             if msg.message==0x84: # WM_NCHITTEST. Preserve soft alpha in the layered window.
                 from native_coordinates import client_position,message_position
                 pos=client_position(msg.hWnd,*message_position(msg.lParam),self.width(),self.height())
@@ -853,8 +855,10 @@ class DesktopPet(EnhancedPet):
     def watch_screen(self,screen):
         super().watch_screen(screen)
         def changed(*unused):
-            if getattr(self,'enhanced_ready',False):self.request_decode_sync()
+            if getattr(self,'enhanced_ready',False):
+                self.request_decode_sync();self.request_display_reflow()
         screen.geometryChanged.connect(changed)
+        screen.availableGeometryChanged.connect(changed)
         screen.logicalDotsPerInchChanged.connect(changed)
         screen.physicalDotsPerInchChanged.connect(changed)
 
@@ -862,6 +866,30 @@ class DesktopPet(EnhancedPet):
         super().ensure_on_screen()
         if getattr(self,'edge_dock',None):self.edge_dock.reconcile()
         if getattr(self,'enhanced_ready',False):self.request_decode_sync()
+
+    def request_display_reflow(self):
+        if not getattr(self,'_visibility_ready',False):return
+        if not hasattr(self,'_display_reflow_timer'):
+            self._display_reflow_timer=QTimer(self)
+            self._display_reflow_timer.setSingleShot(True)
+            self._display_reflow_timer.timeout.connect(self.reflow_display)
+        self._display_reflow_timer.start(100)
+
+    def reflow_display(self):
+        bubble=self.bubble
+        if self.dragging or getattr(self,'_card_dragged',False) or getattr(bubble,'_card_press',None):
+            self.request_display_reflow();return
+        transition=bubble.size_transition
+        if transition.running or transition.preparing or transition.landing.image is not None:transition.cancel()
+        attached=not (self.settings.get('panel_detached') or self._materials_missing or not self.settings.get('character_visible',True))
+        if attached:bubble._editor_positioned=False
+        self.ensure_on_screen()
+        if sys.platform!='win32' or not attached or not self.isVisible() or not bubble.isVisible():return
+        from native_coordinates import align_companion_position
+        target=bubble.content_geometry()
+        delta=target.topLeft()-self.pos()
+        align_companion_position(int(self.winId()),int(bubble.winId()),(delta.x(),delta.y()),
+                                 (target.width(),target.height()),self.devicePixelRatioF())
 
     def sync_decode_size(self):
         self.frame_size=self.desired_decode_size()
@@ -890,6 +918,7 @@ class DesktopPet(EnhancedPet):
         result=super().event(event)
         if event.type() in (QEvent.Type.DevicePixelRatioChange,QEvent.Type.Show,QEvent.Type.Resize) and getattr(self,'enhanced_ready',False):
             self.request_decode_sync()
+        if event.type()==QEvent.Type.DevicePixelRatioChange:self.request_display_reflow()
         return result
 
     def save_settings(self):

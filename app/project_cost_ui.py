@@ -183,11 +183,11 @@ class DailyCostButton(QToolButton):
         self.tokens=report.get('yesterday_total',0)
         self.partial=bool(pending or projects.get('limited') or projects.get('errors') or projects.get('pending'))
         self.amount=sum(p['cost'] for p in rows) if valid and not (pending and pending>=tokens) and (rows or not self.tokens) else None
-        self.setAccessibleName('查看昨日项目成本 '+dollars(self.amount));self.update()
+        self.setAccessibleName('查看昨日项目成本 '+dollars(self.amount)+('，部分用量未计价' if self.partial else ''));self.update()
     def paintEvent(self,event):
         p=QPainter(self);half=self.width()/2
         p.setPen(QColor(color('#706879')));p.setFont(font(12));p.drawText(0,14,'Token 用量')
-        p.setPen(QColor(color('#75618d')));p.drawText(round(half+5),14,'成本（部分） ›' if self.partial else '成本估算 ›')
+        p.drawText(round(half+5),14,'成本 ›')
         p.setPen(QColor(color('#393343')));p.setFont(font(20,True));p.drawText(0,40,compact_tokens(self.tokens));p.drawText(round(half+5),40,dollars(self.amount))
     def mouseReleaseEvent(self,event):
         if event.position().x()<self.width()/2:self.setDown(False);event.accept();return

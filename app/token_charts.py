@@ -18,12 +18,21 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         self.init_combo();self.setMouseTracking(True);self.setMinimumWidth(0);self.set_data(snapshot,period,now)
 
     def set_data(self,snapshot,period,now=None):
-        held=self.hold_inspection() if getattr(self,'period',None)==period else None
-        if held is None:self.dismiss_inspection()
+        snapshot=snapshot or {};now=time.time() if now is None else now
+        same_period=getattr(self,'period',None)==period
+        keys=('unavailable','today','hours','hour_models') if period=='day' else ('unavailable','history_days','days')
+        bucket=lambda stamp:datetime.fromtimestamp(stamp).strftime('%Y-%m-%d-%H' if period=='day' else '%Y-%m-%d')
+        same_series=(same_period and bool(self.snapshot)==bool(snapshot) and bucket(self.now)==bucket(now)
+                     and all(self.snapshot.get(key)==snapshot.get(key) for key in keys))
+        rate_key='today' if period=='day' else 'days'
+        same_rates=same_period and (self.snapshot.get('rates') or {}).get(rate_key)==(snapshot.get('rates') or {}).get(rate_key)
+        held=self.hold_inspection() if same_period and not (same_series and same_rates) else None
+        if not (same_series and same_rates) and held is None:self.dismiss_inspection()
         self.period=period
-        self.snapshot=snapshot or {};self.now=time.time() if now is None else now
-        self.series=usage_series(snapshot,period,self.now);self.invalidate_layers()
-        if period=='all' and self.series.get('bucket_days',1)>1:
+        self.snapshot=snapshot;self.now=now
+        if not same_series:self.series=usage_series(snapshot,period,now)
+        if not (same_series and same_rates):self.invalidate_layers()
+        if not same_series and period=='all' and self.series.get('bucket_days',1)>1:
             # Keep daily rate observations daily even when long-history usage used grouped columns.
             from datetime import timedelta
             first=datetime.fromisoformat(self.series['start']).date();last=datetime.fromisoformat(self.series['end']).date()
@@ -38,7 +47,8 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         if not s['available']:description+='统计中或暂不可用。'
         if self.snapshot.get('partial'):description+='部分日志暂不可读。'
         self.setAccessibleName('Codex Token '+('小时曲线' if s['mode']=='line' else '用量柱状图'))
-        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('');self.resume_inspection(held);self.update()
+        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('')
+        if not (same_series and same_rates):self.resume_inspection(held);self.update()
 
     def chart_rect(self):
         # Both the title and the mixed Chinese/numeric axis use the shared
@@ -57,7 +67,7 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         else:
             items=[(rates.get('days') or {}).get(b['start']) for b in bins]
             left,right=s['start'][5:].replace('-','/'),s['end'][5:].replace('-','/')
-        self.combo_layers(p,dynamic,bins,items,plot,s['available'])
+        self.combo_layers(p,dynamic,bins,items,plot,s['available'],by_model=s['mode']=='line')
         self.hits=[(record['rect'],b) for record,b in zip(self._combo_records,bins)]
         self.points=[QPointF(record['rect'].center().x(),plot.bottom()) for record,b in zip(self._combo_records,bins) if not b.get('future') and s['available']]
         p.setFont(font(10 if getattr(self,'expanded',False) else 11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2

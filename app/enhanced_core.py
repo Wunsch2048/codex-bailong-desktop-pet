@@ -143,6 +143,24 @@ class ActivityReducer:
         if not s or s.source_hidden or s.done or not turn or s.turn!=turn or not isinstance(active,bool):return []
         return self.set_runtime(sid,active,turn)+[dict(kind='animation_lifecycle',session=sid,turn=turn,active=active)]
 
+    def restore_active(self,sid,event):
+        turn=event['turn']
+        state=self.sessions.get(sid)
+        if state and (state.source_hidden or turn in (state.closed_turn,state.completed_turn)):
+            return None
+        if state and state.turn==turn:
+            if state.done:return None
+            state.title=event['title']
+        else:
+            if state and not state.done and state.turn and not state.historical_only:return None
+            state=state or self.sessions.setdefault(sid,Session())
+            state.title=event['title'];state.turn=turn;state.turn_is_fallback=False
+            state.done=False;state.historical_only=True;state.state='working'
+            state.message=state.display='任务正在进行'
+            state.compacting=False;state.waiting_reason='';state.calls.clear()
+            state.runtime_turn='';state.runtime_active=None;state.updated=time.monotonic()
+        return state
+
     def terminate(self,sid,status,turn):
         s=self.sessions.get(sid)
         if not s or s.source_hidden or s.done or not turn or s.turn!=turn or status not in ('completed','failed','interrupted'):return []
@@ -337,14 +355,15 @@ class RolloutTail:
         self.catalog=LogCatalog(self.home);self.files={};self.last_scan=0;self.seeded=False
         self.health=dict(state='unknown',code='starting');self.pins=set();self.generation=None
         self.discovered=set();self.file_ids={};self.queue=[];self.by_id={}
+        self.continuations={}
         self.rate_observer=None;self.usage_observer=None
         self.attached={};self._identity_checked=set();self._identity_scan=-1e9;self._hidden=set();self._rollout_aliases=set()
     def set_pins(self,ids):self.pins={session_id(s) for s in ids}
     def poll(self):
         from performance_metrics import METRICS
-        now=time.monotonic();events=[];errors=0;readable=0
+        now=time.monotonic();events=[];readable=0
         if self.last_scan==0:self.catalog.last_check=-1e9
-        paths=self.catalog.discover();self.last_scan=now;errors+=self.catalog.errors
+        paths=self.catalog.discover();self.last_scan=now;errors=self.catalog.errors
         if self.generation!=self.catalog.revision:
             aliases={p:rollout_alias(p) for p in paths}
             # A continued page and its original rollout share one reducer,
@@ -354,6 +373,8 @@ class RolloutTail:
             self.file_ids={p:roots.get(alias,alias) for p,alias in aliases.items()}
             self._rollout_aliases={session_id(p.stem) for p,alias in aliases.items()
                                    if session_id(p.stem)!=session_id(alias)}
+            self.continuations={session_id(p.stem):session_id(alias) for p,alias in aliases.items()
+                                if session_id(p.stem)!=session_id(alias)}
             self.generation=self.catalog.revision;new=paths-self.discovered
             def modified(p):
                 try:return p.stat().st_mtime

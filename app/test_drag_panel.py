@@ -5,10 +5,7 @@ import test_native_interactions as native
 APP=native.APP
 
 class DragPanelTests(unittest.TestCase):
-    def setUp(self):
-        native.InteractionTests.setUp(self)
-        # The periodic status redraw is independent of drag/edge handoff.
-        self.pet.status_timer.stop()
+    setUp=native.InteractionTests.setUp
     tearDown=native.InteractionTests.tearDown
     drag=native.InteractionTests.drag
     def settle(self):

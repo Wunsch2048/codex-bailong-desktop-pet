@@ -101,7 +101,11 @@ def today_tokens(tokens, now=None, live=None):
         count=live['count'];known=True;partial=partial or bool(live.get('partial'))
     if known:
         try:
-            display = compact_tokens(count)
+            if 1_000_000_000 <= count < 10_000_000_000:
+                # Keep four integer digits in M, including just below 10B.
+                display = f'{min(count, 9_999_990_000)/1_000_000:.2f}M'
+            else:
+                display = compact_tokens(count)
         except OverflowError:
             # JSON integers have arbitrary precision; oversized counters must
             # not crash the UI during compact formatting.

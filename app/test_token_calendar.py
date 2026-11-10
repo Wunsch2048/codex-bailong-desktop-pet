@@ -22,6 +22,41 @@ class TokenTests(unittest.TestCase):
         self.write([token(1,120,input_tokens=100,cached_input_tokens=80,output_tokens=20),token(1,120),token(2,250)])
         result=self.poll();self.assertEqual(result['total'],250);self.assertEqual(result['days']['2026-10-01'],120);self.assertEqual(result['days']['2026-10-02'],130)
         self.assertEqual(len(result['days']),31)
+    def test_warm_summary_reuses_closed_days_until_backfill_or_rollover(self):
+        from unittest.mock import patch
+        from token_analytics import daily_model_rows
+        self.write([token(1,100),token(18,200)])
+        self.poll()
+        with patch('token_analytics.daily_model_rows',wraps=daily_model_rows) as rows:
+            self.write([token(18,225)],'a')
+            self.assertEqual(self.poll()['all_total'],225)
+            self.assertTrue(all(call.args[1] is not None for call in rows.call_args_list))
+            rows.reset_mock()
+            self.write([token(2,240)],'a')
+            self.assertEqual(self.poll()['history_days']['2026-10-02'],15)
+            self.assertIsNone(rows.call_args_list[0].args[1])
+            rows.reset_mock()
+            self.index.poll(datetime(2026,10,19,12).timestamp())
+            self.assertIsNone(rows.call_args_list[0].args[1])
+    def test_scan_slice_resumes_and_keeps_totals(self):
+        from unittest.mock import patch
+        self.write([token(1,100)])
+        self.assertTrue(self.index.poll(self.now,scan_seconds=0)['scan_pending'])
+        self.assertEqual(self.poll()['total'],100)
+        self.write([token(2,140)],'a')
+        other=self.path.with_name('rollout-z.jsonl')
+        other.write_text(json.dumps(token(3,20))+'\n',encoding='utf-8')
+        stop=False
+        scan=self.index.scan_file
+        def one_file(db,path,pause):
+            nonlocal stop
+            value=scan(db,path,pause)
+            stop=True
+            return value
+        with patch.object(self.index,'scan_file',side_effect=one_file):
+            self.assertTrue(self.index.poll(self.now,stop=lambda:stop)['scan_pending'])
+        result=self.poll()
+        self.assertEqual((result['total'],result['readable_files'],result['scan_pending']),(160,2,False))
     def test_paginated_segment_books_only_new_usage_and_repairs_old_index(self):
         self.write([token(1,1_283_258_294,input_tokens=1_278_519_963,output_tokens=4_738_331)])
         self.poll()

@@ -31,6 +31,22 @@ class HoverHintTests(unittest.TestCase):
         QTest.mouseMove(self.b._header_actions[index],QPoint(5,5));APP.processEvents()
     def outside(self):
         QTest.mouseMove(self.b,QPoint(3,self.b.height()-3));APP.processEvents()
+    def test_quota_badge_uses_shared_popup_and_updates_in_place(self):
+        from quota_summary import QuotaSummary
+        card=QuotaSummary([dict(name='一周',remaining=60)],parent=self.b,
+            anomaly=dict(kind='reference',change=20,description='参考差异 +20.0%。\n上一周期的重置类型不同，暂不比较。'))
+        card.move(0,24);card.show();APP.processEvents()
+        badge=card.alert_badge;QTest.mouseMove(badge,badge.rect().center())
+        self.assertTrue(wait_for(self.h.popup.isVisible))
+        popup=self.h.popup
+        self.assertEqual(popup.title,'额度参考')
+        self.assertIn('重置类型不同',popup.subtitle)
+        self.assertGreater(popup.height(),50)
+        self.assertFalse(QToolTip.isVisible())
+        card.set_anomaly(dict(kind='reference',change=21,description='参考差异 +21.0%。\n同一份浮窗。'))
+        self.assertIs(self.h.popup,popup);self.assertIn('+21.0%',popup.subtitle)
+        card.set_anomaly(None)
+        self.assertFalse(popup.isVisible())
     def test_style_events_do_not_traverse_hover_ancestry(self):
         with patch.object(self.b,'isAncestorOf',side_effect=AssertionError('irrelevant ancestry')):
             self.assertFalse(self.h.eventFilter(self.b._header_actions[0],QEvent(QEvent.Type.StyleChange)))

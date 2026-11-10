@@ -1,17 +1,61 @@
 """Shared pillar/curve drawing and a non-activating, preview-style inspection bubble."""
 from datetime import datetime,timedelta
+from functools import lru_cache
 from PySide6.QtCore import Qt,QRectF,QPointF,QPoint,QRect,QTimer,QEvent
 from PySide6.QtGui import QPainter,QColor,QPen,QPainterPath,QFontMetrics,QPicture
 from PySide6.QtWidgets import QWidget,QToolTip
 from chart_curve import SmoothTrace
 from chart_reveal import bar_shape
 from typography import ui_font
-from theme_registry import palette,readable,mix
+from theme_registry import current,palette,readable,mix
 from token_calendar import compact_tokens
 from hover_hints import HintBubble
 
+MODEL_SWATCHES=('#d45717','#205de0','#008470','#ad297e','#673ab7','#427c19')
+THEME_MODEL_SWATCHES={
+    'bailong':('#754ac0','#c65224','#007d77','#a73167','#255dab','#547a15'),
+    'mist':('#24559b','#c35b17','#007f6a','#ad327a','#754aba','#617b21'),
+    'jade':('#008066','#bc4d25','#4356b6','#a52f76','#946c00','#336ca3'),
+    'amber':('#ff6269','#43ccea','#f5c34d','#b59aff','#6ddd93','#fa9552'),
+    'night':('#bf94ff','#ffaf58','#4cdbcf','#ff76a7','#76adff','#c2d66c'),
+    'cyber':('#ffe629','#46cfee','#ff6c88','#b99aff','#77d991','#fc9251'),
+    'starfield':('#ce512b','#325bb7','#008377','#a62d78','#6d4caa','#757214'),
+    'division':('#ff8d28','#5ac6f4','#9bd158','#ea81c0','#a89cfa','#edc85b'),
+}
+THEME_RATE_STROKES={
+    'bailong':'#453754',
+    'mist':'#424f61',
+    'jade':'#344a45',
+    'amber':'#e1eef3',
+    'night':'#f2d9e8',
+    'cyber':'#f0ead0',
+    'starfield':'#374b65',
+    'division':'#e0e8ee',
+}
+
+@lru_cache(maxsize=256)
+def _model_color(index,key,panel,surface,ink):
+    swatches=THEME_MODEL_SWATCHES.get(key,MODEL_SWATCHES)
+    shade=swatches[index] if index<len(swatches) else QColor.fromHsv((index*137)%360,160,220).name()
+    return readable(shade,(panel,surface),ink,3)
+
+def model_swatch(index):
+    theme=palette()
+    return _model_color(index,current(),theme['panel'],theme['surface'],theme['ink'])
+
+def model_segments(values,order):
+    ranked=sorted(((model,value) for model,value in values.items() if value>0),
+                  key=lambda entry:(-entry[1],entry[0]))
+    shown=sorted(ranked[:4],key=lambda entry:order[entry[0]])
+    rows=[(model,value,model_swatch(order[model])) for model,value in shown]
+    if len(ranked)>4:rows.append(('其他模型',sum(value for _,value in ranked[4:]),palette()['muted']))
+    return rows
+
 def colors():
-    p=palette();return p,readable(mix(p['chart'],p['panel'],.35),(p['panel'],),p['chart'],3),readable(p['secondary'],(p['panel'],p['surface']),p['ink'],4.5)
+    p=palette()
+    bar=readable(mix(p['chart'],p['panel'],.35),(p['panel'],),p['chart'],3)
+    line=readable(THEME_RATE_STROKES.get(current(),p['secondary']),(p['panel'],p['surface']),p['ink'],4.5)
+    return p,bar,line
 
 def rate_text(item):
     value=(item or {}).get('rate')
@@ -78,7 +122,7 @@ class ChartBubble(HintBubble):
                 y=body.top()+25+i*21
                 if swatch:
                     p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(swatch));p.drawRoundedRect(QRectF(11,y+5,5,7),1,1)
-                p.setFont(ui_font(10));p.setPen(QColor(theme['muted']));p.drawText(QRectF(23,y,93,18),Qt.AlignmentFlag.AlignVCenter,p.fontMetrics().elidedText(label,Qt.TextElideMode.ElideRight,91))
+                p.setFont(ui_font(10));p.setPen(QColor(theme['muted']));p.drawText(QRectF(23,y,124,18),Qt.AlignmentFlag.AlignVCenter,p.fontMetrics().elidedText(label,Qt.TextElideMode.ElideRight,122))
                 p.setFont(ui_font(11,True));p.setPen(QColor(theme['ink']));p.drawText(QRectF(116,y,self.width()-127,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,value)
             return
         rows=[('Token 用量',self.record['amount'],bar),('回合均速',self.rate_value(),line),('回合中位速率',self.median_value(),None)]
@@ -104,8 +148,16 @@ class ComboChart:
         self._inspection=-1;self._combo_records=[];self._rate_points=[];self._popup=ChartBubble();self.destroyed.connect(self._popup.deleteLater)
         self._inspect_delay=QTimer(self);self._inspect_delay.setSingleShot(True);self._inspect_delay.setInterval(350);self._inspect_delay.timeout.connect(self.show_inspection)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-    def combo_layers(self,p,dynamic,bins,rate_items,plot,available=True):
+    def combo_layers(self,p,dynamic,bins,rate_items,plot,available=True,by_model=False):
         theme,bar,line=colors();bottom=plot.bottom();n=max(1,len(bins));slot=plot.width()/n
+        totals={}
+        if by_model and available:
+            for bucket in bins:
+                if bucket.get('future'):continue
+                for model,value in bucket.get('models',{}).items():
+                    if value>0:totals[model]=totals.get(model,0)+value
+        ranked=sorted(totals,key=lambda model:(-totals[model],model))
+        order={model:i for i,model in enumerate(ranked)}
         p.setPen(QPen(QColor(theme['border']),.6))
         for y in (plot.top()+plot.height()/2,bottom):p.drawLine(QPointF(plot.left(),y),QPointF(plot.right(),y))
         top=max((b['value'] for b in bins if not b.get('future')),default=0)
@@ -114,11 +166,23 @@ class ComboChart:
         for i,b in enumerate(bins):
             rect=QRectF(plot.left()+i*slot,plot.top(),slot,plot.height());item=rate_items[i] if available and i<len(rate_items) else None
             amount='尚未到来' if b.get('future') else compact_tokens(b['value'])+' Token' if available else '暂不可用'
-            self._combo_records.append(dict(label=b['label'],amount=amount,rate_item=item,rect=rect,future=bool(b.get('future')),available=available))
+            record=dict(label=b['label'],amount=amount,rate_item=item,rect=rect,future=bool(b.get('future')),available=available)
+            segments=model_segments(b.get('models',{}),order) if by_model and available and not b.get('future') else []
+            if segments and sum(value for _,value,_ in segments)!=b['value']:segments=[]
+            if by_model:
+                rows=[('Token 用量',amount,None)]
+                if available and not b.get('future'):
+                    rows.extend((model,compact_tokens(value),swatch) for model,value,swatch in segments)
+                    if item and item.get('rate') is not None:rows.append(('回合均速',rate_text(item),None))
+                    if item and item.get('median_rate') is not None:
+                        rows.append(('回合中位速率',f"{item['median_rate']:.1f} tok/s",None))
+                record.update(rows=rows,subtitle='')
+            self._combo_records.append(record)
             x=rect.center().x()
             if not b.get('future') and available:
                 height=plot.height()*b['value']/max(1,top)
-                bars.append(bar_shape(QRectF(rect.left()+slot*.17,bottom-height,max(.25,slot*.66),height)))
+                column=QRectF(rect.left()+slot*.17,bottom-height,max(.25,slot*.66),height)
+                bars.append((column,segments))
             value=(item or {}).get('rate') if not b.get('future') else None
             if available and not b.get('future'):
                 floor_points.append(QPointF(x,bottom-plot.height()*(value if value is not None else 0)/maximum));known.append(value is not None)
@@ -131,13 +195,27 @@ class ComboChart:
         self._combo_bars=QPicture();columns=QPainter(self._combo_bars)
         try:
             columns.setRenderHint(QPainter.RenderHint.Antialiasing)
-            columns.setPen(Qt.PenStyle.NoPen);columns.setBrush(QColor(bar))
-            for path in bars:columns.drawPath(path)
+            columns.setPen(Qt.PenStyle.NoPen)
+            for column,segments in bars:
+                shape=bar_shape(column)
+                if not segments:
+                    columns.fillPath(shape,QColor(bar));continue
+                columns.save();columns.setClipPath(shape,Qt.ClipOperation.IntersectClip)
+                y=column.bottom()
+                for i,(_,value,swatch) in enumerate(segments):
+                    height=plot.height()*value/max(1,top)
+                    columns.fillRect(QRectF(column.left(),y-height,column.width(),height),QColor(swatch));y-=height
+                    if i+1<len(segments) and min(height,plot.height()*segments[i+1][1]/max(1,top))>=3:
+                        columns.fillRect(QRectF(column.left(),y-.4,column.width(),.8),QColor(theme['panel']))
+                columns.restore()
         finally:columns.end()
         self._combo_trace=QPicture();trace=QPainter(self._combo_trace)
         try:
             trace.setRenderHint(QPainter.RenderHint.Antialiasing)
             trace.setPen(missing_rate_pen(line));trace.setBrush(Qt.BrushStyle.NoBrush);trace.drawPath(missing)
+            if by_model:
+                trace.setPen(QPen(QColor(theme['panel']),3.2,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin))
+                trace.drawPath(solid)
             trace.setPen(QPen(QColor(line),1.8,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin));trace.drawPath(solid)
             # Isolated samples do not turn their unknown neighbours into data.
             for i,point in self._rate_points:

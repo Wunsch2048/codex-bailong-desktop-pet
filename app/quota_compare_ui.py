@@ -14,7 +14,7 @@ from choice_controls import ChoiceCombo
 from settings_controls import motion_enabled
 from card_motion import AnimatedDisclosure
 from project_cost_ui import ExplanationOverlay
-from quota_history import capacity_reference
+from quota_history import capacity_reference,cycle_label,REFERENCE_BADGE_MIN,STRICT_BADGE_REMAINING
 
 
 def date_text(stamp):
@@ -137,6 +137,7 @@ def cycle_messages(c,history,previous=None):
     elif c.get('rise_pending'):estimate_note='额度回升待确认'
     elif c.get('corrected'):estimate_note='额度读数曾回升，暂停估算'
     elif estimate:estimate_note='每 1% ≈ '+compact_tokens(round(c['per_percent']))+' Token' if c.get('per_percent') else '基于本机额度与 Token 记录估算'
+    elif c.get('reference_total'):estimate_note='已有初步参考，额度再下降一些后可估算总量'
     elif drop<5:
         estimate_note=(f'再观察 {5-drop:g} 个百分点可估算总量' if not c['closed'] else f'仅观察 {drop:g} 个百分点，未达估算门槛')
     else:estimate_note='缺少有效 Token 记录，暂不估算'
@@ -164,10 +165,10 @@ def cycle_messages(c,history,previous=None):
         else:reason=c['comparison_block'].split('，暂不判断涨跌')[0]+'。'
     elif c.get('change') is not None:
         change=c['change'];title=('推测容量减少 ' if change<0 else '推测容量增加 ' if change>0 else '推测容量基本持平')+(f'{abs(change):.1f}%' if change else '')
-        reason='相近使用条件下对照上一周期。'
+        reason=(c.get('comparison_reason') or '相近使用条件下对照上一周期')+'。'
     elif not estimate:title='有效用量不足';reason='缺少与额度读数对应的 Token，暂不能比较。'
     elif '套餐已变更' in c.get('comparison_reason',''):title='套餐变化，不直接比较';reason='改用当前套餐重新积累可比周期。'
-    else:title='上一周期暂不能用于比较';reason=c.get('comparison_reason') or '等待上一周期的有效记录。'
+    else:title='暂未找到可比周期';reason=c.get('comparison_reason') or '等待可比的历史记录。'
     if c.get('capacity_factor',1)>1:
         reason='本周期疑似扩容，已换算此前的额度读数。'+reason
     return dict(estimate=estimate_note,title=title,reason=reason,coverage=drop,show_coverage=show_coverage)
@@ -202,7 +203,8 @@ class QuotaCompareView(QWidget):
         self.capacity_pair=QWidget();pair=QHBoxLayout(self.capacity_pair)
         pair.setContentsMargins(0,0,0,0);pair.setSpacing(8)
         for title,name in [('本轮用法','current_capacity'),('上一轮用法','previous_capacity')]:
-            column=QVBoxLayout();column.setSpacing(1);column.addWidget(text_label(title))
+            column=QVBoxLayout();column.setSpacing(1);label=text_label(title);column.addWidget(label)
+            if name=='previous_capacity':self.baseline_title=label
             value=text_label('—',14,True);setattr(self,name,value);column.addWidget(value);pair.addLayout(column,1)
         box.addWidget(self.capacity_pair)
         self.reference=text_label('',12,True);self.reference.setObjectName('quota_reference_change');self.reference.setWordWrap(True);box.addWidget(self.reference)
@@ -225,7 +227,7 @@ class QuotaCompareView(QWidget):
         self.rules_button.setAccessibleName('展开估算与历史对比条件');set_theme_style(self.rules_button,'QToolButton{'+FONT_CSS+f'border:0;border-radius:6px;padding:4px 2px;color:{PRIMARY};font-size:11px;}}QToolButton:hover{{background:{PANEL};}}QToolButton:pressed{{background:{SELECTED};}}');layout.addWidget(self.rules_button,0,Qt.AlignmentFlag.AlignLeft)
         rules=QWidget();box=QVBoxLayout(rules);box.setContentsMargins(0,0,0,0);box.setSpacing(6)
         self.note=text_label('估算总量：已记录的额度下降达到 5 个百分点，且对应 Token 记录完整、额度新鲜、读数连续。');self.note.setWordWrap(True);box.addWidget(self.note)
-        conditions=text_label('仅对比上一周期：两轮均观察至少 20 个百分点、至少 3 个不同余额读数；同套餐与重置类型，且模型分布、缓存、输入输出、速度和推理档位接近。');conditions.setWordWrap(True);box.addWidget(conditions)
+        conditions=text_label(f'周剩余降到 {STRICT_BADGE_REMAINING}% 后才判断是否提醒涨跌。优先选最近的可比周期，两轮需有足够读数，且套餐、重置类型和用法相近。');conditions.setWordWrap(True);box.addWidget(conditions)
         caveat=text_label('参考差异：两轮各按当轮用法估算容量，再计算差异。模型混用或档位记录缺失也可查看，差异不代表官方额度调整。同条件判断：满足上述条件时才判断容量涨跌。缺失档位保持未知，不按默认档位补齐。');caveat.setWordWrap(True);box.addWidget(caveat)
         self.conditions=conditions;self.caveat=caveat
         self.quality=text_label();self.quality.setWordWrap(True);box.addWidget(self.quality)
@@ -287,17 +289,23 @@ class QuotaCompareView(QWidget):
         self.choice.setEnabled(bool(self.cycles));self.plot.set_data(self.cycles,self.selected_id)
         index=self.choice.currentIndex();self.previous.setEnabled(index>=0 and index<len(self.cycles)-1);self.next.setEnabled(index>0)
         older=self.cycles[index+1] if 0<=index<len(self.cycles)-1 else None
+        baseline=next((row for row in self.cycles if c and row['id']==c.get('baseline_cycle_id')),None)
+        older=baseline or older
         current_total=c.get('estimated_total') if c else None
         previous_total=older.get('estimated_total') if older else None
         self.capacity_pair.setVisible(bool(older and (current_total or previous_total)))
         self.current_capacity.setText(compact_tokens(current_total) if current_total else '—')
         self.previous_capacity.setText(compact_tokens(previous_total) if previous_total else '—')
+        self.baseline_title.setText('对照 '+datetime.fromtimestamp(older['start']).strftime('%m/%d') if older and older.get('start') else '对照周期')
         reference=capacity_reference(c,older,self.history.get('pending',False))
         change=reference['change']
         self.reference.setVisible(change is not None and (not c or c.get('change') is None or bool(c.get('comparison_block'))))
         self.reference.setText(('初步参考差异 ' if reference['preliminary'] else '参考差异 ')+
-                               (f'{change:+.1f}%' if change else '0.0%')+' · 按各自用法')
-        self.reference.setAccessibleDescription(reference['reason'])
+                               (f'{change:+.1f}%' if change else '0.0%')+
+                               (' · 未达卡片提示门槛' if change is not None and abs(change)<REFERENCE_BADGE_MIN else ' · 按各自用法'))
+        baseline_note=('对照'+cycle_label(older)+'。') if older else ''
+        self.reference.setToolTip(baseline_note+reference['reason'])
+        self.reference.setAccessibleDescription(baseline_note+reference['reason'])
         presentation=cycle_messages(c,self.history,older)
         self.estimate_hint.setText(presentation['estimate']);self.estimate_hint.setVisible(not c or not c.get('estimated_total'));self.comparison.setText(presentation['title']);self.comparison_reason.setText(presentation['reason'])
         self.coverage.setVisible(presentation['show_coverage']);self.coverage_text.setVisible(presentation['show_coverage'])

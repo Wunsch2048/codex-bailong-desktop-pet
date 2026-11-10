@@ -86,14 +86,22 @@ class QuotaHistoryTests(unittest.TestCase):
         rows=summarize_cycles(self.db,self.start+WEEK+172900)
         self.assertIsNone(rows[0]['change'])
         self.assertIn('模型',rows[0]['comparison_reason'])
-    def test_baseline_is_previous_cycle_not_median_or_an_older_match(self):
+    def test_baseline_prefers_previous_then_nearest_qualified_older_match(self):
         self.cycle(self.start,1200);self.cycle(self.start+WEEK,600);self.cycle(self.start+2*WEEK,300)
         rows=summarize_cycles(self.db,self.start+2*WEEK+172900)
         self.assertEqual(rows[0]['change'],-50);self.assertEqual(rows[0]['baseline'],rows[1]['estimated_total'])
         self.assertEqual(rows[0]['baseline_cycle_id'],rows[1]['id']);self.assertEqual(rows[0]['baseline_count'],1)
         self.db.execute("UPDATE usage SET model='model-b' WHERE stamp>? AND stamp<?",(self.start+WEEK,self.start+2*WEEK))
         rows=summarize_cycles(self.db,self.start+2*WEEK+172900)
-        self.assertIsNone(rows[0]['change']);self.assertIn('上一周期',rows[0]['comparison_reason'])
+        self.assertEqual(rows[0]['change'],-75)
+        self.assertEqual(rows[0]['baseline_cycle_id'],rows[2]['id'])
+        self.assertEqual(anomaly(rows,self.start+2*WEEK+172900)['baseline_cycle_id'],rows[2]['id'])
+        rows[1]['plan']='plus'
+        from quota_history import compare_cycles
+        compare_cycles(list(reversed(rows)))
+        self.assertIsNone(rows[0]['change'])
+        self.assertIn('套餐已变更',rows[0]['comparison_reason'])
+        self.assertIsNone(anomaly(rows,self.start+2*WEEK+172900))
     def test_higher_estimate_has_a_positive_change_notice(self):
         self.cycle(self.start,600);self.cycle(self.start+WEEK,1200)
         rows=summarize_cycles(self.db,self.start+WEEK+172900)
@@ -260,6 +268,8 @@ class QuotaHistoryTests(unittest.TestCase):
         now=self.start+WEEK+172900
         rows=summarize_cycles(self.db,now);alert=anomaly(rows,now)
         self.assertEqual(alert['change'],-50)
+        self.assertIsNone(anomaly([dict(rows[0],remaining=71),*rows[1:]],now))
+        self.assertEqual(anomaly([dict(rows[0],remaining=70),*rows[1:]],now)['change'],-50)
         for field,value in [('plan','plus'),('plan',''),('model','model-b'),
                 ('model_share',.72),('eligible',False),('complete',False),('corrected',True),('kind','extra')]:
             other=copy.deepcopy(rows);other[0][field]=value
@@ -304,7 +314,7 @@ class CapacityReferenceTests(unittest.TestCase):
         self.assertEqual(capacity_reference(self.cycle(estimated_total=2000),self.cycle())['change'],100)
     def test_unreliable_or_missing_estimates_do_not_produce_reference(self):
         from quota_history import capacity_reference
-        for changes in [dict(complete=False),dict(fresh=False),dict(drop=4),dict(corrected=True),dict(rise_pending=True),
+        for changes in [dict(complete=False),dict(fresh=False),dict(drop=0),dict(corrected=True),dict(rise_pending=True),
                         dict(estimated_total=0),dict(estimated_total=None),dict(estimated_total=True),
                         dict(estimated_total=float('nan')),dict(estimated_total=float('inf')),dict(plan=''),dict(plan='plus')]:
             for first in (True,False):

@@ -28,7 +28,9 @@ class MaterialsStub(QObject):
 class UpdatesStub(QObject):
     changed=Signal(object)
     job=None
-    def snapshot(self):return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None)
+    def snapshot(self):
+        """提供更新控件要求的平台能力，布局夹具模拟支持程序更新的 Windows"""
+        return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None,program_supported=True)
     def check(self):pass
     def download_install(self):pass
     def cancel(self):pass

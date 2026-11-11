@@ -69,9 +69,13 @@ def data_home(home=None):
         from wsl_codex import unc
         try:return Path(unc(saved['wsl_distro'],saved['wsl_home']))
         except (KeyError,ValueError):return Path(r'\\wsl$\Invalid-Bailong-Profile\__unconfigured__')
-    value=home or os.environ.get('BAILONG_CODEX_HOME') or os.environ.get('CODEX_HOME') or saved_paths().get('home') or user_environment('CODEX_HOME') or Path.home()/'.codex'
     from wsl_codex import unc_parts
-    if wsl_supported() and unc_parts(value):return Path(value)
+    supported=wsl_supported()
+    # Same priority as before; where WSL is unsupported, a leftover \\wsl$ value is skipped instead of shadowing later sources.
+    for source in (lambda:home,lambda:os.environ.get('BAILONG_CODEX_HOME'),lambda:os.environ.get('CODEX_HOME'),lambda:saved_paths().get('home'),lambda:user_environment('CODEX_HOME'),lambda:Path.home()/'.codex'):
+        value=source()
+        if value and (supported or not unc_parts(value)):break
+    if supported and unc_parts(value):return Path(value)
     return Path(os.path.expandvars(str(value).strip().strip('"'))).expanduser().resolve()
 
 def is_wsl_source(home=None):

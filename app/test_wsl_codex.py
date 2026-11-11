@@ -176,6 +176,27 @@ class WslPlatformGuardTests(unittest.TestCase):
             self.assertEqual(connection.data_home(),Path(home).resolve())
             self.assertEqual(connection.cli_command('codex','--version'),['codex','--version'])
             self.assertEqual(connection.child_environment()['CODEX_HOME'],str(Path(home).resolve()))
+    def test_macos_skips_leftover_wsl_homes_and_keeps_the_priority_order(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as user,tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.Path.home',return_value=Path(user)),patch.dict(os.environ,{}):
+            for key in ('BAILONG_CODEX_HOME','CODEX_HOME'):os.environ.pop(key,None)
+            # A Windows profile copied over with no valid environment override falls back to ~/.codex.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=unc)):
+                self.assertEqual(connection.data_home(),(Path(user)/'.codex').resolve())
+                self.assertEqual(connection.data_home(unc),(Path(user)/'.codex').resolve())
+            # A leftover \\wsl$ CODEX_HOME is skipped and the next source (the saved local home) wins.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':unc}):
+                self.assertEqual(connection.data_home(),Path(saved).resolve())
+            # A valid environment override still wins over the saved home.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=unc)),patch.dict(os.environ,{'BAILONG_CODEX_HOME':saved,'CODEX_HOME':unc}):
+                self.assertEqual(connection.data_home(),Path(saved).resolve())
+    def test_windows_still_uses_a_wsl_codex_home(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','win32'),patch('codex_connection.user_environment',return_value=''),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':unc}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            self.assertEqual(str(connection.data_home()),unc)
     def test_macos_rejects_saving_a_wsl_source(self):
         with patch('codex_connection.sys.platform','darwin'),patch('wsl_codex.validate',side_effect=AssertionError('WSL validation')):
             with self.assertRaisesRegex(ValueError,'WSL'):connection.validate_paths(PROFILE)

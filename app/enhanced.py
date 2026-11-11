@@ -64,7 +64,8 @@ class ActivityThread(QThread):
         self.today_total=LiveTodayTotal(self.token_index.path);self.tail.usage_observer=self.today_total.ingest;self.last_live_today=None
         self.week_cycle=None
         self.token_runs=RefreshRuns()
-        self.last_presence_scan=0;self.presence_reader=None;self.desktop_open=None;self.last_read_scan=0;self.seed_status_sent=False;self.last_name_scan=-10;self.conversation_names={}
+        self.last_presence_scan=0;self.presence_reader=None;self.desktop_open=None;self.last_read_scan=0;self.last_name_scan=-10;self.conversation_names={}
+        self.restored_turns=set()
         from session_read_state import ReadAcknowledgements
         self.read_acknowledgements=ReadAcknowledgements()
         self.live_reader=None;self.live_events=queue.SimpleQueue()
@@ -98,18 +99,10 @@ class ActivityThread(QThread):
                     self.presence_reader=threading.Thread(target=self.read_presence,name='BailongCodexPresence',daemon=True);self.presence_reader.start()
             try:
                 from session_read_state import session_id,active_conversations,conversation_names,terminal_conversations
-                from enhanced_core import Session
                 try:pending=json.loads((self.session_dir/'task-notifications.json').read_text(encoding='utf-8')).get('unread',[])
                 except (OSError,ValueError,AttributeError):pending=[]
                 pending=[k for k in pending if isinstance(k,list) and len(k)==2 and all(isinstance(v,str) for v in k)]
-                seeds=[]
                 history_due=time.monotonic()-self.last_active_scan>=15
-                if history_due:
-                    self.last_active_scan=time.monotonic();seeds=[] if self.wsl else active_conversations(self.tail.home)
-                    existing={session_id(s) for s in self.tail.reducer.sessions}
-                    for e in seeds:
-                        if session_id(e['session']) not in existing:
-                            self.tail.reducer.sessions[e['session']]=Session(title=e['title'],state='working',turn=e['turn'],done=False,updated=time.monotonic())
                 with self.context_lock:displayed=self.displayed;visited=self.visited
                 self.targets.sync(self.tail.reducer.sessions,pending,displayed,visited)
                 self.tail.set_pins(self.targets.pinned());batch=self.tail.poll()
@@ -122,15 +115,28 @@ class ActivityThread(QThread):
                     item['name']=self.conversation_names.get(session_id(item['session'])) or (record.title if record else '') or '会话 '+session_id(item['session'])[:8]
                 if live_rate!=self.last_output_rate:
                     self.last_output_rate=live_rate;self.event.emit(dict(kind='live_output_rate',value=live_rate))
-                if not self.seed_status_sent:
-                    self.seed_status_sent=True
-                    states={session_id(sid):v for sid,v in self.tail.reducer.sessions.items()}
-                    batch.extend(e for e in seeds if not states.get(session_id(e['session']),Session()).done)
+                if history_due:
+                    self.last_active_scan=time.monotonic()
+                if history_due and not self.wsl:
+                    seeds=active_conversations(self.tail.home,self.tail.continuations)
+                    aliases={session_id(sid):sid for sid in self.tail.reducer.sessions}
+                    restored=set();statuses=[]
+                    for event in seeds:
+                        sid=event['session'];key=(sid,event['turn'])
+                        if key in self.restored_turns:
+                            restored.add(key);continue
+                        alias=aliases.get(sid,sid)
+                        state=self.tail.reducer.restore_active(alias,event)
+                        if state:
+                            restored.add(key);statuses.append((alias,state))
+                    self.restored_turns=restored
+                    for alias,state in statuses:
+                        batch.append(dict(self.tail.reducer._status(alias,state),historical_snapshot=True))
                 self.targets.sync(self.tail.reducer.sessions,pending,displayed,visited)
                 if history_due and not self.wsl:
                     unfinished={session_id(sid):s.turn for sid,s in self.tail.reducer.sessions.items() if not s.done and not s.source_hidden and s.turn}
                     ids=self.targets.choose('terminal',128,unfinished)
-                    for sid,turn,status in terminal_conversations(self.tail.home,[(sid,unfinished[sid]) for sid in ids]):
+                    for sid,turn,status in terminal_conversations(self.tail.home,[(sid,unfinished[sid]) for sid in ids],self.tail.continuations):
                         batch.extend(self.tail.reducer.terminate(self.targets.alias(sid),status,turn))
                 self.live_reader.set_targets(self.targets.ipc_targets())
                 while not self.live_events.empty():
@@ -157,7 +163,7 @@ class ActivityThread(QThread):
                 if self.desktop_open is not True:self.read_acknowledgements.first_read.clear()
                 if self.desktop_open is True and time.monotonic()-self.last_read_scan>=2:
                     self.last_read_scan=time.monotonic()
-                    seen=self.read_acknowledgements.poll(self.tail.home,pending)
+                    seen=self.read_acknowledgements.poll(self.tail.home,pending,continuations=self.tail.continuations)
                     if seen:self.event.emit(dict(kind='read_receipts',seen=seen))
                 if time.monotonic()-self.last_health_scan>=10:
                     self.last_health_scan=time.monotonic()
@@ -214,7 +220,7 @@ class ActivityThread(QThread):
             if cycle:options['cycle']=cycle
             snapshot=self.token_index.poll(**options)
             self.today_total.reconcile(snapshot);snapshot['_live_today']=self.today_total.snapshot()
-            if (snapshot.get('quota_history') or {}).get('pending'):
+            if snapshot.get('scan_pending') or (snapshot.get('quota_history') or {}).get('pending'):
                 # Bound each import slice and allow the UI/status worker to run.
                 # Continue in five seconds without adding a GUI timer or scanner.
                 self.last_token_scan=min(self.last_token_scan,time.monotonic()-25)
@@ -235,7 +241,7 @@ class ActivityThread(QThread):
                 if terminal:self.event.emit(terminal)
                 if health:self.event.emit(health)
                 self.event.emit({'kind':'token_busy','busy':False,'run_id':run})
-        if snapshot and (snapshot.get('rates') or {}).get('pending'):
+        if snapshot and not snapshot.get('scan_pending') and (snapshot.get('rates') or {}).get('pending'):
             # Share the background index worker. Yield frequently and publish at most once/second.
             deadline=time.monotonic()+3;last_publish=0
             try:
@@ -246,7 +252,7 @@ class ActivityThread(QThread):
                     if not rates['pending']:break
                     self.stop.wait(.02)
             except Exception:pass  # The next regular poll retries; never discard usage totals.
-        if snapshot and (snapshot.get('projects') or {}).get('pending'):
+        if snapshot and not snapshot.get('scan_pending') and (snapshot.get('projects') or {}).get('pending'):
             from project_cost_drain import drain
             try:
                 drain(lambda:self.token_index.project_step(self.stop.is_set),
@@ -732,7 +738,8 @@ class EnhancedPet(Pet):
             self.bubble.set_live_today(snapshot.get('_live_today'),refresh=False)
             if snapshot.get('unavailable') and self.bubble.token_snapshot:
                 snapshot=dict(self.bubble.token_snapshot,partial=True,refresh_failed=True)
-            self.bubble.token_snapshot=snapshot;self.bubble.redraw();self.position_bubble()
+            self.bubble.token_snapshot=snapshot
+            if not self.bubble.refresh_token_snapshot():self.bubble.redraw();self.position_bubble()
             if self.bubble.report:self.bubble.report.set_snapshot(self.bubble.token_snapshot)
             self.refresh_flow.result('token',event.get('run_id'),not any(event['snapshot'].get(key) for key in ('unavailable','partial')))
         elif kind=='token_rate':
@@ -750,7 +757,7 @@ class EnhancedPet(Pet):
         elif kind=='token_usage_error':
             if self.bubble.token_snapshot:self.bubble.token_snapshot=dict(self.bubble.token_snapshot,partial=True,refresh_failed=True)
             else:self.bubble.token_snapshot=dict(month=time.strftime('%Y-%m'),days={},total=0,partial=True,unavailable=True)
-            self.bubble.redraw()
+            if not self.bubble.refresh_token_snapshot():self.bubble.redraw()
             if self.bubble.report:self.bubble.report.set_snapshot(self.bubble.token_snapshot)
             self.refresh_flow.result('token',event.get('run_id'),False)
         elif kind=='quota':self.update_quota(event['windows'],event['observed'],'session')

@@ -68,7 +68,7 @@ class PipelineTests(unittest.TestCase):
                 set_refresh_busy=Mock(),finish_refresh=Mock(),report=SimpleNamespace(
                     set_refresh_busy=Mock(),finish_refresh=Mock()),
                 set_token_busy=Mock(),set_live_today=Mock(),token_snapshot={'total':321,'report':{'total_tokens':321}},
-                redraw=Mock()),
+                redraw=Mock(),refresh_token_snapshot=Mock(return_value=False)),
             refresh_timeout=SimpleNamespace(start=Mock(),stop=Mock()),
             activity=None,position_bubble=Mock())
         pet._refresh_finished=lambda *args:EnhancedPet._refresh_finished(pet,*args)

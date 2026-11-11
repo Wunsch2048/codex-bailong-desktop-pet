@@ -6,7 +6,8 @@ from PySide6.QtCore import Qt,QRect,QRectF,QPoint,QPropertyAnimation,QEasingCurv
 from PySide6.QtGui import QPainter,QColor,QPen,QTextDocument,QCursor,QFontMetricsF
 from compact_bubble import font
 from theme_registry import palette
-from public_status import shared,bubble_position,service_colors
+from public_status import shared,service_colors
+from hover_hints import DETAIL_WIDTH,detail_position,detail_size
 from settings_controls import motion_enabled,play_animation
 
 def service_bubble(Base):
@@ -21,18 +22,18 @@ def service_bubble(Base):
             self.geometry_motion=QPropertyAnimation(self,b'geometry',self);self.geometry_motion.setDuration(200);self.geometry_motion.setEasingCurve(QEasingCurve.Type.OutCubic)
             self.setMouseTracking(True)
         def hint_size(self):
-            width=min(294,getattr(self,'width_limit',294));height=140 if len(self.rows)==2 else 64+max(1,len(self.rows))*38
+            width=getattr(self,'width_limit',DETAIL_WIDTH);height=64+max(1,len(self.rows))*self.row_height()
             if self.page=='service':height=round(self.doc.size().height())+42
-            return width,max(50,min(self.limit,height))
+            return width,min(self.limit,max(96,height))
         def inspect(self,value,host,page=None):
             opening=not self.isVisible();self.host=host;self.rows=list(value.get('details') or []);self.total=value.get('rate')
             if opening:self.page=page or 'sessions';self.scroll=0;self.detail_scroll=0
             elif page is not None:self.page=page
-            area=host.screen().availableGeometry();self.limit=max(50,min(340,area.height()-4));self.width_limit=max(50,min(294,area.width()-4))
+            self.width_limit,self.limit=detail_size(host.screen(),340)
             self.prepare_document();owner=host.window();report=getattr(owner,'report',None)
             if report is not None and report.isVisible():owner=report
-            anchor=QRect(host.mapToGlobal(QPoint()),host.size());card=QRect(host.window().mapToGlobal(QPoint()),host.window().size())
-            target=bubble_position(card,anchor,self.hint_size(),area);topmost=bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
+            anchor=QRect(host.mapToGlobal(QPoint()),host.size())
+            target=detail_position(host,anchor,self.hint_size());topmost=bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
             # Native flags/transient ownership are a hover-lifetime decision.
             # Reapplying them to an already visible Tool can hide its HWND.
             previous=getattr(self,'_placement',None)
@@ -52,7 +53,7 @@ def service_bubble(Base):
                     self.geometry_motion.setStartValue(old);self.geometry_motion.setEndValue(target);play_animation(self.geometry_motion)
                 else:self.setGeometry(target)
                 self._placement=placement
-            self.scroll=max(0,min(self.scroll,max(0,64+len(self.rows)*38-self.height())))
+            self.scroll=max(0,min(self.scroll,self.scroll_limit()))
             self.update();self.service.request()
             if opening and self.focusable:self.activateWindow();self.setFocus()
         def status_changed(self,value):
@@ -105,7 +106,9 @@ def service_bubble(Base):
                 center=baseline+QFontMetricsF(p.font(),p.device()).tightBoundingRect(value['title']).center().y()+.5
                 p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(dot));p.drawEllipse(QRectF(43,center-2.5,5,5));p.setPen(QColor(ink));p.drawText(54,baseline,value['title'])
                 checked=value.get('checked');stamp=datetime.fromtimestamp(checked).strftime('%H:%M') if checked else '未更新'
-                p.setPen(QColor(theme['muted']));p.drawText(QRectF(self.width()-80,y+2,69,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,stamp+(' ›' if self.focusable else ''));return
+                if self.focusable:
+                    p.setPen(QColor(theme['muted']));p.drawText(QRectF(self.width()-80,y+2,69,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,stamp+' ›')
+                return
             theme=palette();p=QPainter(self);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver);p.setOpacity(self.level);p.setRenderHint(QPainter.RenderHint.Antialiasing)
             p.setPen(QColor(theme['border']));p.setBrush(QColor(theme['surface']));p.drawRoundedRect(QRectF(1,1,self.width()-2,self.height()-2),9,9)
             p.setFont(font(11));p.setPen(QColor(theme['accentText']));p.drawText(11,21,'‹ 会话速率')

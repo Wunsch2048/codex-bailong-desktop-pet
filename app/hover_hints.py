@@ -1,6 +1,6 @@
 """Small non-activating bubbles shared by header actions and the quota tray."""
 from settings_controls import play_animation
-from theme_registry import color as theme_color
+from theme_registry import color as theme_color,palette
 import weakref
 from PySide6.QtCore import Qt,QObject,QEvent,QPoint,QRect,QRectF,QTimer,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QColor,QCursor,QFontMetrics,QPainter,QPainterPath,QPen
@@ -10,6 +10,8 @@ from ui_theme import SURFACE,INK,MUTED,BORDER
 from settings_controls import motion_enabled
 
 HOVER_DELAY_MS=500
+DETAIL_WIDTH=294
+DETAIL_MIN_HEIGHT=96
 _TRAY_HOOKS={}
 
 
@@ -66,7 +68,11 @@ class HintBubble(QWidget):
 
     def hint_size(self):
         metrics=QFontMetrics(self.font());width=max(metrics.horizontalAdvance(self.title),metrics.horizontalAdvance(self.subtitle))+22
-        return max(42,min(260,width)),50 if self.subtitle else 32
+        width=max(42,min(260,width))
+        if not self.subtitle:return width,32
+        flags=Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
+        height=metrics.boundingRect(QRect(0,0,width-22,1000),flags,self.subtitle).height()
+        return width,max(50,height+32)
 
     def _animate(self,target):
         self.animation.stop()
@@ -101,15 +107,58 @@ class HintBubble(QWidget):
         p.setFont(self.font());p.setPen(QColor(theme_color(INK)))
         if self.subtitle:
             p.drawText(body.adjusted(10,5,-10,-body.height()+23),Qt.AlignmentFlag.AlignVCenter,self.title)
-            p.setPen(QColor(theme_color(MUTED)));p.drawText(body.adjusted(10,22,-10,-4),Qt.AlignmentFlag.AlignVCenter,self.subtitle)
+            p.setPen(QColor(theme_color(MUTED)));p.drawText(body.adjusted(10,22,-10,-4),Qt.AlignmentFlag.AlignVCenter|Qt.TextFlag.TextWordWrap,self.subtitle)
         else:p.drawText(body,Qt.AlignmentFlag.AlignCenter,self.title)
         p.end()
+
+
+def detail_size(screen,height):
+    area=screen.availableGeometry()
+    return min(DETAIL_WIDTH,max(1,area.width()-4)),min(max(1,area.height()-4),max(DETAIL_MIN_HEIGHT,height))
+
+
+def detail_position(host,anchor,size):
+    from public_status import bubble_position
+    card=host.window()
+    return bubble_position(QRect(card.mapToGlobal(QPoint()),card.size()),anchor,size,host.screen().availableGeometry())
+
+
+class DetailHint(HintBubble):
+    def paint_detail(self,painter,value):
+        theme=palette()
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(),Qt.GlobalColor.transparent)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing);painter.setOpacity(self.level)
+        body=QRectF(1,1,self.width()-2,self.height()-2)
+        painter.setPen(QColor(theme['border']));painter.setBrush(QColor(theme['surface']));painter.drawRoundedRect(body,9,9)
+        painter.setFont(ui_font(11,True));painter.setPen(QColor(theme['ink']))
+        painter.drawText(QRectF(11,6,self.width()-22,21),Qt.AlignmentFlag.AlignVCenter,self.title)
+        painter.setPen(QColor(theme['accentText']))
+        painter.drawText(QRectF(11,6,self.width()-22,21),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignRight,value)
+        painter.setPen(QColor(theme['border']));painter.drawLine(11,30,self.width()-11,30)
+        return theme
+
+
+class HeaderHintBubble(DetailHint):
+    comparison_value=None
+    comparison_size=(DETAIL_WIDTH,DETAIL_MIN_HEIGHT)
+
+    def hint_size(self):
+        return super().hint_size() if self.comparison_value is None else self.comparison_size
+
+    def paintEvent(self,event):
+        if self.comparison_value is None:return super().paintEvent(event)
+        painter=QPainter(self);theme=self.paint_detail(painter,self.comparison_value)
+        painter.setFont(ui_font(11));painter.setPen(QColor(theme['muted']))
+        painter.drawText(QRectF(11,37,self.width()-22,self.height()-46),
+                         Qt.AlignmentFlag.AlignTop|Qt.TextFlag.TextWordWrap,self.subtitle)
 
 
 class HeaderHints(QObject):
     """Delay first entry, keep adjacent button changes and data refresh stable."""
     def __init__(self,bubble):
-        super().__init__(bubble);self.popup=HintBubble();self.target=None;self.rebuilding=False;self.role=None
+        super().__init__(bubble);self.popup=HeaderHintBubble();self.target=None;self.rebuilding=False;self.role=None
         self.delay=QTimer(self);self.delay.setSingleShot(True);self.delay.setInterval(HOVER_DELAY_MS);self.delay.timeout.connect(self._show)
         self.leave=QTimer(self);self.leave.setSingleShot(True);self.leave.setInterval(60);self.leave.timeout.connect(self.dismiss)
         self.watch=QTimer(self);self.watch.setInterval(100);self.watch.timeout.connect(self._check_hover)
@@ -122,6 +171,16 @@ class HeaderHints(QObject):
 
     def dismiss(self,immediate=False):
         self.delay.stop();self.leave.stop();self.watch.stop();self.target=None;self.rebuilding=False;self.role=None;self.popup.dismiss(immediate)
+
+    def _hint(self,widget):
+        detail=widget.property('quotaComparisonHint')
+        if detail:return str(widget.property('quotaComparisonTitle') or '额度对照'),str(detail)
+        return str(widget.property('headerActionHint') or '')[:4],''
+
+    def refresh_target(self,widget):
+        if not self.target or self.target() is not widget:return
+        if not widget.isVisible() or not self._hint(widget)[0]:self.dismiss(True)
+        elif self.popup.isVisible():self._show()
 
     def _check_hover(self):
         if self.rebuilding:return
@@ -139,7 +198,7 @@ class HeaderHints(QObject):
         if not self.rebuilding:return
         self.rebuilding=False;role=self.role;self.role=None
         for button in self.parent().findChildren(QWidget):
-            if not button.property('headerActionHint'):continue
+            if not self._hint(button)[0]:continue
             if button.objectName()==role and button.isVisible() and QRect(button.mapToGlobal(QPoint()),button.size()).contains(QCursor.pos()):
                 self.target=weakref.ref(button);self._show();return
         self.dismiss(True)
@@ -148,13 +207,25 @@ class HeaderHints(QObject):
         b=self.parent();button=self._target();transition=getattr(b,'size_transition',None)
         if button is None or not b.isVisible() or (transition and (transition.running or transition.preparing)):
             self.dismiss(True);return
-        text=str(button.property('headerActionHint') or '')[:4]
+        text,detail=self._hint(button)
         if not text:self.dismiss(True);return
         point=button.mapToGlobal(QPoint());anchor=QRect(point,button.size())
         report=getattr(b,'report',None)
         owner=report if report is not None and report.isVisible() else b
+        self.popup.comparison_value=button.property('quotaComparisonValue')
+        if self.popup.comparison_value is not None:
+            width,_=detail_size(button.screen(),DETAIL_MIN_HEIGHT)
+            flags=Qt.AlignmentFlag.AlignLeft|Qt.TextFlag.TextWordWrap
+            height=QFontMetrics(ui_font(11)).boundingRect(QRect(0,0,width-22,1000),flags,detail).height()+46
+            self.popup.comparison_size=detail_size(button.screen(),height)
+            target=detail_position(button,anchor,self.popup.comparison_size)
+            self.popup.present(text,detail,anchor,button.screen(),owner=owner,
+                               topmost=bool(b.windowFlags()&Qt.WindowType.WindowStaysOnTopHint),
+                               geometry=target,initial_level=1.)
+            self.watch.start()
+            return
         top=anchor.top() if button.objectName().startswith('theme_dot_') else b.mapToGlobal(QPoint()).y()
-        self.popup.present(text,'',anchor,button.screen(),card_top=top,
+        self.popup.present(text,detail,anchor,button.screen(),card_top=top,
                            topmost=bool(b.windowFlags()&Qt.WindowType.WindowStaysOnTopHint),owner=owner)
         self.watch.start()
 
@@ -172,8 +243,7 @@ class HeaderHints(QObject):
         if obj is not b and not b.isAncestorOf(obj):return False
         if kind==QEvent.Type.ToolTip:
             QToolTip.hideText();event.accept();return True
-        hint=obj.property('headerActionHint')
-        if not hint:return False
+        if not self._hint(obj)[0]:return False
         if self.rebuilding and kind in (QEvent.Type.Leave,QEvent.Type.Hide,QEvent.Type.ParentChange):return False
         if kind==QEvent.Type.Enter:
             self.leave.stop()

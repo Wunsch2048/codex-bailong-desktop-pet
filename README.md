@@ -2,21 +2,22 @@
 
 在桌面查看 Codex 任务状态、完成提醒、账户额度和 Token 用量，也可以让白龙陪你一起工作。支持仅卡片使用，人物动画按需下载。
 
-**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.6.3/bailong-desktop-pet-1.6.3-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
+**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.7.0/bailong-desktop-pet-1.7.0-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
 
-Windows 当前公开版 **v1.6.3**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
+Windows 当前公开版 **v1.7.0**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
 
 ![白龙桌宠封面](docs/media/cover.png)
 
 ## 最近更新
 
-- **会话与动作**：修复任务结束后仍显示忙碌、旧回合误结束当前任务的问题。历史任务补查时不再重复提醒，暂停走动也不会一直挡住随机动作。
-- **实时统计与成本**：忽略时间异常的用量记录，避免今日 Token 和实时速率停止更新。退出成本明细后，后台仍会读取最新数据。
-- **聊天与设置**：聊天历史、设置和重置公告暂时读不到时，保留原文件。设置只写入一次，避免提示保存失败后重启却读到新值。
-- **托盘与全屏**：托盘宿主断开后会自动尝试恢复。Codex 进程状态不明确时，桌宠不会因此重复启动。全屏检测暂时失败时，桌宠不会立刻弹回前景。
-- **更新与恢复**：取消下载后可以重试。改进动画目录回退、安装记录读取和统计数据库恢复，遇到权限问题时保留可恢复的文件。
+- **账号聊天**：Windows 新增「ChatGPT 套餐」预览，可在浏览器连接账号，也可继续使用自定义 API。改进了授权进度提示和模型列表加载。感谢 @pengxitai37-stack 在 #27 分享源码原型，浏览器授权和 Windows 本地凭据保存参考了这份实现。
+- **卡片动效**：「今日」和「实时」在两种卡片中逐位滚动，速率下降时向下翻。改进刷新时的闪烁、数字对齐和滚动边界。今日用量到 10B 才切换显示单位。
+- **用量图表**：日报和 24 小时图用不同颜色区分模型，悬停可看各模型用量和回合速率中位数。日报的成本入口更容易辨认。
+- **额度与浮窗**：周额度对照会寻找同套餐下更合适的历史周期，条件不足时给出黄色参考。实时和额度浮窗的布局、位置与信息格式更一致。
+- **状态与性能**：修复续写会话在重启后漏报、已读后完成提醒未消失的问题。减少 Token 汇总和图表刷新时的重复计算。
+- **Windows 兼容**：修复登录启动目录可能留下临时快捷方式的问题，改善远程桌面切换显示比例后人物与卡片错位。
 
-[查看 v1.6.3 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.6.3)
+[查看 v1.7.0 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.7.0)
 
 ## 主要功能
 

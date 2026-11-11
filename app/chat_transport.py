@@ -21,6 +21,10 @@ class ChatStream(QObject):
 
     def start(self, provider, key, messages):
         provider = normalize_provider(provider)
+        body=dict(model=provider['model'],messages=messages,stream=True)
+        self.post(endpoint_for(provider),key,body,provider['timeout'])
+
+    def post(self,url,key,payload,timeout):
         if not isinstance(key, str) or any(ord(c) < 32 or ord(c) == 127 for c in key):
             raise ProviderValidationError('API 密钥包含无效字符，请重新粘贴。', 'key')
         if self.reply is not None:
@@ -36,19 +40,19 @@ class ChatStream(QObject):
         self.mode = None
         self.prefix_pending = True
         self.skip_lf = False
-        request = QNetworkRequest(QUrl(endpoint_for(provider)))
+        request = QNetworkRequest(QUrl(url))
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, 'application/json')
         request.setRawHeader(b'Accept', b'text/event-stream, application/json')
         request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
                              QNetworkRequest.RedirectPolicy.ManualRedirectPolicy)
         if self.key:
             request.setRawHeader(b'Authorization', ('Bearer '+self.key).encode('utf-8'))
-        body = json.dumps(dict(model=provider['model'], messages=messages, stream=True), ensure_ascii=False).encode('utf-8')
+        body = json.dumps(payload,ensure_ascii=False).encode('utf-8')
         self.reply = self.manager.post(request, body)
         reply = self.reply
         reply.readyRead.connect(lambda: self.read(reply))
         reply.finished.connect(lambda: self.finish(reply))
-        self.timer.start(provider['timeout']*1000)
+        self.timer.start(timeout*1000)
 
     def read(self, reply):
         if self.cancelled or reply is not self.reply:
@@ -121,9 +125,9 @@ class ChatStream(QObject):
                 data = b'\n'.join(self.event_lines)
                 self.event_lines = []
                 self.event_size = 0
-                if data.strip() == b'[DONE]':
+                if data.strip() == b'[DONE]' and not self.requires_terminal_event:
                     self.complete_stream()
-                else:
+                elif data.strip() != b'[DONE]':
                     self.consume_event(data, streaming=True)
         elif line.startswith(b'data:'):
             data = line[5:]
@@ -231,3 +235,45 @@ class ChatStream(QObject):
         if self.reply:
             self.reply.abort()
         self.key = ''
+
+    requires_terminal_event=False
+
+
+class ChatGPTStream(ChatStream):
+    requires_terminal_event=True
+
+    def start(self,provider,key,messages):
+        from chatgpt_oauth import RESOURCE
+        payload=dict(model=provider['model'],input=[
+            dict(role=message['role'],content=message['content'])
+            for message in messages if message['role'] in ('user','assistant')
+        ],instructions=next((m['content'] for m in messages if m['role']=='system'),''),
+            store=False,stream=True)
+        self.post(RESOURCE+'/responses',key,payload,120)
+
+    def consume_event(self,data,streaming):
+        try:
+            event=json.loads(data)
+            if not isinstance(event,dict):raise ValueError()
+        except (ValueError,UnicodeError):
+            self.fail('无法读取 ChatGPT 流式回复，请重试。')
+            return
+        kind=event.get('type')
+        if kind in ('response.output_text.delta','response.refusal.delta'):
+            text=event.get('delta')
+            if not isinstance(text,str) or len(self.text)+len(text)>500000:
+                self.fail('ChatGPT 回复格式无效或内容过长。')
+                return
+            self.text+=text
+            self.delta.emit(text)
+        elif kind=='response.completed':
+            self.complete_stream()
+        elif kind in ('response.failed','response.incomplete','error') or event.get('error'):
+            response=event.get('response')
+            error=response.get('error') if isinstance(response,dict) else event.get('error',event)
+            code=error.get('code') if isinstance(error,dict) else ''
+            if code=='subscription_sharing_usage_limit_exceeded':
+                self.fail('ChatGPT 套餐用量已达上限。')
+            elif code=='subscription_sharing_usage_unavailable':
+                self.fail('当前账户暂无法使用 ChatGPT 套餐额度。')
+            else:self.fail('ChatGPT 未完成本次回复，请重试。')

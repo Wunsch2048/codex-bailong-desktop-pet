@@ -15,6 +15,16 @@ class ReadCompletionTests(unittest.TestCase):
  def test_missing_receipt_uses_exact_terminal_history_without_creating_database(self):
   self.assertEqual(seen_completed_turns(self.home,[('a','done')]),[('a','done')]);self.assertFalse((self.home/'state_5.sqlite').exists())
   self.assertEqual(seen_completed_turns(self.home,[('a','old'),('a','future')]),[('a','old')])
+ def test_continuation_acknowledges_only_verified_read_terminal_turn(self):
+  with closing(sqlite3.connect(self.home/'thread_history_1.sqlite',isolation_level=None)) as db:
+   db.executemany('INSERT INTO thread_turns VALUES(?,?,?,?)',[('page','continued','completed',3),('page','active','inProgress',4),('child','unrelated','completed',5)])
+  pending=[('a','continued'),('a','active'),('a','unrelated')]
+  self.assertFalse(seen_completed_turns(self.home,pending))
+  watcher=ReadAcknowledgements();aliases={'page':'a'}
+  for stamp,unread in [(100,[]),(104,['page']),(108,['a']),(112,[])]:
+   self.state(unread)
+   self.assertFalse(watcher.poll(self.home,pending,stamp,aliases))
+  self.assertEqual(watcher.poll(self.home,pending,116,aliases),pending[:1])
  def test_old_failed_reminder_clears_while_new_turn_is_running_only_after_read(self):
   with closing(sqlite3.connect(self.home/'thread_history_1.sqlite',isolation_level=None)) as db:
    db.execute("UPDATE thread_turns SET status='failed' WHERE turn_id='done'")

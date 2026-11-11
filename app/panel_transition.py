@@ -240,7 +240,8 @@ class PanelTransition(QObject):
             b.setFixedSize(target.size());b.move(target.topLeft());b.content.setVisible(b.isVisible());self.cover.hide()
             self.cover.image=None;self.cover.next_image=None;self.cover.blend=0.
             if b.report:b.report.follow.finish(target)
-            self.before=None;self.start_rect=None;self.old_surface=None;self.start_page_state=None;self.deferred=False;self.preparing=False;self._end_preparation();self._hold_icon(False);return
+            self.before=None;self.start_rect=None;self.old_surface=None;self.start_page_state=None;self.deferred=False;self.preparing=False;self._end_preparation();self._hold_icon(False)
+            b._refresh_today();return
         self.target_rect=target;b.layout.activate()
         # Let hidden target children run their normal Show/layout preparation
         # under the frozen native canvas. QTabWidget defers its internal pane
@@ -394,6 +395,7 @@ class PanelTransition(QObject):
             if guarded:self.post_handoff=refresh
             else:refresh()
     def start_reveals(self):
+        self.bubble._refresh_today()
         for widget in self.bubble.content.findChildren(QWidget):
             if widget.isVisible() and hasattr(widget,'start_reveal'):widget.start_reveal()
     def release_landing(self):
@@ -450,3 +452,4 @@ class PanelTransition(QObject):
             if self.bubble.isVisible():self.bubble.content.show()
         self._end_preparation()
         if self.landing.image is None:self._hold_icon(False)
+        if self.bubble.isVisible():self.bubble._refresh_today()

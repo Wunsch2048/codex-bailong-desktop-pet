@@ -36,11 +36,20 @@ class BubbleTests(unittest.TestCase):
                 self.assertEqual(view.animation.state(),view.animation.State.Stopped)
 
     def test_visible_normal_card_refresh_cannot_paint_half_rebuilt_content(self):
+        self.assert_atomic_status_refresh()
+
+    def test_visible_expanded_card_refresh_cannot_paint_half_rebuilt_content(self):
+        self.assert_atomic_status_refresh(expanded=True)
+
+    def assert_atomic_status_refresh(self,expanded=False):
         from unittest.mock import patch
         from PySide6.QtCore import QObject,QEvent
 
         b=self.bubble
         b.show();settle()
+        if expanded:
+            b.toggle_details();settle()
+        self.assertEqual(b.expanded,expanded)
         paints=[]
         class WatchPaint(QObject):
             def eventFilter(self,watched,event):

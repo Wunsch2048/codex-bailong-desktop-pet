@@ -2,10 +2,11 @@
 from theme_runtime import set_theme_style
 import copy
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
-from PySide6.QtCore import Qt,Signal,QTimer,QUrl,QRectF,QPointF
+from PySide6.QtCore import Qt,QObject,Signal,QTimer,QUrl,QRectF,QPointF
 from PySide6.QtGui import QTextCursor,QDesktopServices,QTextBlockFormat,QTextCharFormat,QColor,QPainter,QPainterPath,QPen,QFontMetricsF
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QPushButton,
     QPlainTextEdit,QTextEdit,QLabel,QCheckBox,QDialog,QFormLayout,QLineEdit,QSpinBox,QStackedWidget,QScrollArea,QMenu,QFrame,QToolButton)
@@ -14,7 +15,7 @@ from choice_controls import ChoiceCombo as QComboBox
 from number_controls import IntegerField as QSpinBox
 from inline_confirmation import InlineConfirmation
 from chat_config import (CHAT_DEFAULT,load_chat_config,save_chat_config,load_provider_key,
-    provider_key_present,clear_provider_key,delete_chat_provider)
+    provider_key_present,clear_provider_key,delete_chat_provider,select_chat_service)
 from chat_protocol import ProviderValidationError,normalize_provider,endpoint_for
 from ui_theme import hide_scrollbars
 from typography import FONT_CSS,ui_font
@@ -215,7 +216,27 @@ class SessionStore:
         except OSError:self.sessions.pop(0);raise
         return session
 
-from chat_transport import ChatStream
+from chat_transport import ChatStream,ChatGPTStream
+
+
+class AccountJob(QObject):
+    browser=Signal(str)
+    finished=Signal(object,str)
+    progress=Signal(str)
+
+    def __init__(self,parent):
+        super().__init__(parent)
+        self.cancelled=threading.Event()
+
+    def start(self,work):
+        def run():
+            try:value,error=work(self),''
+            except OSError as failure:value,error=None,str(failure)
+            except (ValueError,TypeError,ImportError,AttributeError):
+                value,error=None,'无法完成 ChatGPT 操作，请检查连接后重试。'
+            try:self.finished.emit(value,error)
+            except RuntimeError:pass  # The application can close during I/O.
+        threading.Thread(target=run,name='BailongChatGPT',daemon=True).start()
 
 class ProviderDialog(QDialog):
     def __init__(self,root,parent=None,embedded=False):
@@ -396,6 +417,7 @@ class ChatWindow(QWidget):
         self.session=self.store.sessions[0] if self.store.sessions else self.store.blank()
         if not self.store.sessions and not self.store.load_error:self.store.sessions.append(self.session)
         self.stream=None;self.partial='';self.busy=False;self.provider_dialog=None
+        self.account_job=None;self.account_preparing=False;self.chatgpt_models={}
         self._stream_pending=[];self._rendered_text='';self._rendered_session=None
         self.stream_timer=QTimer(self);self.stream_timer.setSingleShot(True);self.stream_timer.setInterval(33);self.stream_timer.timeout.connect(self.flush_stream)
         self.setWindowTitle('和白龙聊天');self.resize(580,650)
@@ -414,7 +436,7 @@ class ChatWindow(QWidget):
             menu.addAction(title,lambda checked=False,s=slot:QTimer.singleShot(0,self,s))
         manage.setMenu(menu);manage.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup);row.addWidget(manage)
         layout.addLayout(row);layout.addSpacing(5);self.sessions.currentIndexChanged.connect(self.switch)
-        self.service_button=QPushButton();self.service_button.setObjectName('chat_service');self.service_button.setFixedHeight(27);self.service_button.clicked.connect(self.provider)
+        self.service_button=QPushButton();self.service_button.setObjectName('chat_service');self.service_button.setFixedHeight(27);self.service_button.clicked.connect(self.show_service_menu)
         self.service_button.setAccessibleName('配置聊天服务');self.service_button.setCursor(Qt.CursorShape.PointingHandCursor)
         set_theme_style(self.service_button,'QPushButton{background:#f5f2f7;border:0;border-radius:7px;padding:0;min-height:27px;max-height:27px;}QPushButton:hover{background:#e8dff0;}')
         service_layout=QHBoxLayout(self.service_button);service_layout.setContentsMargins(8,0,8,0);service_layout.setSpacing(10)
@@ -446,15 +468,23 @@ class ChatWindow(QWidget):
         try:
             config=load_chat_config(self.root)
             service=next((p for p in config.get('providers',[]) if p['id']==config.get('active')),None)
-        except OSError:service=None
+        except OSError:config={};service=None
         self._service_name=service.get('name','聊天服务') if service else '设置聊天服务'
         self._service_model=service.get('model','') if service else '尚未配置'
+        if config.get('service')=='chatgpt':
+            from chatgpt_oauth import ChatGPTAccount
+            self._service_name='ChatGPT 套餐 · 预览'
+            model=config.get('chatgpt_model','')
+            try:
+                connected=bool(ChatGPTAccount(self.root).record())
+                self._service_model=self.chatgpt_models.get(model,'已连接') if connected else '待授权'
+            except OSError:self._service_model='授权不可读'
         self.service_button.setToolTip(self._service_name+' / '+self._service_model)
         self._fit_service_summary()
     def _fit_service_summary(self):
         from PySide6.QtGui import QFontMetrics
         f=ui_font(11);f.setPixelSize(10)
-        for widget,text in ((self.service_name,getattr(self,'_service_name','')), (self.service_model,getattr(self,'_service_model','')+'  ›')):
+        for widget,text in ((self.service_name,getattr(self,'_service_name','')), (self.service_model,getattr(self,'_service_model','')+'  ▾')):
             widget.setText(QFontMetrics(f).elidedText(text,Qt.TextElideMode.ElideRight,max(40,widget.width())))
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -488,13 +518,14 @@ class ChatWindow(QWidget):
     def render(self):
         self.stream_timer.stop();self._stream_pending.clear()
         messages=list(self.session['messages'])
-        if self.busy:messages.append(dict(role='assistant',content=self.partial))
+        if self.busy and not self.account_preparing:messages.append(dict(role='assistant',content=self.partial))
         text=self.transcript.set_message_layout(messages,self.busy)
         self._replace_text(text)
         self.transcript.refresh_theme_colors()
         self.send_button.setEnabled(not self.busy);self.send_button.setVisible(not self.busy)
         self.retry_button.setEnabled(not self.busy);self.retry_button.setVisible(bool(self.session['messages']) and not self.busy)
         self.stop_button.setEnabled(self.busy);self.stop_button.setVisible(self.busy)
+        self.service_button.setEnabled(not self.busy)
         self.transcript._position_actions()
     def flush_stream(self):
         self.stream_timer.stop()
@@ -536,6 +567,103 @@ class ChatWindow(QWidget):
         try:self.store.save()
         except OSError:self.store.sessions=previous;self.status.setText('删除失败，原会话已保留。');return
         self.session=remaining[0];self.reload();self.status.setText('会话已删除。')
+    def show_service_menu(self):
+        if self.busy:return
+        try:config=load_chat_config(self.root)
+        except OSError as error:self.status.setText(str(error));return
+        menu=QMenu(self.service_button)
+        set_theme_style(menu,'QMenu{'+FONT_CSS+'font-size:11px;color:#393343;background:#fcfafc;border:1px solid #ded2e7;padding:4px;}'
+            'QMenu::item{padding:6px 12px 6px 22px;border-radius:5px;}QMenu::item:selected{background:#e8dff0;}')
+        menu.aboutToHide.connect(menu.deleteLater)
+        for service,label in (('chatgpt','ChatGPT 套餐 · 预览'),('custom','自定义 API')):
+            action=menu.addAction(label);action.setCheckable(True);action.setChecked(config['service']==service)
+            action.triggered.connect(lambda checked=False,s=service:self.choose_service(s))
+        menu.addSeparator()
+        if config['service']=='chatgpt':
+            if self.account_job:
+                menu.addAction('取消授权',self.cancel_account_job)
+            else:
+                menu.addAction('Continue with ChatGPT',self.connect_account)
+                if self.chatgpt_models:
+                    models=menu.addMenu('选择模型')
+                    for slug,label in self.chatgpt_models.items():
+                        action=models.addAction(label);action.setCheckable(True);action.setChecked(config['chatgpt_model']==slug)
+                        action.triggered.connect(lambda checked=False,m=slug:self.choose_service('chatgpt',m))
+                menu.addAction('断开本机授权',self.disconnect_account)
+        else:menu.addAction('配置自定义 API…',self.provider)
+        menu.popup(self.service_button.mapToGlobal(self.service_button.rect().bottomLeft()))
+
+    def choose_service(self,service,model=None):
+        if self.busy:return
+        try:
+            config=load_chat_config(self.root)
+            if service!=config['service']:self.cancel_account_job()
+            if service!=config['service'] or model is not None:select_chat_service(self.root,service,model)
+            self.refresh_service_summary()
+            if service=='chatgpt':
+                from chatgpt_oauth import ChatGPTAccount
+                if not ChatGPTAccount(self.root).record():
+                    self.status.setText('在聊天服务菜单选择 Continue with ChatGPT 完成授权。')
+        except OSError as error:self.status.setText(str(error))
+
+    def launch_account_job(self,work,finished):
+        job=AccountJob(self)
+        self.account_job=job
+        def browser(url):
+            if self.account_job is job and not QDesktopServices.openUrl(QUrl(url)):
+                self.cancel_account_job()
+                self.status.setText('无法打开浏览器，请检查默认浏览器后重试。')
+        def complete(value,error):
+            job.deleteLater()
+            if self.account_job is not job:return
+            self.account_job=None
+            finished(value,error)
+        def progress(stage):
+            if self.account_job is not job:return
+            if stage=='connected':self.refresh_service_summary()
+            self.status.setText({
+                'exchange':'已收到浏览器授权，正在兑换凭据…',
+                'verify':'正在核验 ChatGPT 账户…',
+                'connected':'ChatGPT 已连接，正在获取模型…',
+            }[stage])
+        job.browser.connect(browser,Qt.ConnectionType.QueuedConnection)
+        job.finished.connect(complete,Qt.ConnectionType.QueuedConnection)
+        job.progress.connect(progress,Qt.ConnectionType.QueuedConnection)
+        job.start(work)
+
+    def connect_account(self):
+        if self.account_job or self.busy:return
+        from chatgpt_oauth import ChatGPTAccount
+        account=ChatGPTAccount(self.root)
+        def work(job):
+            account.login(job.browser.emit,job.cancelled.is_set,job.progress.emit)
+            job.progress.emit('connected')
+            if job.cancelled.is_set():return None
+            return account.models(account.access_token())
+        def finished(models,error):
+            if models:self.chatgpt_models=models
+            self.refresh_service_summary()
+            if error and self._service_model=='已连接':
+                self.status.setText('ChatGPT 已连接，模型列表暂不可用。发送时会重试。'+error)
+            else:self.status.setText(error or 'ChatGPT 已连接，可以发送消息。')
+        self.status.setText('请在浏览器完成 ChatGPT 授权。')
+        self.launch_account_job(work,finished)
+
+    def cancel_account_job(self):
+        job,self.account_job=self.account_job,None
+        if job:
+            job.cancelled.set()
+            self.status.setText('已取消 ChatGPT 操作。')
+
+    def disconnect_account(self):
+        if self.account_job or self.busy:return
+        from chatgpt_oauth import ChatGPTAccount
+        try:ChatGPTAccount(self.root).disconnect()
+        except OSError as error:self.status.setText(str(error));return
+        self.chatgpt_models={}
+        self.refresh_service_summary()
+        self.status.setText('已断开本机 ChatGPT 授权。')
+
     def provider(self):
         self.confirmation.cancel()
         if self.embedded:
@@ -571,17 +699,50 @@ class ChatWindow(QWidget):
         if self.store.load_error:self.status.setText(self.store.load_error);return
         try:config=load_chat_config(self.root)
         except OSError as error:self.status.setText('聊天配置无法读取，原文件和输入已保留。'+str(error));return
+        if config['service']=='chatgpt':
+            self.prepare_chatgpt(text,retry,config)
+            return
         provider=next((p for p in config.get('providers',[]) if p['id']==config.get('active')),None)
         if not provider:self.status.setText('请先在“聊天服务”中配置接口地址、模型和密钥。');self.provider();return
         try:provider=normalize_provider(provider);key=load_provider_key(self.root,provider)
         except ProviderValidationError as error:self.status.setText(str(error)+' 请在“聊天服务”中修改，输入已保留。');return
         except OSError as error:self.status.setText('无法读取聊天凭据，原文件和输入已保留。'+str(error));return
+        self.start_stream(ChatStream,provider,key,text,retry,config)
+
+    def prepare_chatgpt(self,text,retry,config):
+        if self.account_job:return
+        from chatgpt_oauth import ChatGPTAccount
+        account=ChatGPTAccount(self.root)
+        try:connected=bool(account.record())
+        except OSError as error:self.status.setText(str(error));return
+        if not connected:
+            self.status.setText('请先在聊天服务菜单连接 ChatGPT。')
+            return
+        cached=self.chatgpt_models.copy()
+        def work(job):
+            key=account.access_token()
+            return key,cached or account.models(key)
+        def ready(value,error):
+            self.account_preparing=False;self.busy=False
+            if error:self.status.setText(error);self.render();return
+            key,models=value
+            self.chatgpt_models=models
+            selected=config['chatgpt_model']
+            if selected and selected not in models:
+                self.status.setText('此前选择的模型已不可用，请在聊天服务菜单重新选择。');self.render();return
+            model=selected or next(iter(models))
+            self.start_stream(ChatGPTStream,dict(model=model),key,text,retry,config)
+        self.account_preparing=True;self.busy=True;self.partial=''
+        self.status.setText('正在连接 ChatGPT…');self.render()
+        self.launch_account_job(work,ready)
+
+    def start_stream(self,stream_type,provider,key,text,retry,config):
         messages=copy.deepcopy(self.session['messages'])
         if retry and messages and messages[-1]['role']=='assistant':messages.pop()
         if not retry:messages.append(dict(role='user',content=text))
         prompt=self.pet.manifest.get('systemPrompt') or config.get('system_prompt',CHAT_DEFAULT['system_prompt'])
         payload=[dict(role='system',content=prompt)]+trim_messages(messages,config.get('history_messages',40),config.get('history_chars',24000))
-        stream=ChatStream(self);self.stream=stream;self.partial='';self.busy=True
+        stream=stream_type(self);self.stream=stream;self.partial='';self.busy=True
         stream.delta.connect(lambda value:self.on_delta(stream,value));stream.done.connect(lambda value:self.on_done(stream,value))
         stream.failed.connect(lambda message:self.on_error(stream,message))
         try:stream.start(provider,key,payload)
@@ -615,11 +776,14 @@ class ChatWindow(QWidget):
         self.busy=False;self.stream=None;stream.deleteLater();self.status.setText(message+'；上条消息已保留，可重试。');self.render()
     def stop(self):
         self.stream_timer.stop();self._stream_pending.clear()
+        if self.account_preparing:
+            self.cancel_account_job()
+            self.account_preparing=False;self.busy=False
         if self.stream:
             stream=self.stream;self.stream=None;self.busy=False;stream.cancel();stream.deleteLater()
             self.status.setText('已停止；未完成回复没有加入历史。')
         self.partial='';self.render()
-    def closeEvent(self,event):self.stop();self.hide();event.ignore()
+    def closeEvent(self,event):self.cancel_account_job();self.stop();self.hide();event.ignore()
     def keyPressEvent(self,event):
         if self.embedded and event.key()==Qt.Key.Key_Escape:
             if self.confirmation.callback is not None:self.confirmation.cancel()
@@ -627,4 +791,4 @@ class ChatWindow(QWidget):
             else:self.pet.bubble.return_to_status()
             event.accept();return
         super().keyPressEvent(event)
-    def shutdown(self):self.stop();self.follow_timer.stop();self.hide()
+    def shutdown(self):self.cancel_account_job();self.stop();self.follow_timer.stop();self.hide()

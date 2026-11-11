@@ -50,16 +50,22 @@ def _plain(path):
         if parent.is_symlink() or parent.is_junction():raise OSError('快捷方式路径不能是链接或目录联接')
     return path
 
-def write_shortcut(path,exe,arguments='',description='白龙桌宠增强版'):
+def write_shortcut(path,exe,arguments='',description='白龙桌宠增强版',*,stage_dir=None):
     path=_plain(path);exe=Path(exe).absolute();path.parent.mkdir(parents=True,exist_ok=True)
-    temp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    stage_dir=_plain(stage_dir) if stage_dir is not None else path.parent
+    temp=stage_dir/(path.name+'.'+uuid.uuid4().hex+'.tmp')
     def save(link):
         from comtypes.persist import IPersistFile
         link.SetPath(str(exe));link.SetArguments(arguments);link.SetWorkingDirectory(str(exe.parent))
         link.SetDescription(description);link.SetIconLocation(str(exe),0);link.SetShowCmd(1)
         persistence=link.QueryInterface(IPersistFile);persistence.Save(str(temp),True)
-    _link_action(save)
-    os.replace(temp,path)
+    try:
+        _link_action(save)
+        os.replace(temp,path)
+    except BaseException:
+        try:temp.unlink(missing_ok=True)
+        except OSError:pass
+        raise
 
 def read_shortcut(path):
     path=_plain(path)
@@ -107,6 +113,26 @@ def _same_family(old,command,roots=()):
     allowed=[after.parent.parent.parent,*map(Path,roots)]
     return any(before.parent.parent==root/'versions' for root in allowed)
 
+def quarantine_startup_residue(path,command,roots=()):
+    """Move only verified leftovers from the old writer out of Startup."""
+    path=_plain(path)
+    if not path.parent.is_dir():return []
+    pattern=re.compile(re.escape(path.name)+r'\.[0-9a-f]{32}\.tmp',re.IGNORECASE)
+    moved=[]
+    for candidate in path.parent.iterdir():
+        if not pattern.fullmatch(candidate.name):continue
+        try:
+            info=read_shortcut(candidate)
+            old=[info['target']]+command_parts('unused '+info['arguments'])[1:]
+            if not _same_family(old,command,roots):continue
+            recovery=_plain(path.parent.parent/'.bailong-shortcut-recovery')
+            recovery.mkdir(exist_ok=True)
+            target=recovery/(uuid.uuid4().hex+'-'+candidate.name)
+            os.rename(candidate,target)
+            moved.append(target)
+        except OSError:continue
+    return moved
+
 def startup_entry(path,legacy,command,enabled,previous_root=None):
     """Prepare the replacement before retiring a strictly recognized old script."""
     path=Path(path);legacy=Path(legacy)
@@ -114,13 +140,14 @@ def startup_entry(path,legacy,command,enabled,previous_root=None):
     if path.exists():
         info=read_shortcut(path);old=[info['target']]+command_parts('unused '+info['arguments'])[1:]
         if not _same_family(old,command,roots):raise OSError('同名启动快捷方式不属于当前程序，已保留')
-    if enabled:write_shortcut(path,command[0],subprocess.list2cmdline([str(a) for a in command[1:]]))
+    if enabled:write_shortcut(path,command[0],subprocess.list2cmdline([str(a) for a in command[1:]]),stage_dir=path.absolute().parent.parent)
     elif path.exists():path.unlink()
     old=legacy_command(legacy)
     if _same_family(old,command,roots):
         # The exact app-specific legacy path and generated script grammar are
         # both checked; never execute or retire an arbitrary script.
         legacy.unlink()
+    quarantine_startup_residue(path,command,roots)
 
 def shell_folder(csidl):
     buffer=ctypes.create_unicode_buffer(32768)

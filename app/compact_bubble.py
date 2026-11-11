@@ -424,6 +424,13 @@ def source_button(parent=None,compact=False):
     button.clicked.connect(lambda:QDesktopServices.openUrl(QUrl(SOURCE_URL)));return button
 
 class CompactBubble(Bubble):
+    def event(self,event):
+        result=super().event(event)
+        if event.type()==QEvent.Type.DevicePixelRatioChange and hasattr(self,'_owner'):
+            owner=self.owner_pet()
+            if owner and hasattr(owner,'request_display_reflow'):owner.request_display_reflow()
+        return result
+
     def nativeEvent(self,event_type,message):
         from native_window_style import preserve_layered_style
         if preserve_layered_style(self,event_type,message):return True,0
@@ -883,7 +890,7 @@ class CompactBubble(Bubble):
         # Ordinary updates replace several visible child widgets. Keep the
         # last composed frame until the replacement layout is ready to paint.
         atomic_refresh = (
-            not self.expanded and self.enabled and self.isVisible()
+            self.enabled and self.isVisible()
             and self.host_visible() and not self.size_transition.preparing
             and self.updatesEnabled()
         )
@@ -1017,6 +1024,28 @@ class CompactBubble(Bubble):
         if previous is not None and key(value)<key(previous):return
         self.live_today_value=dict(value)
         if refresh:self._refresh_today()
+    def refresh_token_snapshot(self):
+        transition=self.size_transition
+        if transition.running or transition.preparing or self.panel_page!='status' or self.is_compact():
+            return False
+        deck=self.deck;quota=self.quota_summary_card
+        if deck is None or quota is None:return False
+        if self.expanded and (self._details_cache is None or self._details_key!=self._details_revision()
+                              or time.time()>=self._details_cache_until):
+            return False
+        inactive_deck=self._deck_cache.pop(not self.expanded,None)
+        if inactive_deck is not None:inactive_deck.deleteLater()
+        from quota_history import visible_quota_change
+        settings=getattr(self.owner_pet(),'settings',{})
+        quota.set_anomaly(visible_quota_change(self.token_snapshot,self.windows,
+            decline_threshold=settings.get('quota_decline_threshold',10),increase_threshold=settings.get('quota_increase_threshold',15)))
+        deck.snapshot=self.token_snapshot
+        chart=deck.pages.get('tokens')
+        if chart is not None:
+            chart.plot.set_data(self.token_snapshot,chart.period)
+            chart.setAccessibleDescription(chart.plot.accessibleDescription())
+        self._refresh_today()
+        return True
     def _refresh_today(self):
         if self.size_transition.running or self.size_transition.preparing:return
         today=getattr(self,'today_tokens_card',None)

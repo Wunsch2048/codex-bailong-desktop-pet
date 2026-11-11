@@ -100,7 +100,7 @@ class CostExtensionTests(unittest.TestCase):
         from public_status import PublicStatus
         from PySide6.QtNetwork import QNetworkReply
         from types import SimpleNamespace
-        service=PublicStatus();service.last=decode_status({'status':{'indicator':'none'}},now=123)
+        service=PublicStatus();service.last=decode_status({'status':{'indicator':'none'},'components':[dict(name='Codex in ChatGPT Desktop',status='operational')]},now=123)
         service.reply=SimpleNamespace(error=lambda:QNetworkReply.NetworkError.TimeoutError,deleteLater=lambda:None);service._finished();self.assertEqual(service.value['tone'],'unknown');self.assertEqual(service.value['previous']['checked'],123)
     def test_new_currency_requires_rate_and_does_not_save_one_by_accident(self):
         host=QWidget();self.widgets.append(host);host.resize(230,410);host.show();editor=PricingEditor(host);editor.currency.setCurrentIndex(editor.currency.findData('CNY'));editor.commit_draft();self.assertFalse(prefs.path().exists());self.assertIn('未保存',editor.status.text())

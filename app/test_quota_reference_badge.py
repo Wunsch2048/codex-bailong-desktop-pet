@@ -32,7 +32,7 @@ class ReferenceBadgeTests(unittest.TestCase):
           lambda s:s['quota_history']['cycles'].pop(),lambda s:s['quota_history']['cycles'][0].update(through=self.now-901),
           lambda s:s['quota_history']['cycles'][0].update(closed=True),
           lambda s:s['quota_history']['cycles'][0].update(plan='plus'),
-          lambda s:s['quota_history']['cycles'][0].update(drop=4),
+          lambda s:s['quota_history']['cycles'][0].update(drop=0),
           lambda s:s['quota_history']['cycles'][0].update(reset_at=self.deadline+3600)]
         for mutate in mutations:
             snapshot=copy.deepcopy(self.snapshot);mutate(snapshot)
@@ -43,6 +43,13 @@ class ReferenceBadgeTests(unittest.TestCase):
         self.snapshot['quota_history']['cycles'][0]['drop']=5
         badge=visible_quota_change(self.snapshot,self.windows,self.now)
         self.assertTrue(badge['preliminary']);self.assertIn('初步参考差异',badge['description'])
+    def test_yellow_hover_names_baseline_and_explains_why_it_is_a_reference(self):
+        current,previous=self.snapshot['quota_history']['cycles']
+        current['comparison_reason']='上一周期的重置类型不同，暂不比较'
+        previous['start']=self.now-86400
+        badge=visible_quota_change(self.snapshot,self.windows,self.now)
+        self.assertIn('重置类型不同',badge['description'])
+        self.assertIn('开始的周期',badge['description'])
     def test_all_themes_and_custom_surfaces_keep_text_contrast_on_all_button_states(self):
         cases=[(key,None) for key in NAMES if key!='custom']
         cases += [('custom',dict(theme_surface='#fafafa',theme_ink='#222222',theme_accent='#305080')),
@@ -73,9 +80,15 @@ class ReferenceBadgeTests(unittest.TestCase):
                             self.assertIn(palette()['referenceBg'],card.alert_badge.styleSheet())
                     finally:card.close();card.deleteLater();APP.processEvents()
         finally:activate(original,custom)
-    def test_rounded_zero_is_not_negative_or_positive_zero(self):
+    def test_small_difference_has_no_card_badge(self):
         self.snapshot['quota_history']['cycles'][0]['estimated_total']=999
-        card=QuotaSummary(self.windows,anomaly=visible_quota_change(self.snapshot,self.windows,self.now))
-        self.assertEqual(card.alert_badge.text(),'0%');card.deleteLater();APP.processEvents()
+        self.assertIsNone(visible_quota_change(self.snapshot,self.windows,self.now))
+
+    def test_first_observed_point_can_show_yellow_at_99_percent(self):
+        current=self.snapshot['quota_history']['cycles'][0]
+        current.update(remaining=99,drop=1,estimated_total=None,reference_total=1200)
+        badge=visible_quota_change(self.snapshot,[dict(self.windows[0],remaining=99)],self.now)
+        self.assertEqual((badge['kind'],badge['change']),('reference',20))
+        self.assertIn('读数取整',badge['description'])
 
 if __name__=='__main__':unittest.main()

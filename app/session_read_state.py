@@ -173,10 +173,12 @@ def read_tracking_probe(home):
         except (OSError,sqlite3.Error):pass
     return sample('degraded' if busy else 'unavailable','database_busy' if busy else 'read_schema')
 
-def seen_completed_turns(home,pending):
+def seen_completed_turns(home,pending,continuations=None):
     if not pending:return []
     home=Path(home);unread=read_unread_sessions(home)
     if unread is None:return []
+    aliases=continuations or {}
+    unread=unread|{aliases[s] for s in unread if s in aliases}
     keys=[(session_id(s),str(t)) for s,t in pending if session_id(s) not in unread and t]
     if not keys:return []
     published={}
@@ -193,15 +195,17 @@ def seen_completed_turns(home,pending):
     # failed/interrupted. Stable thread-level read evidence acknowledges those
     # old terminal notices too. Missing/unfinished/unknown turns stay pending.
     fallback=[(s,t) for s,t in keys if (s,t) not in accepted]
+    parents=set(aliases.values())
+    continued=[key for key in fallback if key[0] in parents]
+    if continued:
+        accepted.update((s,t) for s,t,_ in terminal_conversations(home,continued,aliases))
+        fallback=[key for key in fallback if key[0] not in parents]
     if fallback:
         try:
             with closing(sqlite3.connect((home/'thread_history_1.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
-                terminal=set()
                 for start in range(0,len(fallback),128):
                     chunk=fallback[start:start+128];slots=','.join('(?,?)' for _ in chunk)
-                    rows=db.execute("WITH pending(thread_id,turn_id) AS (VALUES "+slots+") SELECT a.thread_id,a.turn_id FROM thread_turns a JOIN pending p ON a.thread_id=p.thread_id AND a.turn_id=p.turn_id WHERE a.status IN ('completed','failed','interrupted')",[value for key in chunk for value in key])
-                    terminal.update(rows)
-            accepted.update(terminal)
+                    accepted.update(db.execute("WITH pending(thread_id,turn_id) AS (VALUES "+slots+") SELECT a.thread_id,a.turn_id FROM thread_turns a JOIN pending p ON a.thread_id=p.thread_id AND a.turn_id=p.turn_id WHERE a.status IN ('completed','failed','interrupted')",[value for key in chunk for value in key]))
         except (OSError,sqlite3.Error,ValueError):pass
     return [key for key in keys if key in accepted]
 
@@ -209,32 +213,50 @@ def seen_completed_turns(home,pending):
 class ReadAcknowledgements:
     """Wait for stable read evidence; reset on unread, unknown or a new turn."""
     def __init__(self,settle_seconds=4):self.first_read={};self.settle_seconds=settle_seconds
-    def poll(self,home,pending,now=None):
+    def poll(self,home,pending,now=None,continuations=None):
         now=time.monotonic() if now is None else now
-        candidates=seen_completed_turns(home,pending)
+        candidates=seen_completed_turns(home,pending,continuations)
         self.first_read={key:self.first_read.get(key,now) for key in candidates}
         return [key for key in candidates if now-self.first_read[key]>=self.settle_seconds]
 
-def terminal_conversations(home,pairs):
+def terminal_conversations(home,pairs,continuations=None):
     """Bounded exact-turn repair for a missed log/IPC terminal, read-only."""
     pairs=list(dict.fromkeys((session_id(s),str(t)) for s,t in pairs if s and t))[:128]
     if not pairs:return []
+    aliases=continuations or {}
+    wanted=set(pairs)
+    sources=[(branch,turn) for branch,parent in aliases.items() for sid,turn in pairs if sid==parent]
+    lookups=pairs+sources
+    latest={}
     try:
         with closing(sqlite3.connect((Path(home)/'thread_history_1.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
-            slots=','.join('(?,?)' for _ in pairs)
-            rows=db.execute("WITH wanted(thread_id,turn_id) AS (VALUES "+slots+") SELECT a.thread_id,a.turn_id,a.status FROM thread_turns a JOIN wanted p ON a.thread_id=p.thread_id AND a.turn_id=p.turn_id WHERE a.rollout_ordinal=(SELECT MAX(b.rollout_ordinal) FROM thread_turns b WHERE b.thread_id=a.thread_id AND b.turn_id=a.turn_id) AND a.status IN ('completed','failed','interrupted')",[v for pair in pairs for v in pair])
-            return list(rows)
+            for start in range(0,len(lookups),128):
+                batch=lookups[start:start+128];slots=','.join('(?,?)' for _ in batch)
+                rows=db.execute("WITH wanted(thread_id,turn_id) AS (VALUES "+slots+") SELECT a.thread_id,a.turn_id,a.status,a.rollout_ordinal FROM thread_turns a JOIN wanted p ON a.thread_id=p.thread_id AND a.turn_id=p.turn_id WHERE a.rollout_ordinal=(SELECT MAX(b.rollout_ordinal) FROM thread_turns b WHERE b.thread_id=a.thread_id AND b.turn_id=a.turn_id)",[v for pair in batch for v in pair])
+                for source,turn,status,ordinal in rows:
+                    sid=aliases.get(source,source)
+                    if (sid,turn) not in wanted:continue
+                    rank=(ordinal,source!=sid,source)
+                    if (sid,turn) not in latest or rank>latest[sid,turn][0]:latest[sid,turn]=(rank,status)
+        return [(sid,turn,status) for (sid,turn),(_,status) in latest.items() if status in ('completed','failed','interrupted')]
     except (OSError,sqlite3.Error,ValueError):return []
 
 
-def active_conversations(home):
+def active_conversations(home,continuations=None):
     home=Path(home)
+    aliases=continuations or {}
     try:
         with closing(sqlite3.connect((home/'thread_history_1.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
-            active=db.execute("SELECT thread_id,turn_id FROM thread_turns a WHERE status='inProgress' AND rollout_ordinal=(SELECT MAX(rollout_ordinal) FROM thread_turns b WHERE b.thread_id=a.thread_id)").fetchall()
+            rows=db.execute("SELECT thread_id,turn_id,status,rollout_ordinal FROM thread_turns a WHERE rollout_ordinal=(SELECT MAX(rollout_ordinal) FROM thread_turns b WHERE b.thread_id=a.thread_id)"+("" if aliases else " AND status='inProgress'")).fetchall()
         with closing(sqlite3.connect((home/'state_5.sqlite').as_uri()+'?mode=ro',uri=True,timeout=.1)) as db:
             eligible={sid:(name or title) for sid,name,title in db.execute("SELECT id,name,title FROM threads WHERE archived=0 AND (agent_path IS NULL OR agent_path='' OR agent_path='/root') AND (COALESCE(name,'')<>'' OR title<>'' OR has_user_event=1)")}
-        excluded=non_user_sessions(home,[sid for sid,turn in active])
-        eligible={sid:title for sid,title in eligible.items() if sid not in excluded}
-        return [dict(kind='status',session=sid,turn=turn,state='working',title=eligible[sid],text='任务正在进行',active=len([x for x,t in active if x in eligible]),historical_snapshot=True) for sid,turn in active if sid in eligible]
+        candidates=[(source,aliases.get(source,source),turn,status,ordinal) for source,turn,status,ordinal in rows if aliases.get(source,source) in eligible]
+        excluded=non_user_sessions(home,{sid for source,root,*_ in candidates for sid in (source,root)})
+        latest={}
+        for source,sid,turn,status,ordinal in candidates:
+            if source in excluded or sid in excluded:continue
+            rank=(ordinal,source!=sid,source)
+            if sid not in latest or rank>latest[sid][0]:latest[sid]=(rank,turn,status)
+        active=[(sid,turn) for sid,(_,turn,status) in latest.items() if status=='inProgress']
+        return [dict(kind='status',session=sid,turn=turn,state='working',title=eligible[sid],text='任务正在进行',active=len(active),historical_snapshot=True) for sid,turn in active]
     except (OSError,sqlite3.Error,ValueError):return []

@@ -12,7 +12,7 @@ from pathlib import Path
 from desktop_core import atomic_json
 from desktop_services import SecretStore
 
-CHAT_DEFAULT=dict(providers=[],active='',system_prompt='你是白龙娘，是陪伴用户工作的桌面伙伴。用自然、简洁的中文回应。',history_messages=40,history_chars=24000)
+CHAT_DEFAULT=dict(providers=[],active='',service='custom',chatgpt_model='',system_prompt='你是白龙娘，是陪伴用户工作的桌面伙伴。用自然、简洁的中文回应。',history_messages=40,history_chars=24000)
 
 
 def _invalid():
@@ -25,8 +25,9 @@ def _validated(value):
         result=copy.deepcopy(CHAT_DEFAULT);result.update(copy.deepcopy(value))
     except RecursionError:raise _invalid() from None
     if not isinstance(result['providers'],list):raise _invalid()
-    for name in ('active','system_prompt'):
+    for name in ('active','system_prompt','chatgpt_model'):
         if not isinstance(result[name],str):raise _invalid()
+    if result['service'] not in ('custom','chatgpt'):raise _invalid()
     for name,low,high in (('history_messages',2,200),('history_chars',1000,200000)):
         number=result[name]
         if type(number) is not int or not low<=number<=high:raise _invalid()
@@ -52,6 +53,13 @@ def load_chat_config(root):
     except (OSError,ValueError,UnicodeError,RecursionError):
         raise OSError('无法读取 chat.json；请检查权限或从用户数据备份恢复，原文件未改动。') from None
     return _validated(value)
+
+
+def select_chat_service(root,service,model=None):
+    config=load_chat_config(root)
+    config['service']=service
+    if model is not None:config['chatgpt_model']=model
+    atomic_json(Path(root)/'chat.json',_validated(config))
 
 
 def _store(root):

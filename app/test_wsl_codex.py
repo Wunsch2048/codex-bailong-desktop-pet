@@ -194,14 +194,29 @@ class WslPlatformGuardTests(unittest.TestCase):
     def test_macos_skips_quoted_padded_or_variable_wsl_homes(self):
         unc=wsl.unc('Ubuntu','/home/alice/.codex')
         with tempfile.TemporaryDirectory() as user,tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','darwin'),\
-             patch('codex_connection.Path.home',return_value=Path(user)),patch.dict(os.environ,{'BAILONG_OLD_WSL_HOME':unc}):
+             patch('codex_connection.Path.home',return_value=Path(user)),\
+             patch.dict(os.environ,{'BAILONG_OLD_WSL_HOME':unc,'BAILONG_OLD_QUOTED':'"'+unc+'"','BAILONG_OLD_PADDED':'  '+unc+'  ','BAILONG_OLD_BLANK':'   '}):
             os.environ.pop('BAILONG_CODEX_HOME',None)
-            for value in ('"'+unc+'"','  '+unc+'  ',' "'+unc+'" ','" '+unc+' "','$BAILONG_OLD_WSL_HOME','  ','""'):
+            # Direct values, and variables whose expansion is quoted, padded or blank.
+            for value in ('"'+unc+'"','  '+unc+'  ',' "'+unc+'" ','" '+unc+' "','$BAILONG_OLD_WSL_HOME','  ','""',
+                          '$BAILONG_OLD_QUOTED','$BAILONG_OLD_PADDED','$BAILONG_OLD_BLANK','"$BAILONG_OLD_QUOTED"'):
                 with self.subTest(value=value),patch.dict(os.environ,{'CODEX_HOME':value}):
                     with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)):
                         self.assertEqual(connection.data_home(),Path(saved).resolve())
                     with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=value)):
                         self.assertEqual(connection.data_home(),(Path(user)/'.codex').resolve())
+    def test_macos_resolves_the_same_cleaned_value_it_checked(self):
+        with tempfile.TemporaryDirectory() as saved,tempfile.TemporaryDirectory() as local,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'BAILONG_LOCAL_HOME':' "'+local+'" '}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            with patch.dict(os.environ,{'CODEX_HOME':'$BAILONG_LOCAL_HOME'}):self.assertEqual(connection.data_home(),Path(local).resolve())
+    def test_linux_keeps_the_original_chain_for_expanded_values(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','linux'),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':'$BAILONG_OLD_WSL_HOME','BAILONG_OLD_WSL_HOME':unc}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            # Off macOS the first non-empty source still wins and is resolved exactly as before.
+            self.assertEqual(connection.data_home(),Path(os.path.expandvars('$BAILONG_OLD_WSL_HOME')).expanduser().resolve())
     def test_windows_still_uses_a_wsl_codex_home(self):
         unc=wsl.unc('Ubuntu','/home/alice/.codex')
         with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','win32'),patch('codex_connection.user_environment',return_value=''),\

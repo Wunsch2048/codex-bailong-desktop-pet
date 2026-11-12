@@ -72,9 +72,14 @@ def data_home(home=None):
     from wsl_codex import unc_parts
     supported=wsl_supported()
     # Same priority as before; where WSL is unsupported, a leftover \\wsl$ value is skipped instead of shadowing later sources.
+    # It is judged after the same cleanup used below, so quotes, padding or variables cannot hide it.
+    def usable(value):
+        if supported:return True
+        value=os.path.expandvars(str(value).strip().strip('"').strip())
+        return bool(value) and not unc_parts(value)
     for source in (lambda:home,lambda:os.environ.get('BAILONG_CODEX_HOME'),lambda:os.environ.get('CODEX_HOME'),lambda:saved_paths().get('home'),lambda:user_environment('CODEX_HOME'),lambda:Path.home()/'.codex'):
         value=source()
-        if value and (supported or not unc_parts(value)):break
+        if value and usable(value):break
     if supported and unc_parts(value):return Path(value)
     return Path(os.path.expandvars(str(value).strip().strip('"'))).expanduser().resolve()
 

@@ -191,6 +191,17 @@ class WslPlatformGuardTests(unittest.TestCase):
             # A valid environment override still wins over the saved home.
             with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=unc)),patch.dict(os.environ,{'BAILONG_CODEX_HOME':saved,'CODEX_HOME':unc}):
                 self.assertEqual(connection.data_home(),Path(saved).resolve())
+    def test_macos_skips_quoted_padded_or_variable_wsl_homes(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as user,tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.Path.home',return_value=Path(user)),patch.dict(os.environ,{'BAILONG_OLD_WSL_HOME':unc}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            for value in ('"'+unc+'"','  '+unc+'  ',' "'+unc+'" ','" '+unc+' "','$BAILONG_OLD_WSL_HOME','  ','""'):
+                with self.subTest(value=value),patch.dict(os.environ,{'CODEX_HOME':value}):
+                    with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)):
+                        self.assertEqual(connection.data_home(),Path(saved).resolve())
+                    with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=value)):
+                        self.assertEqual(connection.data_home(),(Path(user)/'.codex').resolve())
     def test_windows_still_uses_a_wsl_codex_home(self):
         unc=wsl.unc('Ubuntu','/home/alice/.codex')
         with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','win32'),patch('codex_connection.user_environment',return_value=''),\

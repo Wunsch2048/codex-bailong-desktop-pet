@@ -2,7 +2,7 @@
 import json,os,shutil,subprocess,sys
 from pathlib import Path
 
-def settings_file():return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced/optional-tools.json'
+def settings_file():return __import__('platform_paths').data_dir()/'optional-tools.json'
 def find_ffmpeg():
     candidates=[os.environ.get('BAILONG_FFMPEG','')]
     try:candidates.append(json.loads(settings_file().read_text(encoding='utf-8')).get('ffmpeg',''))

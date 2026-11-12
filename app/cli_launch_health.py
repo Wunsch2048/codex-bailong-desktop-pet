@@ -8,7 +8,7 @@ STARTUP_ERRORS={'cli_native_exit','cli_startup_failed','cli_startup_timeout','cl
 
 def state_path(path=None):
     if path is False:return None
-    return Path(path) if path is not None else Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced/quota-cli-startup.json'
+    return Path(path) if path is not None else __import__('platform_paths').data_dir()/'quota-cli-startup.json'
 
 def identity(executable):
     path=Path(executable).resolve()

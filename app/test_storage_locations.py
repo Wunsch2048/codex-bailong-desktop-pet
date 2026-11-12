@@ -155,4 +155,36 @@ class ProgramMigrationTests(unittest.TestCase):
         self.assertFalse(list(exe.parent.glob('.ready-*.json')))
         self.assertTrue(self.old.is_file())
 
+class PlatformPathTests(unittest.TestCase):
+    """Every data-folder caller resolves through platform_paths; off macOS the result is the original LOCALAPPDATA expression."""
+    def callers(self):
+        import app_updates,cli_launch_health,codex_connection,codex_startup,cost_preferences,official_api_prices,optional_tools
+        return {'storage':locations.data_dir(),'codex_startup':codex_startup.data_dir(),'connection':codex_connection.paths_file().parent,
+                'cli_health':cli_launch_health.state_path().parent,'cost':cost_preferences.path().parent,
+                'api_prices':official_api_prices.cache_path().parent,'optional_tools':optional_tools.settings_file().parent}
+    def test_windows_and_linux_keep_the_localappdata_expression(self):
+        import platform_paths
+        with tempfile.TemporaryDirectory() as folder,patch('platform_paths.MACOS',False):
+            with patch.dict(os.environ,{'LOCALAPPDATA':folder}):
+                expected=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
+                for name,value in self.callers().items():
+                    with self.subTest(name=name):self.assertEqual(value,expected)
+                self.assertEqual(platform_paths.data_dir(Path(folder)/'root'),expected)
+            with patch.dict(os.environ,{},clear=False):
+                os.environ.pop('LOCALAPPDATA',None)
+                self.assertEqual(platform_paths.data_dir(),Path.home()/'BailongEnhanced')
+                # enhanced.py keeps its original fallback to the program root.
+                self.assertEqual(platform_paths.data_dir(Path(folder)),Path(folder)/'BailongEnhanced')
+    def test_macos_uses_application_support_unless_isolated(self):
+        import platform_paths
+        with tempfile.TemporaryDirectory() as folder,patch('platform_paths.MACOS',True):
+            with patch.dict(os.environ,{},clear=False):
+                os.environ.pop('LOCALAPPDATA',None)
+                expected=Path.home()/'Library/Application Support/BailongEnhanced'
+                for name,value in self.callers().items():
+                    with self.subTest(name=name):self.assertEqual(value,expected)
+                self.assertEqual(platform_paths.data_dir(Path(folder)),expected)
+            with patch.dict(os.environ,{'LOCALAPPDATA':folder}):
+                self.assertEqual(platform_paths.data_dir(),Path(folder)/'BailongEnhanced')
+
 if __name__=='__main__':unittest.main()

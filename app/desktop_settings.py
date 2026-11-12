@@ -49,6 +49,8 @@ class PathsJob(QThread):
         from codex_connection import validate_paths
         try:
             if self.values.get('operation')=='list_wsl':
+                from codex_connection import wsl_supported
+                if not wsl_supported():raise ValueError('macOS 不支持 WSL 连接来源。')
                 from wsl_codex import distributions
                 self.result.emit(distributions())
             else:self.result.emit(validate_paths(self.values))

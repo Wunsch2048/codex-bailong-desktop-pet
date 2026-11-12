@@ -1,4 +1,4 @@
-import io,json,os,subprocess,tempfile,unittest
+import io,json,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
@@ -8,6 +8,7 @@ import codex_connection as connection
 
 PROFILE=dict(source='wsl',home='',cli='',wsl_distro='Ubuntu',wsl_user='alice',wsl_home='/home/alice/.codex',wsl_cli='/home/alice/.nvm/versions/node/v22/bin/codex',wsl_path='/home/alice/.nvm/versions/node/v22/bin:/usr/local/bin:/usr/bin:/bin')
 
+@unittest.skipIf(sys.platform=='darwin','WSL sources are Windows-only; the macOS guard is covered by WslPlatformGuardTests')
 class WslCodexTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);wsl._cache.clear()
@@ -128,6 +129,7 @@ class WslCodexTests(unittest.TestCase):
         with patch('codex_connection.is_wsl_source',return_value=True),patch('threading.Thread') as launch:
             DesktopPet.poll_codex_presence(fake);launch.assert_not_called()
 
+@unittest.skipIf(sys.platform=='darwin','WSL sources are Windows-only; the macOS guard is covered by WslPlatformGuardTests')
 class WslSettingsTests(unittest.TestCase):
     import test_second_batch as fixtures
     setUp=fixtures.VisualInteractionTests.setUp
@@ -160,5 +162,82 @@ class WslSettingsTests(unittest.TestCase):
             s.validate_paths();self.finish(s)
         self.assertEqual(save.call_args.args[0]['source'],'wsl');self.assertEqual(s.wsl_fields['wsl_cli'].text(),PROFILE['wsl_cli'])
         self.assertIn('重启',s.path_status.text())
+
+class WslPlatformGuardTests(unittest.TestCase):
+    """Runs everywhere: a WSL profile copied from Windows never reaches wsl.exe on macOS; Windows and Linux keep WSL."""
+    def test_macos_ignores_a_saved_wsl_source(self):
+        import process_launch # imported before sys.platform is patched, as on a real host
+        with tempfile.TemporaryDirectory() as home,patch('codex_connection.sys.platform','darwin'),patch('codex_connection.saved_paths',return_value=PROFILE),\
+             patch.dict(os.environ,{'BAILONG_CODEX_HOME':home}),\
+             patch('wsl_codex.running',side_effect=AssertionError('wsl.exe probed')),patch('wsl_codex.command',side_effect=AssertionError('wsl.exe command')):
+            self.assertFalse(connection.wsl_supported())
+            self.assertFalse(connection.is_wsl_source())
+            self.assertFalse(connection.is_wsl_source(wsl.unc('Ubuntu','/home/alice/.codex')))
+            self.assertEqual(connection.data_home(),Path(home).resolve())
+            self.assertEqual(connection.cli_command('codex','--version'),['codex','--version'])
+            self.assertEqual(connection.child_environment()['CODEX_HOME'],str(Path(home).resolve()))
+    def test_macos_skips_leftover_wsl_homes_and_keeps_the_priority_order(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as user,tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.Path.home',return_value=Path(user)),patch.dict(os.environ,{}):
+            for key in ('BAILONG_CODEX_HOME','CODEX_HOME'):os.environ.pop(key,None)
+            # A Windows profile copied over with no valid environment override falls back to ~/.codex.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=unc)):
+                self.assertEqual(connection.data_home(),(Path(user)/'.codex').resolve())
+                self.assertEqual(connection.data_home(unc),(Path(user)/'.codex').resolve())
+            # A leftover \\wsl$ CODEX_HOME is skipped and the next source (the saved local home) wins.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':unc}):
+                self.assertEqual(connection.data_home(),Path(saved).resolve())
+            # A valid environment override still wins over the saved home.
+            with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=unc)),patch.dict(os.environ,{'BAILONG_CODEX_HOME':saved,'CODEX_HOME':unc}):
+                self.assertEqual(connection.data_home(),Path(saved).resolve())
+    def test_macos_skips_quoted_padded_or_variable_wsl_homes(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as user,tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.Path.home',return_value=Path(user)),\
+             patch.dict(os.environ,{'BAILONG_OLD_WSL_HOME':unc,'BAILONG_OLD_QUOTED':'"'+unc+'"','BAILONG_OLD_PADDED':'  '+unc+'  ','BAILONG_OLD_BLANK':'   '}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            # Direct values, and variables whose expansion is quoted, padded or blank.
+            for value in ('"'+unc+'"','  '+unc+'  ',' "'+unc+'" ','" '+unc+' "','$BAILONG_OLD_WSL_HOME','  ','""',
+                          '$BAILONG_OLD_QUOTED','$BAILONG_OLD_PADDED','$BAILONG_OLD_BLANK','"$BAILONG_OLD_QUOTED"'):
+                with self.subTest(value=value),patch.dict(os.environ,{'CODEX_HOME':value}):
+                    with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)):
+                        self.assertEqual(connection.data_home(),Path(saved).resolve())
+                    with patch('codex_connection.saved_paths',return_value=dict(source='windows',home=value)):
+                        self.assertEqual(connection.data_home(),(Path(user)/'.codex').resolve())
+    def test_macos_resolves_the_same_cleaned_value_it_checked(self):
+        with tempfile.TemporaryDirectory() as saved,tempfile.TemporaryDirectory() as local,patch('codex_connection.sys.platform','darwin'),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'BAILONG_LOCAL_HOME':' "'+local+'" '}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            with patch.dict(os.environ,{'CODEX_HOME':'$BAILONG_LOCAL_HOME'}):self.assertEqual(connection.data_home(),Path(local).resolve())
+    def test_linux_keeps_the_original_chain_for_expanded_values(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','linux'),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':'$BAILONG_OLD_WSL_HOME','BAILONG_OLD_WSL_HOME':unc}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            # Off macOS the first non-empty source still wins and is resolved exactly as before.
+            self.assertEqual(connection.data_home(),Path(os.path.expandvars('$BAILONG_OLD_WSL_HOME')).expanduser().resolve())
+    def test_windows_still_uses_a_wsl_codex_home(self):
+        unc=wsl.unc('Ubuntu','/home/alice/.codex')
+        with tempfile.TemporaryDirectory() as saved,patch('codex_connection.sys.platform','win32'),patch('codex_connection.user_environment',return_value=''),\
+             patch('codex_connection.saved_paths',return_value=dict(source='windows',home=saved)),patch.dict(os.environ,{'CODEX_HOME':unc}):
+            os.environ.pop('BAILONG_CODEX_HOME',None)
+            self.assertEqual(str(connection.data_home()),unc)
+    def test_macos_rejects_saving_a_wsl_source(self):
+        with patch('codex_connection.sys.platform','darwin'),patch('wsl_codex.validate',side_effect=AssertionError('WSL validation')):
+            with self.assertRaisesRegex(ValueError,'WSL'):connection.validate_paths(PROFILE)
+    def test_macos_settings_do_not_list_wsl_distributions(self):
+        from desktop_settings import PathsJob
+        job=PathsJob(dict(operation='list_wsl'));failed=[]
+        job.failed.connect(failed.append);job.result.connect(lambda value:self.fail('listed WSL distributions'))
+        with patch('codex_connection.sys.platform','darwin'),patch('wsl_codex.distributions',side_effect=AssertionError('wsl.exe --list')):job.run()
+        self.assertEqual(len(failed),1);self.assertIn('WSL',failed[0])
+    def test_windows_and_linux_keep_the_wsl_source(self):
+        for platform in ('win32','linux'):
+            with self.subTest(platform=platform),patch('codex_connection.sys.platform',platform),patch('codex_connection.saved_paths',return_value=PROFILE):
+                self.assertTrue(connection.wsl_supported())
+                self.assertTrue(connection.is_wsl_source())
+                self.assertEqual(str(connection.data_home()),wsl.unc('Ubuntu','/home/alice/.codex'))
+                self.assertTrue(connection.is_wsl_source(connection.data_home()))
 
 if __name__=='__main__':unittest.main()

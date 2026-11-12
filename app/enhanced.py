@@ -38,7 +38,8 @@ from token_calendar import TokenUsageIndex
 from refresh_flow import RefreshCoordinator, RefreshRuns
 from hover_hints import TrayHints
 
-STATE_DIR=Path(os.environ.get('LOCALAPPDATA',str(ROOT)))/'BailongEnhanced'
+from platform_paths import data_dir
+STATE_DIR=data_dir(ROOT)
 STATE_DIR.mkdir(parents=True,exist_ok=True)
 CONFIG=STATE_DIR/'settings.json'
 

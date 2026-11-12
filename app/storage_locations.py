@@ -4,7 +4,7 @@ from pathlib import Path,PurePosixPath
 
 MARKER='.bailong-storage.json'
 
-def data_dir():return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
+def data_dir():return __import__('platform_paths').data_dir()
 
 
 def configure_data_environment():

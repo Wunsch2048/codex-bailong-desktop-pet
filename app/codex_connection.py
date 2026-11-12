@@ -4,7 +4,8 @@ from pathlib import Path
 from functools import lru_cache
 
 def paths_file():
-    return Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced/connection-paths.json'
+    from platform_paths import data_dir
+    return data_dir()/'connection-paths.json'
 
 @lru_cache(maxsize=8)
 def _saved_paths(filename):
@@ -17,15 +18,21 @@ def _saved_paths(filename):
 
 def saved_paths():return dict(_saved_paths(str(paths_file())))
 
+def wsl_supported():
+    # WSL sources exist only on Windows; a profile or UNC path copied from
+    # Windows must never route a macOS host through wsl.exe.
+    return sys.platform!='darwin'
+
 def validate_paths(values):
     if values.get('source')=='wsl':
+        if not wsl_supported():raise ValueError('macOS 不支持 WSL 连接来源。')
         from wsl_codex import validate
         return validate(values)
     result={key:str(values.get(key,'')).strip().strip('"') for key in ('home','cli')}
     if 'source' in values:result.update({key:str(values.get(key,'')) for key in ('source','wsl_distro','wsl_user','wsl_home','wsl_cli','wsl_path')});result['source']='windows'
     if result['home']:
         from wsl_codex import unc_parts
-        if unc_parts(result['home']):raise ValueError('这是 WSL 数据目录，请先将连接来源切换为 WSL。')
+        if wsl_supported() and unc_parts(result['home']):raise ValueError('这是 WSL 数据目录，请先将连接来源切换为 WSL。')
         home=Path(os.path.expandvars(result['home'])).expanduser().resolve()
         if not home.is_dir() or not any((home/name).exists() for name in ('sessions','archived_sessions','state_5.sqlite','.codex-global-state.json')):
             raise ValueError('请选择 Codex 数据目录，其中应包含 sessions、state_5.sqlite 或本地状态文件。')
@@ -58,16 +65,27 @@ def user_environment(name):
 
 def data_home(home=None):
     saved=saved_paths()
-    if home is None and saved.get('source')=='wsl':
+    if home is None and wsl_supported() and saved.get('source')=='wsl':
         from wsl_codex import unc
         try:return Path(unc(saved['wsl_distro'],saved['wsl_home']))
         except (KeyError,ValueError):return Path(r'\\wsl$\Invalid-Bailong-Profile\__unconfigured__')
-    value=home or os.environ.get('BAILONG_CODEX_HOME') or os.environ.get('CODEX_HOME') or saved_paths().get('home') or user_environment('CODEX_HOME') or Path.home()/'.codex'
     from wsl_codex import unc_parts
+    if not wsl_supported():
+        # Same priority as the chain below, but a value that is blank or a leftover \\wsl$ path once
+        # cleaned is skipped instead of shadowing later sources. The cleaned value is also
+        # the one resolved, so the check and the result cannot disagree.
+        def clean(value):
+            unquote=lambda text:text.strip().strip('"').strip()
+            return unquote(os.path.expandvars(unquote(str(value))))
+        for source in (lambda:home,lambda:os.environ.get('BAILONG_CODEX_HOME'),lambda:os.environ.get('CODEX_HOME'),lambda:saved_paths().get('home'),lambda:user_environment('CODEX_HOME'),lambda:Path.home()/'.codex'):
+            value=source();value=clean(value) if value else ''
+            if value and not unc_parts(value):return Path(value).expanduser().resolve()
+    value=home or os.environ.get('BAILONG_CODEX_HOME') or os.environ.get('CODEX_HOME') or saved_paths().get('home') or user_environment('CODEX_HOME') or Path.home()/'.codex'
     if unc_parts(value):return Path(value)
     return Path(os.path.expandvars(str(value).strip().strip('"'))).expanduser().resolve()
 
 def is_wsl_source(home=None):
+    if not wsl_supported():return False
     if home is None:return saved_paths().get('source')=='wsl'
     from wsl_codex import unc_parts
     return unc_parts(home) is not None
@@ -177,7 +195,8 @@ def check_connection(query_quota=True,cancel=None):
             code=getattr(error,'code','unavailable');code=code if code in ('authentication','network','timeout','cli_missing','wsl_stopped') else 'unavailable'
             report['quota_error_code']=code;report['capabilities']['quota']=sample('unavailable',code)
     elif not report['cli_found']:report['capabilities']['quota']=sample('unavailable','cli_missing')
-    root=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'BailongEnhanced'
+    from platform_paths import data_dir
+    root=data_dir()
     try:
         config=json.loads((root/'chat.json').read_text(encoding='utf-8'));report['chat_configured']=bool(config.get('providers'))
     except (OSError,ValueError):report['chat_configured']=False

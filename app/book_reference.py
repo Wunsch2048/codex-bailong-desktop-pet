@@ -5,7 +5,8 @@ from pathlib import Path
 
 @lru_cache(maxsize=1)
 def catalog():
-    root=Path(sys.executable).resolve().parent/'app' if getattr(sys,'frozen',False) else Path(__file__).resolve().parent
+    from platform_paths import app_root
+    root=app_root()/'app'
     return json.loads((root/'book_catalog.json').read_text(encoding='utf-8'))
 
 def analogy(total,index=0):

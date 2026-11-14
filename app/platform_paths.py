@@ -1,4 +1,4 @@
-"""Per-platform user data folder.
+"""Per-platform user data folder and program root.
 
 Windows and Linux keep the original LOCALAPPDATA expression unchanged. Only
 macOS, where LOCALAPPDATA is normally unset, falls back to Application Support.
@@ -18,3 +18,14 @@ def local_appdata(fallback=None):
     return Path(os.environ.get('LOCALAPPDATA',str(Path.home() if fallback is None else fallback)))
 
 def data_dir(fallback=None):return local_appdata(fallback)/APP_ID
+
+def app_root():
+    """Folder holding app/ and outputs/: the source tree, the frozen program folder, or a macOS bundle's Resources.
+
+    Windows and Linux keep the original expression unchanged:
+    Path(sys.executable).resolve().parent if frozen else Path(__file__).resolve().parents[1]
+    """
+    if getattr(sys,'frozen',False):
+        exe=Path(sys.executable).resolve()
+        return exe.parents[1]/'Resources' if MACOS and exe.parent.name=='MacOS' else exe.parent
+    return Path(__file__).resolve().parents[1]

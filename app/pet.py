@@ -13,7 +13,8 @@ from quota import read_quota, quota_windows
 from version import VERSION
 from typography import FONT_CSS
 
-ROOT=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]
+from platform_paths import app_root
+ROOT=app_root()
 ASSETS=ROOT/'outputs/白龙桌宠素材'
 FLAGS=Qt.WindowType.FramelessWindowHint|Qt.WindowType.WindowStaysOnTopHint|Qt.WindowType.Tool
 

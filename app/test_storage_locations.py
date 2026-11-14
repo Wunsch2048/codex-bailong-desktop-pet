@@ -1,5 +1,5 @@
 """Isolated migration integrity, custom locations and recovery boundaries."""
-import json,os,tempfile,unittest
+import json,os,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch,Mock
 import storage_locations as locations
@@ -186,5 +186,44 @@ class PlatformPathTests(unittest.TestCase):
                 self.assertEqual(platform_paths.data_dir(Path(folder)),expected)
             with patch.dict(os.environ,{'LOCALAPPDATA':folder}):
                 self.assertEqual(platform_paths.data_dir(),Path(folder)/'BailongEnhanced')
+
+class AppRootTests(unittest.TestCase):
+    """pet, typography, autostart and book_reference share app_root; off macOS it is the expression they used before."""
+    def original(self):
+        import platform_paths
+        return Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(platform_paths.__file__).resolve().parents[1]
+    def test_source_tree_is_the_repository_root_on_every_platform(self):
+        import platform_paths
+        for macos in (False,True):
+            with self.subTest(macos=macos),patch('platform_paths.MACOS',macos):
+                self.assertFalse(getattr(sys,'frozen',False))
+                self.assertEqual(platform_paths.app_root(),self.original())
+                self.assertEqual(platform_paths.app_root(),Path(locations.__file__).resolve().parents[1])
+    def test_frozen_windows_and_linux_keep_the_executable_folder(self):
+        import platform_paths
+        with tempfile.TemporaryDirectory() as folder:
+            # A folder literally named MacOS must not change the result off macOS.
+            for parts in ('versions/1.7.0/BailongEnhanced.exe','BailongEnhanced/BailongEnhanced','Contents/MacOS/BailongEnhanced'):
+                exe=Path(folder)/parts
+                with self.subTest(exe=parts),patch('platform_paths.MACOS',False),patch('sys.frozen',True,create=True),patch('sys.executable',str(exe)):
+                    self.assertEqual(platform_paths.app_root(),self.original())
+                    self.assertEqual(platform_paths.app_root(),exe.resolve().parent)
+    def test_frozen_macos_bundle_uses_resources(self):
+        import platform_paths
+        with tempfile.TemporaryDirectory() as folder:
+            exe=Path(folder)/'BailongEnhanced.app/Contents/MacOS/BailongEnhanced'
+            with patch('platform_paths.MACOS',True),patch('sys.frozen',True,create=True),patch('sys.executable',str(exe)):
+                self.assertEqual(platform_paths.app_root(),exe.resolve().parents[1]/'Resources')
+            # Outside a bundle layout the executable folder is kept.
+            plain=Path(folder)/'dist/BailongEnhanced/BailongEnhanced'
+            with patch('platform_paths.MACOS',True),patch('sys.frozen',True,create=True),patch('sys.executable',str(plain)):
+                self.assertEqual(platform_paths.app_root(),plain.resolve().parent)
+    def test_callers_resolve_through_app_root(self):
+        import autostart,book_reference,pet,platform_paths,typography
+        root=platform_paths.app_root()
+        for module in (autostart,pet,typography):
+            with self.subTest(module=module.__name__):self.assertEqual(module.ROOT,root)
+        self.assertTrue((root/'app/book_catalog.json').is_file())
+        self.assertTrue(book_reference.catalog()['books'])
 
 if __name__=='__main__':unittest.main()

@@ -4,7 +4,8 @@ from pathlib import Path
 from datetime import datetime
 import psutil
 
-ROOT=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]
+from platform_paths import app_root
+ROOT=app_root()
 
 def gpt_is_open():
     for process in psutil.process_iter(['name','exe']):

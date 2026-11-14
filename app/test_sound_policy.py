@@ -19,6 +19,23 @@ class AudioSinkPolicyTests(unittest.TestCase):
         with patch.dict(os.environ,{'BAILONG_ISOLATED':'0'}),patch('pet.QApplication.platformName',return_value='windows'),patch('winsound.PlaySound') as audio:
             Pet.play_click_sound(SimpleNamespace());audio.assert_called_once()
 
+@unittest.skipUnless(sys.platform=='darwin','macOS audio sink')
+class MacAudioSinkPolicyTests(unittest.TestCase):
+    def test_isolated_or_offscreen_click_never_starts_afplay(self):
+        for isolated,platform in (('1','cocoa'),('0','offscreen')):
+            with self.subTest(isolated=isolated,platform=platform),patch.dict(os.environ,{'BAILONG_ISOLATED':isolated}),patch('pet.QApplication.platformName',return_value=platform),patch('subprocess.Popen') as audio:
+                Pet.play_click_sound(SimpleNamespace());audio.assert_not_called()
+    def test_visible_click_plays_once_and_replaces_the_previous_sound(self):
+        with patch.dict(os.environ,{'BAILONG_ISOLATED':'0'}),patch('pet.QApplication.platformName',return_value='cocoa'),patch('subprocess.Popen') as audio:
+            audio.return_value.poll.return_value=None
+            pet=SimpleNamespace();Pet.play_click_sound(pet);audio.assert_called_once()
+            self.assertEqual(audio.call_args.args[0][0],'/usr/bin/afplay')
+            audio.return_value.terminate.assert_not_called()
+            Pet.play_click_sound(pet);audio.return_value.terminate.assert_called_once()
+    def test_missing_player_is_ignored(self):
+        with patch.dict(os.environ,{'BAILONG_ISOLATED':'0'}),patch('pet.QApplication.platformName',return_value='cocoa'),patch('subprocess.Popen',side_effect=OSError):
+            pet=SimpleNamespace();Pet.play_click_sound(pet);self.assertIsNone(pet._click_process)
+
 class PendingClickTests(unittest.TestCase):
     import test_edge_dock as fixture
     setUp=fixture.DockTests.setUp

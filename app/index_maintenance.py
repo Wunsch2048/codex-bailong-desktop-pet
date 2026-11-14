@@ -4,7 +4,7 @@ Runs in the existing serial index worker. Copy/verification checkpoints are
 resumable; the source stays unchanged until a verified compact copy and backup
 exist. No external programs, services, registry edits or arbitrary file scans.
 """
-import hashlib,json,os,shutil,sqlite3,time,uuid
+import hashlib,json,os,shutil,sqlite3,sys,time,uuid
 from contextlib import closing
 from pathlib import Path
 
@@ -60,6 +60,10 @@ def atomic(path,value):
 
 def plain(path):
     path=Path(path).absolute()
+    if sys.platform=='darwin':
+        # Temporary and cache folders sit under Apple's fixed /var alias; user links are still rejected below.
+        from storage_locations import system_alias
+        path=system_alias(path)
     if any(p.is_symlink() or p.is_junction() for p in (path,*path.parents)):
         raise ValueError('Database maintenance path is a link')
     return path

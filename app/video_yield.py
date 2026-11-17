@@ -67,6 +67,8 @@ class VideoYield(QObject):
         if setter is not None:setter(bool(hidden))
         else:setattr(self.pet,'_fullscreen_yielded',bool(hidden))
     def owned(self,widget):
+        policy=getattr(self.pet,'surface_policy',None)
+        if policy is not None:return policy.owned(widget)
         while widget is not None:
             if widget is self.pet or widget is getattr(self.pet,'bubble',None):return True
             widget=widget.parentWidget()

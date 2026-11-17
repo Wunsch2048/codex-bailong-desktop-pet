@@ -12,12 +12,13 @@ from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QToolButton,QToolT
 from compact_bubble import font,INK,MUTED,PURPLE,GREEN,AMBER,TRACK,FONT_CSS,Announcement,action_button
 from reset_watch import account_reset_text,epoch,local_time,pending_reset,schedule_text,reset_has_priority
 from token_calendar import compact_tokens
+from ui_theme import STATUS_MODULE_RADIUS
 
 DASH_HEIGHT=102
 
 def paint_deck_surface(p,rect):
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    radius=10+max(0.,min(1.,(rect.height()-DASH_HEIGHT)/3))
+    radius=STATUS_MODULE_RADIUS
     p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f5f2f7')));p.drawRoundedRect(rect,radius,radius)
 
 def ring_color(window):
@@ -31,10 +32,13 @@ from choice_controls import ChoiceCombo
 
 class ExpandedRangeChoice(ChoiceCombo):
     """The compact chart menu uses the same accessible in-card choice sheet."""
+    def __init__(self):
+        super().__init__()
+        self.currentIndexChanged.connect(lambda _:self.animate_caption(self.currentText()))
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setFont(font(10));p.setPen(theme_color(MUTED))
-        p.drawText(QRectF(0,0,self.width()-13,self.height()),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,self.currentText())
+        self.draw_caption(p,QRectF(0,0,self.width()-13,self.height()),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,self.currentText())
         p.setPen(QPen(theme_color(MUTED),1.1));x=self.width()-7;y=self.height()/2
         p.drawLine(QPointF(x-2.5,y-1),QPointF(x,y+1.5));p.drawLine(QPointF(x,y+1.5),QPointF(x+2.5,y-1))
 
@@ -93,13 +97,17 @@ class CardDeck(QWidget):
             self.range_menu.currentIndexChanged.connect(lambda _:self.token_range_changed.emit(self.range_menu.currentData()))
             row.addStretch(1);row.addWidget(self.range_menu)
         self.stack=QStackedWidget();self.stack.setFixedHeight(70 if expanded else 78);layout.addWidget(self.stack);self.set_page(page,False)
+    def set_surface_scale(self,pixels):
+        self.setFixedHeight(pixels(105 if self.expanded else DASH_HEIGHT))
+        self.stack.setFixedHeight(pixels(70 if self.expanded else 78))
+        for content in self.pages.values():content.setFixedHeight(self.stack.height())
     def set_page(self,page,animate=True):
         self.page=page
         if page not in self.pages:
             content=Announcement(self.reset_snapshot,self.error,self.reset_busy,with_refresh=False,dense=True) if page=='reset' else TokenChartCard(self.snapshot,period=self.token_range,expanded=self.expanded)
             if page=='tokens':content.rangeChanged.connect(self.token_range_changed.emit)
             else:content.expand.connect(self.reset_details_requested.emit)
-            content.setFixedHeight(70 if self.expanded else 78);self.pages[page]=content;self.stack.addWidget(content)
+            content.setFixedHeight(self.stack.height());self.pages[page]=content;self.stack.addWidget(content)
         self.content=self.pages[page];self.stack.setCurrentWidget(self.content);self.tabs.select(page,animate)
         if self.expanded:self.range_menu.setVisible(page=='tokens')
         if page=='tokens' and animate:self.content.plot.begin_reveal();self.content.plot.start_reveal()

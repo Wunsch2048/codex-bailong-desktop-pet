@@ -19,7 +19,7 @@ from pet import ROOT,ASSETS,clamp_position
 from enhanced_core import motion_step,clean_text
 from performance_metrics import measured
 from desktop_core import (VERSION,DEFAULTS,normalized,atomic_json,ActionGate,physics_step,
-    relative_position,restore_position,local_roam_bounds,local_roam_target)
+    relative_position,restore_position,local_roam_bounds,local_roam_target,surface_settings)
 from desktop_services import all_items,validate_character,open_codex,autostart_enabled,set_autostart
 from stream_player import StreamPlayer
 from status_reactions import StatusReactions
@@ -36,6 +36,7 @@ class DesktopPet(EnhancedPet):
     def __init__(self,monitor=True):
         self._video_yielded=False;self._fullscreen_yielded=False;self.video_yield=None
         self._desktop_hidden=False;self._card_anchor=None;self._visibility_ready=False
+        self._focus_hidden=False;self._focus_editor_override=False
         self.settings_revision=0
         from codex_connection import data_home,saved_paths
         from connection_health import CapabilityHealth
@@ -105,10 +106,15 @@ class DesktopPet(EnhancedPet):
         from settings_controls import set_motion_mode,settle_motion
         set_motion_mode(self.settings['ui_animation_mode']);settle_motion()
         self._theme_preview=None;self._theme_preview_pending=False
+        self._surface_preview=None;self._preview_character_rect=None
         from edge_dock import EdgeDock
         self.edge_dock=EdgeDock(self)
+        from surface_policy import SurfacePolicy
+        self.surface_policy=SurfacePolicy(self)
         self.bubble.size_transition.animation.finished.connect(self._flush_theme_preview)
         self._visibility_ready=True
+        self._display_layout=self.display_layout()
+        QApplication.instance().screenRemoved.connect(self.request_display_reflow)
         self._card_anchor=self.settings.get('card_anchor')
         self.walk_direction=self.settings['facing']
         self.apply_settings({},save=False)
@@ -738,40 +744,66 @@ class DesktopPet(EnhancedPet):
             return
         self._theme_preview_pending=False
         if current()==target['theme'] and palette()==proposed:return
-        guarded=not within_transition
-        if guarded:transition.begin()
-        try:
-            apply_theme(target['theme'],target,roots=(self,self.bubble,self.settings_dialog,self.chat_window,self.bubble.report))
-            self._tray_icon_key=None;self._refresh_tray_icon()
-        finally:
-            if guarded:transition.commit()
+        # Colour changes keep the same layout. Capturing an entire card and
+        # its open report here blocks the first paint of a settings preview.
+        apply_theme(target['theme'],target,roots=(self,self.bubble,self.settings_dialog,self.chat_window,self.bubble.report),defer_hidden=not within_transition)
+        self._tray_icon_key=None;self._refresh_tray_icon()
 
     def _flush_theme_preview(self):
         if self._theme_preview_pending and not self.bubble.size_transition.running and not self.bubble.size_transition.preparing:
             self.preview_theme(self._theme_preview)
 
+    def display_card_scale(self):
+        return (self._surface_preview or self.settings)['card_scale']
+
+    def resize_character_surface(self,scale,anchor):
+        size=round(256*scale)
+        if self.width()!=size or self.height()!=size:self.setFixedSize(size,size)
+        position=QPoint(round(anchor.x()+(anchor.width()-size)/2),anchor.bottom()+1-size)
+        if self.pos()!=position:self.move(self.constrained_position(position))
+
+    def preview_surface_sizes(self,values=None):
+        """Use saved decode resolution while resizing only the live surfaces."""
+        previous=self._surface_preview or self.settings
+        target={key:(values or self.settings)[key] for key in ('scale','card_scale')}
+        if all(target[key]==previous[key] for key in target):return
+        self._surface_preview=target if target!={key:self.settings[key] for key in target} else None
+        if target['scale']!=previous['scale']:
+            anchor=self._preview_character_rect or QRect(self.geometry())
+            self._preview_character_rect=anchor if target['scale']!=self.settings['scale'] else None
+            self.resize_character_surface(target['scale'],anchor)
+        if target['card_scale']!=previous['card_scale']:
+            self.bubble.refresh_surface_scale()
+        self.position_bubble()
+
     def apply_settings(self,values,save=True):
         from theme_registry import values as theme_values,current,palette
         from theme_registry import THEME_KEYS
         from theme_runtime import apply_theme
-        candidate=dict(self.settings,**values)
-        theme_values(candidate.get('theme','bailong'),candidate)
+        proposed_settings=dict(self.settings,**values)
+        theme_values(proposed_settings.get('theme','bailong'),proposed_settings)
+        candidate=surface_settings(self.settings,values)
         changing_theme=any(key in values for key in THEME_KEYS)
         effective=(getattr(self,'_theme_preview',None) if not changing_theme else None) or candidate
         proposed=theme_values(effective.get('theme','bailong'),effective)
         recolor=current()!=effective.get('theme','bailong') or palette()!=proposed
-        guarded=recolor or (changing_theme and getattr(self,'_theme_preview',None) is not None)
+        scale_change=any(candidate[key]!=self.settings.get(key) for key in ('scale','card_scale'))
+        guarded=scale_change or recolor or (changing_theme and getattr(self,'_theme_preview',None) is not None)
         from quick_actions import website_url
         if values.get('capsule_action',self.settings.get('capsule_action'))=='website':
             website_url(values.get('capsule_website',self.settings.get('capsule_website','')))
-        if guarded:self.bubble.size_transition.begin()
+        if guarded:
+            if self.bubble.size_transition.running:self.bubble.size_transition.complete()
+            self.bubble.size_transition.begin()
         previous=copy.deepcopy(self.settings)
         if (previous.get('character_visible',True) and values.get('character_visible') is False) or (not previous.get('panel_detached') and values.get('panel_detached') is True):
             self.remember_card_anchor(self.bubble.content_geometry())
+            if 'card_anchor' not in values:candidate['card_anchor']=copy.deepcopy(self._card_anchor)
         if 'codex_exit' in values and values['codex_exit']!=previous.get('codex_exit'):
             self._codex_exit_gate.reset()
-        old_size=self.height();foot=self.geometry().bottom()+1;center=self.geometry().center().x()
-        self.settings.update(values);self.settings=normalized(self.settings)
+        scale_anchor=self._preview_character_rect or self.geometry()
+        if scale_change:self._surface_preview=None;self._preview_character_rect=None
+        self.settings=candidate
         if self.enhanced_ready:self.quiet_background_speech()
         from settings_controls import set_motion_mode,settle_motion
         set_motion_mode(self.settings['ui_animation_mode'])
@@ -781,7 +813,7 @@ class DesktopPet(EnhancedPet):
             self._tray_icon_key=None;self._refresh_tray_icon()
         if 'card_anchor' in values:self._card_anchor=copy.deepcopy(self.settings.get('card_anchor'))
         if (self.settings['no_move'] or self.settings['mouse_through'] or
-            self.settings['scale']!=previous.get('scale') or self.settings['on_top']!=previous.get('on_top')):
+            scale_change or self.settings['window_layer']!=previous.get('window_layer')):
             self.cancel_pointer()
         self.reactions.configure(self.settings['status_action_interval'],time.monotonic())
         if hasattr(self,'updates'):self.updates.configure(self.settings['update_checks'])
@@ -795,8 +827,7 @@ class DesktopPet(EnhancedPet):
                                                auto_compact=False,minimal_normal_open=False)
         self.bubble.token_range=self.settings['token_chart_range']
         self.bubble.pinned=self.settings['on_top'];self.bubble.wandering=self.settings['wandering'];self.bubble.movement_locked=self.settings['no_move']
-        size=round(256*self.settings['scale']);self.setFixedSize(size,size)
-        if size!=old_size:self.move(self.constrained_position(QPoint(center-size//2,foot-size)))
+        self.resize_character_surface((self._surface_preview or self.settings)['scale'],scale_anchor)
         # All states use one physical-pixel decode policy. Refresh the current
         # frame immediately rather than changing clarity on the next action.
         self.sync_decode_size()
@@ -804,11 +835,10 @@ class DesktopPet(EnhancedPet):
         if (self.settings['no_move'] or not self.wandering or
             any(self.settings.get(k)!=previous.get(k) for k in POLICY_KEYS)):self.stop_walk()
         if self.settings['no_move']:self.throwing=False
-        for widget in (self,self.bubble):
-            visible=widget.isVisible()
-            widget.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,self.settings['on_top'])
-            if widget is self:widget.setWindowFlag(Qt.WindowType.WindowTransparentForInput,self.settings['mouse_through'])
-            if visible:widget.show()
+        through=Qt.WindowType.WindowTransparentForInput
+        if bool(self.windowFlags()&through)!=self.settings['mouse_through']:
+            visible=self.isVisible();self.setWindowFlag(through,self.settings['mouse_through'])
+            if visible:self.show()
         self.sync_panel_flags()
         if values.get('bubble') is False:
             self.bubble.size_transition.cancel();self.bubble.panel_page='status';self.bubble.expanded=False
@@ -819,6 +849,7 @@ class DesktopPet(EnhancedPet):
         if self._visibility_ready:self.apply_surface_visibility()
         if values.get("bubble") is False:self.bubble.hide()
         if self.video_yield:self.video_yield.reconcile()
+        self.surface_policy.configure()
         self.next_chain=time.monotonic()+self.settings['random_interval'];self.next_talk=time.monotonic()+self.settings['talk_min']
         self.schedule_animation()
         if save:
@@ -861,6 +892,7 @@ class DesktopPet(EnhancedPet):
         screen.availableGeometryChanged.connect(changed)
         screen.logicalDotsPerInchChanged.connect(changed)
         screen.physicalDotsPerInchChanged.connect(changed)
+        self.request_display_reflow()
 
     def ensure_on_screen(self):
         super().ensure_on_screen()
@@ -875,16 +907,28 @@ class DesktopPet(EnhancedPet):
             self._display_reflow_timer.timeout.connect(self.reflow_display)
         self._display_reflow_timer.start(100)
 
+    @staticmethod
+    def display_layout():
+        return tuple(sorted((screen.name(), screen.geometry().getRect(), screen.devicePixelRatio())
+                            for screen in QApplication.screens()))
+
     def reflow_display(self):
         bubble=self.bubble
         if self.dragging or getattr(self,'_card_dragged',False) or getattr(bubble,'_card_press',None):
             self.request_display_reflow();return
         transition=bubble.size_transition
         if transition.running or transition.preparing or transition.landing.image is not None:transition.cancel()
+        layout=self.display_layout()
+        if layout!=self._display_layout:
+            self._display_layout=layout
+            # Drop the folded pose before positioning on the new display edge.
+            self.edge_dock.clear(immediate=True)
+            if self.isVisible():self.update()
         attached=not (self.settings.get('panel_detached') or self._materials_missing or not self.settings.get('character_visible',True))
         if attached:bubble._editor_positioned=False
         self.ensure_on_screen()
         if sys.platform!='win32' or not attached or not self.isVisible() or not bubble.isVisible():return
+        if transition.running or transition.preparing:return
         from native_coordinates import align_companion_position
         target=bubble.content_geometry()
         delta=target.topLeft()-self.pos()
@@ -926,8 +970,10 @@ class DesktopPet(EnhancedPet):
         if not self.enhanced_ready:return
         self.collect_settings()
         self.settings['facing']=self.walk_direction
-        screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen();a=screen.availableGeometry()
-        self.settings['screen_position']=relative_position(self.x(),self.y(),self.width(),self.height(),(a.x(),a.y(),a.width(),a.height()),screen.name())
+        rect=self._preview_character_rect or self.geometry()
+        self.settings['position']=[rect.x(),rect.y()]
+        screen=QApplication.screenAt(rect.center()) or QApplication.primaryScreen();a=screen.availableGeometry()
+        self.settings['screen_position']=relative_position(rect.x(),rect.y(),rect.width(),rect.height(),(a.x(),a.y(),a.width(),a.height()),screen.name())
         atomic_json(CONFIG,self.settings)
     def restore_saved_position(self):
         saved=self.settings.get('screen_position')
@@ -966,19 +1012,32 @@ class DesktopPet(EnhancedPet):
             self.stop_walk();self.throwing=False;self.cancel_pointer();self.hide();self.bubble.hide();self.tick.stop();self.pause_hidden_animation()
         else:self.apply_surface_visibility()
     def card_surface_visible(self):
-        return not self._desktop_hidden and not self._fullscreen_yielded and (self.isVisible() or self._materials_missing or not self.settings.get('character_visible',True))
+        return (not self._desktop_hidden and not self._fullscreen_yielded and
+                (not self._focus_hidden or self.editing_while_focus_hidden()) and
+                (self.isVisible() or self._materials_missing or self.editing_while_focus_hidden() or not self.settings.get('character_visible',True)))
+    def editing_while_focus_hidden(self):
+        bubble=getattr(self,'bubble',None)
+        return self._focus_editor_override or (getattr(bubble,'panel_page','status')!='status' and bubble.isActiveWindow())
+    def set_focus_hidden(self,hidden):
+        if hidden==self._focus_hidden:
+            if hidden and self.bubble.isVisible() and not self.editing_while_focus_hidden():self.bubble.hide()
+            return
+        self._focus_hidden=hidden
+        if hidden and not self.editing_while_focus_hidden() and self.bubble.report:self.bubble.report.hide()
+        self.apply_surface_visibility()
     def apply_surface_visibility(self):
         if not self._visibility_ready:return
         self.edge_dock.reconcile()
         if self._fullscreen_yielded:
             self.hide();self.bubble.hide();self.tick.stop();self.pause_hidden_animation();return
-        character=not self._materials_missing and self.settings.get('character_visible',True) and not self._desktop_hidden
+        character=(not self._materials_missing and self.settings.get('character_visible',True) and
+                   not self._desktop_hidden and not self._focus_hidden)
         if character:
             if not self.isVisible():self.show();self.tick.start()
         else:
             self.stop_walk();self.throwing=False;self.cancel_pointer();self.hide();self.tick.stop();self.pause_hidden_animation()
             if self._pending_material:self.apply_material()
-        if not self._desktop_hidden and (self.bubble.enabled or self.bubble.panel_page!='status'):
+        if not self._desktop_hidden and (not self._focus_hidden or self.editing_while_focus_hidden()) and (self.bubble.enabled or self.bubble.panel_page!='status'):
             self.bubble.show();self.position_bubble()
         else:self.bubble.hide()
     def remember_card_anchor(self,rect):
@@ -1012,11 +1071,13 @@ class DesktopPet(EnhancedPet):
         if self.enhanced_ready and (self.bubble.size_transition.running or self.bubble.size_transition.preparing or self.bubble.size_transition.landing.image is not None):return
         if self.enhanced_ready and (self.settings.get('panel_detached') or self._materials_missing or not self.settings.get('character_visible',True)):
             self.bubble.move(self.card_geometry(self.bubble.content.size()).topLeft())
-            if self._desktop_hidden:self.bubble.hide()
+            if not self.card_surface_visible():self.bubble.hide()
+            else:self.sync_attached_panel_stack()
             return
         edge=getattr(self,'edge_dock',None)
         if self.enhanced_ready and edge and (edge.active or edge.amount>0) and self.bubble.is_minimal():
             self.bubble.move(edge.card_geometry(self.bubble.content.size()).topLeft())
+            self.sync_attached_panel_stack()
             return
         if self.enhanced_ready and self.bubble.panel_page!='status' and self.bubble._editor_positioned:
             if not self.card_surface_visible():self.bubble.hide()
@@ -1026,20 +1087,17 @@ class DesktopPet(EnhancedPet):
         if self.enhanced_ready and self.bubble.panel_page!='status':self.bubble._editor_positioned=True
         if self.enhanced_ready and not self.card_surface_visible():self.bubble.hide()
     def sync_attached_panel_stack(self):
-        bubble=self.bubble;video=self.video_yield
-        if (video is None or self._video_yielded or self._fullscreen_yielded or
-                self.settings.get('panel_detached') or bubble.panel_page!='status' or
-                bubble.expanded or (bubble.report and bubble.report.requested) or
-                not self.isVisible() or not bubble.isVisible()):
-            return
+        policy=getattr(self,'surface_policy',None)
+        if policy is None or policy.api is None or self.settings['window_layer']=='top':return
         now=time.monotonic()
         if now<getattr(self,'_next_attached_stack_check',0.):return
         self._next_attached_stack_check=now+.12
-        video.api.stack_with(int(bubble.winId()),int(self.winId()))
+        policy.stack_roots()
 
     def can_raise_bubble(self):
-        if self.video_yield is not None and not self.settings.get('panel_detached') and not self.bubble.expanded:
-            return False
+        if self.settings.get('window_layer')!='top':return False
+        policy=getattr(self,'surface_policy',None)
+        if policy and policy.api is not None:return False
         if self._video_yielded or self._fullscreen_yielded or self.dragging or self.throwing or self.walking:return False
         # Owned panels stay above the pet. Periodic bubble updates must not
         # reorder its sibling windows over an open settings/chat panel.
@@ -1048,6 +1106,7 @@ class DesktopPet(EnhancedPet):
                        for panel in (self.settings_dialog,self.chat_window))
     def sync_panel_flags(self):
         self.bubble._editing_flags(self.bubble.panel_page!='status')
+        if self.surface_policy.api is not None:return
         for panel in (self.settings_dialog,self.chat_window):
             if panel is None or not panel.isWindow():continue
             target=self.settings['on_top']
@@ -1059,6 +1118,7 @@ class DesktopPet(EnhancedPet):
                     if active:panel.raise_();panel.activateWindow()
     def show_panel(self,panel):
         if not panel.isWindow():
+            if self._focus_hidden:self._focus_editor_override=True
             if not self.bubble.enabled:self.set_option('bubble',True)
             self.stop_walk();self.throwing=False;self._desktop_hidden=False;self.apply_surface_visibility()
             # First activation can synchronously polish the native editor and
@@ -1070,6 +1130,7 @@ class DesktopPet(EnhancedPet):
             self.bubble.show_page('settings' if panel is self.settings_dialog else 'chat',panel)
             if panel is self.chat_window and panel.pages.currentWidget() is panel.chat_body:panel.input.setFocus()
             elif panel is self.settings_dialog:panel.tabs.tabBar().setFocus()
+            self._focus_editor_override=False
             return
         self.sync_panel_flags();panel.showNormal();panel.raise_();panel.activateWindow()
     def set_option(self,attr,value):
@@ -1117,25 +1178,20 @@ class DesktopPet(EnhancedPet):
         return action
     def build_menu(self,menu,tray=False):
         menu.clear()
-        if tray:
-            for command in ('recover','visible','status','settings'):self.menu_command(menu,command)
-            display=menu.addMenu('显示方式');self.menu_command(display,'character');self.menu_command(display,'bubble');self.menu_command(display,'detach')
-            for mode in ('auto','mini','minimal'):self.menu_command(display,'mode_'+mode)
-            menu.addSeparator();self.menu_command(menu,'quit');return
-        for command in ('bubble','status','chat','walk'):self.menu_command(menu,command)
-        desktop=menu.addMenu('桌面操作')
-        for command in ('character','pin','lock','through','detach'):self.menu_command(desktop,command)
-        display=desktop.addMenu('卡片模式')
-        for mode in ('auto','mini','minimal'):self.menu_command(display,'mode_'+mode)
-        desktop.addSeparator()
-        for command in ('recover','position'):self.menu_command(desktop,command)
-        groups=menu.addMenu('手动动作')
-        for group,items in self.action_groups().items():
-            sub=groups.addMenu(group)
-            if not items:sub.addAction('专用素材待制作，暂用现有动作').setEnabled(False)
-            for item in items:sub.addAction(item.get('name',item['id']),lambda v=item:self.choose(v,interactive=True,manual=True))
+        for command in ('status','chat','settings'):self.menu_command(menu,command)
         menu.addSeparator()
-        for command in ('settings','visible','quit'):self.menu_command(menu,command)
+        self.menu_command(menu,'visible')
+        if tray:self.menu_command(menu,'recover')
+        else:
+            self.menu_command(menu,'walk')
+            available=[(group,items) for group,items in self.action_groups().items() if items]
+            if available:
+                groups=menu.addMenu('手动动作')
+                for group,items in available:
+                    sub=groups.addMenu(group)
+                    for item in items:sub.addAction(item.get('name',item['id']),lambda v=item:self.choose(v,interactive=True,manual=True))
+        menu.addSeparator()
+        self.menu_command(menu,'quit')
     def context_menu(self,point):
         self.stop_walk();menu=QMenu(self);self.build_menu(menu);menu.exec(point)
     def toggle_startup(self,value):
@@ -1173,7 +1229,7 @@ class DesktopPet(EnhancedPet):
             self.settings_dialog.sync_from_pet(read_startup=self.settings_dialog.tabs.currentIndex()==2)
         self.show_panel(self.settings_dialog)
     def open_status(self):
-        self.show()
+        self._desktop_hidden=False;self.apply_surface_visibility()
         if not self.bubble.enabled:self.set_option('bubble',True)
         if self.bubble.bubble_mode=='minimal':self.bubble.open_normal_from_minimal()
         else:self.bubble.set_mode('auto')
@@ -1183,7 +1239,7 @@ class DesktopPet(EnhancedPet):
             self.chat_window=ChatWindow(self,STATE_DIR,embedded=True)
         self.show_panel(self.chat_window)
     def open_chat_service(self):
-        self.open_chat();self.chat_window.provider()
+        self.open_chat();self.chat_window.open_chat_settings()
     def open_shortcut(self):
         from quick_actions import action_info,website_url
         action=action_info(self.settings.get('capsule_action'))[0]
@@ -1530,6 +1586,7 @@ class DesktopPet(EnhancedPet):
             if not self._update_exit_pending:self._update_exit_pending=True;self.updates.idle.connect(self.close)
             event.ignore();return
         self._codex_closing=True;self.codex_timer.stop();self.click_timer.stop();self.last_click=None
+        self.surface_policy.shutdown()
         self.edge_dock.shutdown();self.cancel_pointer();self.sustained.cancel();self.locomotion.cancel();self.codex_navigation.close()
         if self.bubble.report:self.bubble.report.animation.stop();self.bubble.report.hide()
         if self.chat_window:self.chat_window.shutdown()

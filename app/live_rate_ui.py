@@ -10,6 +10,7 @@ from settings_controls import motion_enabled,play_animation
 from hover_hints import DetailHint
 from theme_registry import palette
 from datetime import datetime
+from ui_theme import status_footer_path
 
 class BaseSessionRateBubble(DetailHint):
     def __init__(self):
@@ -48,14 +49,14 @@ class BaseSessionRateBubble(DetailHint):
             if y+self.row_height()<33 or y>body.bottom():continue
             name=str(row.get('name') or '会话 '+str(row.get('session',''))[-8:])
             width=max(10,self.width()-124)
-            p.setFont(font(11));p.setPen(QColor(theme['ink']));name=QFontMetrics(p.font()).elidedText(name,Qt.TextElideMode.ElideRight,width)
+            p.setFont(font(12));p.setPen(QColor(theme['ink']));name=QFontMetrics(p.font()).elidedText(name,Qt.TextElideMode.ElideRight,width)
             p.drawText(QRectF(11,y,width,18),Qt.AlignmentFlag.AlignVCenter,name)
-            p.setFont(font(11,True));p.drawText(QRectF(width+14,y,self.width()-width-25,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,display(row.get('rate'))+' tok/s')
+            p.setFont(font(13,True));p.drawText(QRectF(width+14,y,self.width()-width-25,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,display(row.get('rate'))+' tok/s')
             if not getattr(self,'focusable',False):continue
             stamp=row.get('sampled_at');interval=row.get('interval');status='等待新采样' if row.get('waiting') or row.get('rate') is None else '最近观测'
             detail=(datetime.fromtimestamp(stamp).strftime('%H:%M:%S')+'  ' if stamp else '')+status
             if interval is not None:detail+=f'  /  {interval:.0f}秒区间'
-            p.setFont(font(10));p.setPen(QColor(theme['muted']));p.drawText(QRectF(11,y+17,self.width()-22,17),Qt.AlignmentFlag.AlignVCenter,detail)
+            p.setFont(font(11));p.setPen(QColor(theme['muted']));p.drawText(QRectF(11,y+17,self.width()-22,17),Qt.AlignmentFlag.AlignVCenter,detail)
         p.restore()
 
 from service_rate_ui import service_bubble
@@ -225,7 +226,8 @@ class LiveRateCard(QWidget):
             if hasattr(self,'service_panel'):self.service_panel.dismiss(True)
     def paintEvent(self,event):
         expanded=getattr(self,'expanded',False);height=self.height();margin=7 if expanded else 6
-        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f5f2f7' if expanded else '#e8def0')));p.drawRoundedRect(QRectF(self.rect()),6,6)
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f5f2f7' if expanded else '#e8def0')))
+        p.drawPath(status_footer_path(QRectF(self.rect()),side=-1,alignment=0. if expanded else 1.))
         p.setFont(font(11 if expanded else 10));p.setPen(theme_color(MUTED));p.drawText(QRectF(margin,0,22,height),Qt.AlignmentFlag.AlignVCenter,'实时')
         if expanded:
             from typography import ui_font

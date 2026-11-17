@@ -9,10 +9,12 @@ import re
 import shutil
 import stat
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import HTTPError
 
-from material_store import MaterialError, checked, cancelled, hash_file
+from material_store import (MaterialError, checked, cancelled, discard_archive, hash_file,
+                            material_phase, open_download_file, retry_material_io, write_material_entry)
 
 
 class RangeUnavailable(Exception):
@@ -27,6 +29,8 @@ class RangeZip(io.RawIOBase):
         self.response = None
         self.response_end = 0
         self.window_end = size
+        self.entry_cache = None
+        self.entry_start = self.cached_bytes = 0
 
     def readable(self): return True
     def seekable(self): return True
@@ -45,9 +49,32 @@ class RangeZip(io.RawIOBase):
         self.position = position
         return position
 
-    def window(self, end):
+    @contextmanager
+    def entry(self, start, end, cache):
         self._disconnect()
         self.window_end = end
+        self.entry_start = start
+        with material_phase('打开分段下载缓存'):
+            def open_cache():
+                try:return open_download_file(cache,'r+b')
+                except FileNotFoundError:return open_download_file(cache,'w+b')
+            stream=retry_material_io(open_cache,self.cancel)
+        try:
+            with stream:
+                self.entry_cache=stream
+                self.cached_bytes=stream.seek(0,io.SEEK_END)
+                if self.cached_bytes>end-start:
+                    stream.truncate(0)
+                    self.cached_bytes=0
+                yield
+        except (zipfile.BadZipFile,RuntimeError):
+            discard_archive(cache)
+            raise
+        else:
+            discard_archive(cache)
+        finally:
+            self.entry_cache=None
+            self._disconnect()
 
     def read(self, count=-1):
         cancelled(self.cancel)
@@ -57,13 +84,29 @@ class RangeZip(io.RawIOBase):
         if not count: return b''
         if self.position + count > self.window_end:
             raise MaterialError('动画压缩包条目越界')
+        data=bytearray()
+        if self.entry_cache is not None:
+            cache_offset=self.position-self.entry_start
+            cached=min(count,self.cached_bytes-cache_offset)
+            if cache_offset<0:raise MaterialError('动画压缩包条目越界')
+            if cached>0:
+                with material_phase('读取分段下载缓存'):
+                    self.entry_cache.seek(cache_offset)
+                    data.extend(self.entry_cache.read(cached))
+                    if len(data)!=cached:raise MaterialError('分段缓存内容不完整')
+                self.position+=cached
+                self.received+=cached
+                self.progress(self.received)
+                if cached==count:return bytes(data)
         if self.response is None:
             end = self.window_end - 1
             try:
                 response = self.opener(self.url, {'Accept': 'application/octet-stream',
                     'Accept-Encoding': 'identity', 'Range': f'bytes={self.position}-{end}'})
             except HTTPError as exc:
-                if exc.code in (400, 405, 416): raise RangeUnavailable() from exc
+                if exc.code in (400, 405, 416):
+                    exc.close()
+                    raise RangeUnavailable() from exc
                 raise
             match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
             length = response.headers.get('Content-Length')
@@ -74,11 +117,15 @@ class RangeZip(io.RawIOBase):
                 response.close()
                 raise RangeUnavailable()
             self.response, self.response_end = response, end + 1
-        data = bytearray()
         while len(data) < count:
             cancelled(self.cancel)
             block = self.response.read(min(256 * 1024, count - len(data)))
             if not block: raise MaterialError('动画分段下载不完整，请重试')
+            if self.entry_cache is not None:
+                with material_phase('写入分段下载缓存'):
+                    self.entry_cache.seek(self.position-self.entry_start)
+                    self.entry_cache.write(block)
+                self.cached_bytes+=len(block)
             data.extend(block)
             self.position += len(block)
             self.received += len(block)
@@ -135,15 +182,17 @@ def candidate_roots(store,tier):
     return roots
 
 
-def reuse_files(store, tier, stage, cancel, progress, candidates=None):
+def reuse_files(store, tier, stage, cancel, progress, candidates=None, *, completed=()):
     """Read bounded candidates; target SHA-256 authorizes copying, not metadata."""
     files=store.catalog['tiers'][tier]['files']
-    wanted={(f['bytes'],f['sha256']):[] for f in files}
-    for f in files:wanted[(f['bytes'],f['sha256'])].append(f)
+    reused = set(completed)
+    wanted={}
+    for f in files:
+        if f['path'] not in reused:wanted.setdefault((f['bytes'],f['sha256']),[]).append(f)
+    if not wanted:return reused
     roots=candidate_roots(store,tier) if candidates is None else candidates
-    reused = set()
     total = sum(f['bytes'] for f in files)
-    done = 0
+    done = sum(f['bytes'] for f in files if f['path'] in reused)
     for root, names in roots:
         for name in names:
             cancelled(cancel)
@@ -158,7 +207,8 @@ def reuse_files(store, tier, stage, cancel, progress, candidates=None):
                     target = checked(stage, f['path'])
                     target.parent.mkdir(parents=True, exist_ok=True)
                     # Separate files keep a damaged old cache from altering the new one.
-                    shutil.copyfile(source, target)
+                    if target.exists() and target.stat().st_nlink!=1:continue
+                    retry_material_io(lambda:shutil.copyfile(source,target),cancel)
                     reused.add(f['path']); done += f['bytes']
                     progress(done, total, 'reusing')
             except (OSError, ValueError, TypeError):
@@ -189,14 +239,9 @@ def extract_missing(url, spec, stage, reused, opener, cancel, progress):
             offsets = sorted([i.header_offset for i in infos] + [archive.start_dir])
             for info in missing:
                 cancelled(cancel)
-                remote.window(next(offset for offset in offsets if offset > info.header_offset))
+                end=next(offset for offset in offsets if offset>info.header_offset)
+                cache=checked(stage.parent,f'entry-{info.header_offset}.part')
                 target = checked(stage, info.filename)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info) as source, target.open('wb') as output:
-                    count = 0
-                    while data := source.read(256 * 1024):
-                        cancelled(cancel); count += len(data)
-                        if count > info.file_size: raise MaterialError('解压大小异常')
-                        output.write(data)
-                    if count != info.file_size: raise MaterialError('动画分段下载不完整')
+                with remote.entry(info.header_offset,end,cache):
+                    write_material_entry(archive,info,target,cancel)
             progress(remote.received, remote.received, 'downloading')

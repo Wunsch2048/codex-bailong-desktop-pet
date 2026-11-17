@@ -1,10 +1,10 @@
 """Native numeric editing with clear, quiet decrement/increment controls."""
 from settings_controls import play_animation
-from theme_registry import color as theme_color
+from theme_registry import color as theme_color,mix,palette
 from theme_runtime import set_theme_style,theme_style_source
-from PySide6.QtCore import Qt,QRectF,QPointF,QEvent,QVariantAnimation,QEasingCurve
+from PySide6.QtCore import Qt,QRectF,QPointF,QEvent,QVariantAnimation,QEasingCurve,QSignalBlocker
 from PySide6.QtGui import QPainter,QPen,QColor
-from PySide6.QtWidgets import QAbstractButton,QAbstractSpinBox,QSpinBox,QDoubleSpinBox
+from PySide6.QtWidgets import QAbstractButton,QAbstractSpinBox,QSpinBox,QDoubleSpinBox,QWidget,QHBoxLayout,QSlider,QStyle,QStyleOptionSlider
 from typography import FONT_CSS,ui_font
 from ui_theme import SURFACE,PANEL,SELECTED,BORDER,INK,PRIMARY
 from settings_controls import motion_enabled
@@ -75,3 +75,103 @@ class _NumberField:
 
 class DecimalField(_NumberField,QDoubleSpinBox):pass
 class IntegerField(_NumberField,QSpinBox):pass
+
+
+class SizeSlider(QSlider):
+    def __init__(self,orientation):
+        super().__init__(orientation)
+        self._drag=None
+        set_theme_style(self,'QSlider::groove:horizontal{background:transparent;height:4px;border-radius:2px;}'
+                        f'QSlider::handle:horizontal{{background:{SURFACE};border:2px solid {PRIMARY};width:11px;margin:-5px 0;border-radius:7px;}}'
+                        f'QSlider:focus::handle:horizontal{{background:{SELECTED};}}')
+
+    def handle_rect(self,option):
+        return self.style().subControlRect(QStyle.ComplexControl.CC_Slider,option,
+                                           QStyle.SubControl.SC_SliderHandle,self)
+
+    def track_limits(self,option):
+        ends=QStyleOptionSlider(option)
+        ends.sliderPosition=ends.sliderValue=self.minimum()
+        first=QRectF(self.handle_rect(ends)).center().x()
+        ends.sliderPosition=ends.sliderValue=self.maximum()
+        last=QRectF(self.handle_rect(ends)).center().x()
+        return first,last
+
+    def paintEvent(self,event):
+        option=QStyleOptionSlider()
+        self.initStyleOption(option)
+        handle=QRectF(self.handle_rect(option))
+        center=handle.center()
+        first,last=self.track_limits(option)
+        theme=palette()
+        painter=QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if not self.isEnabled():painter.setOpacity(.45)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(mix(theme['surface'],theme['ink'],.14)))
+        painter.drawRoundedRect(QRectF(min(first,last),center.y()-2,abs(last-first),4),2,2)
+        painter.setBrush(QColor(theme['accentText']))
+        selected=abs(center.x()-first)
+        if selected:
+            painter.drawRoundedRect(QRectF(min(center.x(),first),center.y()-2,selected,4),2,2)
+        painter.setOpacity(1)
+        painter.setPen(QPen(QColor(theme_color(PRIMARY)),2))
+        painter.setBrush(QColor(theme_color(SELECTED if self.hasFocus() else SURFACE)))
+        painter.drawRoundedRect(handle.adjusted(1,1,-1,-1),7,7)
+
+    def mousePressEvent(self,event):
+        option=QStyleOptionSlider()
+        self.initStyleOption(option)
+        first,last=self.track_limits(option)
+        super().mousePressEvent(event)
+        if self.isSliderDown() and first!=last:
+            # Preview can resize the window containing this rail mid-gesture.
+            self._drag=(event.globalPosition().x(),self.sliderPosition(),last-first)
+
+    def mouseMoveEvent(self,event):
+        if self.isSliderDown() and self._drag:
+            start,value,span=self._drag
+            delta=(event.globalPosition().x()-start)*(self.maximum()-self.minimum())/span
+            self.setSliderPosition(max(self.minimum(),min(self.maximum(),round(value+delta))))
+            event.accept()
+        else:super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self,event):
+        self._drag=None
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self,event):
+        event.ignore()
+
+
+class SizeInput(QDoubleSpinBox):
+    def wheelEvent(self,event):
+        event.ignore()
+
+    def textFromValue(self,value):
+        locale=self.locale()
+        if value.is_integer():return locale.toString(int(value))
+        text=locale.toString(value,'f',self.decimals())
+        return text.rstrip(locale.zeroDigit()).rstrip(locale.decimalPoint())
+
+
+class SizeField(QWidget):
+    def __init__(self,title,limits):
+        super().__init__()
+        lo,hi=(round(value*100) for value in limits)
+        row=QHBoxLayout(self);row.setContentsMargins(0,0,0,0);row.setSpacing(8)
+        self.slider=SizeSlider(Qt.Orientation.Horizontal)
+        self.slider.setAccessibleName(title+'滑块');self.slider.setRange(lo,hi);self.slider.setPageStep(5)
+        self.slider.setMinimumWidth(60);self.slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(self.slider,1)
+        self.input=SizeInput();self.input.setAccessibleName(title+'百分比');self.input.setFont(ui_font(12))
+        self.input.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.input.setKeyboardTracking(False);self.input.setDecimals(2);self.input.setRange(lo,hi)
+        self.input.setSuffix('%');self.input.setFixedWidth(76);self.input.setMinimumHeight(30)
+        row.addWidget(self.input)
+        self.slider.valueChanged.connect(self.input.setValue)
+        self.input.valueChanged.connect(self.sync_slider)
+
+    def sync_slider(self,value):
+        with QSignalBlocker(self.slider):self.slider.setValue(round(value))
+

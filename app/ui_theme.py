@@ -27,6 +27,31 @@ TRAY_WEEK='#70b8ff'
 TRAY_LOW='#ff949d'
 MODEL_COLORS=['#8b78a6','#8297a5','#aa8194','#a19170','#7d9c94','#a89ab6']
 
+STATUS_MODULE_RADIUS=10
+STATUS_FOOTER_RADIUS=7
+
+
+def status_footer_path(rect, side=0, alignment=0.):
+    """Increase only the outward bottom corner when it meets the card edge."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainterPath
+    path=QPainterPath()
+    radius=STATUS_FOOTER_RADIUS
+    if not side or not alignment:
+        path.addRoundedRect(rect,radius,radius)
+        return path
+    left=radius+(alignment if side<0 else 0)
+    right=radius+(alignment if side>0 else 0)
+    x,y,w,h=rect.x(),rect.y(),rect.width(),rect.height()
+    path.moveTo(x+radius,y)
+    path.arcTo(QRectF(x+w-2*radius,y,2*radius,2*radius),90,-90)
+    path.arcTo(QRectF(x+w-2*right,y+h-2*right,2*right,2*right),0,-90)
+    path.arcTo(QRectF(x,y+h-2*left,2*left,2*left),-90,-90)
+    path.arcTo(QRectF(x,y,2*radius,2*radius),180,-90)
+    path.closeSubpath()
+    return path
+
+
 def hide_scrollbars(area):
     """Keep wheel scrolling and caret navigation without visible scrollbars."""
     from PySide6.QtCore import Qt

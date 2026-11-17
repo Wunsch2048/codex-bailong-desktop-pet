@@ -1,6 +1,6 @@
 """Apply theme changes once; preserve live pages, progress and current drafts."""
 from PySide6.QtGui import QColor,QPalette
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent,QObject,Qt
 from PySide6.QtWidgets import QApplication,QWidget
 from theme_registry import color,stylesheet,palette,activate
 
@@ -15,7 +15,42 @@ def set_theme_text(widget,text):
     translated=stylesheet(text)
     if widget.text()!=translated:widget.setText(translated)
 
-def apply_theme(key,custom,roots=None):
+class _ThemeOnShow(QObject):
+    def eventFilter(self,widget,event):
+        if event.type()==QEvent.Type.Show:prepare_theme_widget(widget)
+        return False
+
+
+_on_show=None
+
+def prepare_theme_widget(widget):
+    pending=getattr(widget,'_theme_pending',None)
+    if pending is not None:
+        widget._theme_pending=None
+        widget.removeEventFilter(_on_show)
+        _apply_widget(widget,pending)
+
+def _apply_widget(widget,q):
+    if widget.testAttribute(Qt.WidgetAttribute.WA_SetPalette) and widget.palette()!=q:widget.setPalette(q)
+    source=getattr(widget,'_theme_style_source',None)
+    if source is not None:
+        translated=stylesheet(source)
+        if widget.styleSheet()!=translated:widget.setStyleSheet(translated)
+    rich=getattr(widget,'_theme_text_source',None)
+    if rich is not None:set_theme_text(widget,rich)
+    if hasattr(widget,'invalidate_layers'):widget.invalidate_layers()
+    if hasattr(widget,'_static_key'):widget._static_key=None
+    if hasattr(widget,'_prepare_dial'):widget._prepare_dial()
+    if hasattr(widget,'refresh_theme_colors'):widget.refresh_theme_colors()
+    if hasattr(widget,'_static') and hasattr(widget,'_revision'):widget._revision+=1
+    kind=widget.property('themeIconKind')
+    if kind:
+        from compact_bubble import action_icon
+        widget.setIcon(action_icon(kind,island=bool(widget.property('themeIconIsland'))))
+    if widget.isVisible():QWidget.update(widget)
+
+def apply_theme(key,custom,roots=None,*,defer_hidden=False):
+    global _on_show
     if not activate(key,custom):return False
     p=palette();app=QApplication.instance();q=QPalette(app.palette())
     for role,key in ((QPalette.ColorRole.Window,'surface'),(QPalette.ColorRole.Base,'surface'),(QPalette.ColorRole.AlternateBase,'panel'),(QPalette.ColorRole.WindowText,'ink'),(QPalette.ColorRole.Text,'ink'),(QPalette.ColorRole.Button,'panel'),(QPalette.ColorRole.ButtonText,'ink'),(QPalette.ColorRole.Highlight,'selected'),(QPalette.ColorRole.HighlightedText,'ink'),(QPalette.ColorRole.ToolTipBase,'surface'),(QPalette.ColorRole.ToolTipText,'ink')):q.setColor(role,QColor(p[key]))
@@ -38,20 +73,14 @@ def apply_theme(key,custom,roots=None):
             return n
         widgets=sorted(widgets,key=depth)
     for widget in widgets:
-        if widget.testAttribute(Qt.WidgetAttribute.WA_SetPalette):widget.setPalette(q)
-        source=getattr(widget,'_theme_style_source',None)
-        if source is not None:widget.setStyleSheet(stylesheet(source))
-        rich=getattr(widget,'_theme_text_source',None)
-        if rich is not None:set_theme_text(widget,rich)
-        if hasattr(widget,'invalidate_layers'):widget.invalidate_layers()
-        if hasattr(widget,'_static_key'):widget._static_key=None
-        if hasattr(widget,'_prepare_dial'):widget._prepare_dial()
-        if hasattr(widget,'refresh_theme_colors'):widget.refresh_theme_colors()
-        if hasattr(widget,'_static') and hasattr(widget,'_revision'):widget._revision+=1
-        # QIcons hold pixels; rebuild only the existing compact header icons.
-        kind=widget.property('themeIconKind')
-        if kind:
-            from compact_bubble import action_icon
-            widget.setIcon(action_icon(kind,island=bool(widget.property('themeIconIsland'))))
-        QWidget.update(widget)
+        pending=getattr(widget,'_theme_pending',None)
+        if defer_hidden and not widget.isVisible():
+            if _on_show is None:_on_show=_ThemeOnShow(app)
+            if pending is None:widget.installEventFilter(_on_show)
+            widget._theme_pending=q
+        else:
+            if pending is not None:
+                widget._theme_pending=None
+                widget.removeEventFilter(_on_show)
+            _apply_widget(widget,q)
     return True

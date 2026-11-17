@@ -1,12 +1,12 @@
 """In-card choice sheets; QComboBox data/signals remain compatible."""
 from theme_registry import color as theme_color
 from theme_runtime import set_theme_style,theme_style_source
-from PySide6.QtCore import Qt,QPoint,QRect,QEvent,QVariantAnimation,QEasingCurve
+from PySide6.QtCore import Qt,QPoint,QRect,QRectF,QEvent,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QPainter,QColor,QPen,QFontMetrics
 from PySide6.QtWidgets import QComboBox,QFrame,QVBoxLayout,QLineEdit,QListWidget,QListWidgetItem,QApplication,QGraphicsOpacityEffect
 from typography import FONT_CSS,ui_font
 from ui_theme import SURFACE,PANEL,INK,MUTED,PRIMARY,BORDER,SELECTED,hide_scrollbars
-from settings_controls import motion_enabled
+from settings_controls import motion_enabled,play_animation
 
 
 class ChoiceCombo(QComboBox):
@@ -28,13 +28,41 @@ class ChoiceCombo(QComboBox):
         # including when a previous click left this choice focused.
         event.ignore()
     def display_text(self):return self.currentText()
+    def animate_caption(self,text,animate=True):
+        previous=getattr(self,'_caption_text','')
+        if previous==text:return
+        self._caption_text=text
+        motion=getattr(self,'_caption_motion',None)
+        if motion is not None:motion.stop()
+        self._caption_previous=''
+        if animate and previous and text and self.isVisible() and motion_enabled():
+            if motion is None:
+                motion=self._caption_motion=QVariantAnimation(self)
+                motion.setStartValue(0.);motion.setEndValue(1.);motion.setDuration(160)
+                motion.setEasingCurve(QEasingCurve.Type.OutCubic)
+                motion.valueChanged.connect(lambda _:self.update())
+            self._caption_previous=previous
+            play_animation(motion)
+        self.update()
+    def draw_caption(self,p,rect,flags,text):
+        motion=getattr(self,'_caption_motion',None);rect=QRectF(rect)
+        metrics=QFontMetrics(p.font())
+        def draw(label,opacity,offset):
+            p.setOpacity(opacity)
+            p.drawText(rect.translated(0,offset),flags,metrics.elidedText(label,Qt.TextElideMode.ElideRight,max(0,int(rect.width()))))
+        p.save();p.setClipRect(rect,Qt.ClipOperation.IntersectClip)
+        if motion is not None and motion.state()==QVariantAnimation.State.Running and self._caption_previous:
+            progress=float(motion.currentValue())
+            draw(self._caption_previous,1.-progress,-5*progress)
+            draw(text,progress,5*(1.-progress))
+        else:draw(text,1.,0.)
+        p.restore()
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setBrush(QColor(theme_color(PANEL if self.hasFocus() or self._panel else SURFACE)));p.setPen(Qt.PenStyle.NoPen)
         p.drawRoundedRect(self.rect().adjusted(1,1,-1,-1),7,7)
         p.setFont(ui_font(12));p.setPen(QColor(theme_color(INK if self.isEnabled() else MUTED)))
-        value=QFontMetrics(p.font()).elidedText(self.display_text(),Qt.TextElideMode.ElideRight,max(0,self.width()-34))
-        p.drawText(self.rect().adjusted(9,0,-26,0),Qt.AlignmentFlag.AlignVCenter,value)
+        self.draw_caption(p,self.rect().adjusted(9,0,-26,0),Qt.AlignmentFlag.AlignVCenter,self.display_text())
         p.setPen(QPen(QColor(theme_color(MUTED)),1.5,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap))
         x=self.width()-15;y=self.height()/2
         p.drawLine(QPoint(x-3,int(y-3)),QPoint(x,int(y-6)));p.drawLine(QPoint(x,int(y-6)),QPoint(x+3,int(y-3)))

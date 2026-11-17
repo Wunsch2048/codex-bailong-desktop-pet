@@ -181,6 +181,14 @@ def codex_desktop_open():
         except (psutil.NoSuchProcess,OSError):pass
     return None if denied else False
 
+def codex_desktop_process(pid):
+    """Match the packaged Codex GUI, including its ChatGPT-branded executable."""
+    import psutil
+    try:
+        process=psutil.Process(pid)
+        return process.name().casefold() in ('codex.exe','chatgpt.exe') and 'openai.codex_' in process.exe().casefold()
+    except (psutil.Error,OSError):return False
+
 def codex_conversation_url(session):
     import re
     from uuid import UUID

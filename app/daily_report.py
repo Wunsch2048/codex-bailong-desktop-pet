@@ -3,8 +3,10 @@ from settings_controls import play_animation
 from theme_registry import color as theme_color,chart_color
 from theme_runtime import set_theme_style,theme_style_source,set_theme_text
 import math,random
+from collections import OrderedDict
+from time import monotonic
 from html import escape
-from datetime import datetime
+from datetime import date,datetime,timedelta
 from performance_metrics import measured
 from PySide6.QtCore import Qt,QRect,QRectF,QPointF,QPoint,QSize,QEvent,Signal,QVariantAnimation,QEasingCurve,QAbstractAnimation,QTimer
 from PySide6.QtGui import QPainter,QPainterPath,QPen,QColor,QFontMetrics,QPixmap,QRegion
@@ -13,9 +15,11 @@ from compact_bubble import font,INK,MUTED,FONT_CSS,action_button
 from token_calendar import compact_tokens
 from token_analytics import model_series,token_analogy
 from book_reference import analogy as book_analogy,catalog as book_catalog
-from chart_reveal import ChartReveal,RasterChart,bar_shape
-from chart_curve import SmoothTrace
-from rate_chart import ComboChart,colors as rate_colors,rate_text,model_swatch
+from chart_reveal import ChartReveal,RasterChart
+from rate_chart import ComboChart,colors as rate_colors,rate_text,model_swatch,daily_rates,combined_rate
+from report_metrics import ReportMetricPair
+from report_calendar import DateButton,ReportCalendar
+from report_dates import CALENDAR_PERIODS,DAY,date_bounds,period_text,range_key
 from spring_motion import island_response,dismiss_progress,stage,EXPAND_MS,DISMISS_MS
 from card_motion import card_geometry,paint_card
 
@@ -36,34 +40,50 @@ def tab(text,slot,checked=False,checkable=True):
     b.clicked.connect(slot);return b
 
 class ScopeReadout(QLabel):
-    """Keep the Token amount prominent beside the shared period filter."""
-    def __init__(self,parent=None):
-        super().__init__(parent);self.setMinimumWidth(0);self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed);self.setFixedHeight(27)
+    def __init__(self,caption,parent=None):
+        super().__init__(parent);self.caption=caption;self.unit=''
+        self.setMinimumWidth(0);self.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed);self.setFixedHeight(24)
     def paintEvent(self,event):
-        p=QPainter(self);main=self.text()
-        p.setFont(font(11,True));p.setPen(QColor(theme_color(INK)));fm=QFontMetrics(p.font())
-        shown=fm.elidedText(main,Qt.TextElideMode.ElideRight,self.width());p.drawText(self.rect(),Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignVCenter,shown)
+        p=QPainter(self);small=font(11);large=font(16,True);fm=QFontMetrics(large)
+        baseline=(self.height()-fm.height())//2+fm.ascent()
+        p.setFont(small);p.setPen(QColor(theme_color(MUTED)));p.drawText(0,baseline,self.caption)
+        x=QFontMetrics(small).horizontalAdvance(self.caption)+4
+        unit_width=QFontMetrics(small).horizontalAdvance(self.unit)+3 if self.unit else 0
+        shown=fm.elidedText(self.text(),Qt.TextElideMode.ElideRight,max(0,self.width()-x-unit_width))
+        p.setFont(large);p.setPen(QColor(theme_color(INK)));p.drawText(x,baseline,shown)
+        if self.unit:
+            p.setFont(small);p.setPen(QColor(theme_color(MUTED)));p.drawText(x+fm.horizontalAdvance(shown)+3,baseline,self.unit)
 
 class OverviewStats(QWidget):
     def __init__(self,report,parent=None):
         super().__init__(parent);self.report=report
     def set_columns(self,width):
         self.columns=2;self.setFixedHeight(126)
+    def cell_rect(self,index):
+        width=(self.width()-4)/2
+        return QRectF((index%2)*(width+4),18+(index//2)*41,width,37)
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);r=self.report
         cells=[('会话数',f"{r.get('sessions',0):,}"),('活跃天数',str(r.get('active_days',0))),
                ('Token 总量',compact_tokens(r.get('all_total',0))),('最常用模型',r.get('favorite_model','暂无记录')),
                ('消息数',f"{r.get('messages',0):,}"),('高峰时段',f"{r['peak_hour']:02}:00–{r['peak_hour']+1:02}:00" if r.get('peak_hour') is not None else '暂无用量')]
-        width=(self.width()-4)/2
         p.setPen(QColor(theme_color(PRIMARY)));p.setFont(font(11));p.drawText(QRectF(1,0,self.width()-2,16),Qt.AlignmentFlag.AlignVCenter,'累计  本机记录')
         p.drawText(QRectF(1,105,self.width()-2,18),Qt.AlignmentFlag.AlignVCenter,'昨日')
         p.setPen(QColor(theme_color(MUTED)));p.drawText(QRectF(1,105,self.width()-2,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,f"{r.get('messages',0):,} 条消息")
         for i,(label,value) in enumerate(cells[:4]):
-            rect=QRectF((i%2)*(width+4),18+(i//2)*41+(18 if i>=4 else 0),width,37)
+            rect=self.cell_rect(i)
             p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#f1ecf6')));p.drawRoundedRect(rect,6,6)
             p.setPen(theme_color(MUTED));p.setFont(font(10));p.drawText(rect.adjusted(6,2,-3,-20),Qt.AlignmentFlag.AlignVCenter,label)
             p.setPen(theme_color(INK));p.setFont(font(11 if i in (3,5) else 14,True))
-            p.drawText(rect.adjusted(6,17,-5,-2),Qt.AlignmentFlag.AlignVCenter,QFontMetrics(p.font()).elidedText(value,Qt.TextElideMode.ElideRight,round(width-11)))
+            p.drawText(rect.adjusted(6,17,-5,-2),Qt.AlignmentFlag.AlignVCenter,QFontMetrics(p.font()).elidedText(value,Qt.TextElideMode.ElideRight,round(rect.width()-11)))
+
+class ModelUsageSummary(ReportMetricPair):
+    def __init__(self):
+        super().__init__(('单日峰值','日均用量'),'report_model_usage_summary')
+
+    def set_usage(self,series,model,total):
+        peak=series['model_peaks'].get(model) if model else series['peak']
+        self.set_values(*(compact_tokens(peak),compact_tokens(round(total/series['days']))) if peak is not None else ('—','—'))
 
 class ReportPlot(QWidget,RasterChart,ComboChart):
     hoverText=Signal(str)
@@ -72,7 +92,7 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
         self.selected=selected;self.hits=[];self.points=[];self._hover='';self._resume_time=None;self.setMouseTracking(True);self.setFixedHeight(94)
         self.reveal=ChartReveal(self,420 if mode=='line' else 620);self.init_combo();self._pending_chart_data=False
         self.reveal.animation.finished.connect(self._apply_chart_data)
-        self._measure_axes()
+        self._axis_font=font(10,True);self._axis_metrics=QFontMetrics(self._axis_font)
     def set_data(self,report,series=None,selected=None):
         context=lambda r,s,selection:(r.get('day'),(s or {}).get('start'),(s or {}).get('end'),selection)
         held=self.hold_inspection() if context(self.report,self.series,self.selected)==context(report,series,selected) else None
@@ -83,15 +103,10 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
             # Keep this entry's axes/columns fixed when a background scan
             # delivers another snapshot. Commit the latest data once landed.
             self._pending_chart_data=True;return
-        self._pending_chart_data=False;self.hits=[];self._measure_axes();self.invalidate_layers();self._set_hover('');self.resume_inspection(held);self._pending_inspection=None;self.update()
+        self._pending_chart_data=False;self.hits=[];self.invalidate_layers();self._set_hover('');self.resume_inspection(held);self._pending_inspection=None;self.update()
     def _apply_chart_data(self):
         if not self._pending_chart_data:return
-        self._pending_chart_data=False;self.hits=[];self._measure_axes();self.invalidate_layers();self._set_hover('');self.resume_inspection(getattr(self,'_pending_inspection',None));self._pending_inspection=None;self.update()
-    def _measure_axes(self):
-        values=self.report.get('hours',[0]*24) if self.mode=='line' else [b['values'].get(self.selected,0) if self.selected else b['total'] for b in self.series['bins']]
-        top=max(values,default=0);self._axis_font=font(10,True);self._axis_metrics=QFontMetrics(self._axis_font)
-        self._axis_labels=[compact_tokens(round(top*f)) for f in (0,.5,1)]
-        self._axis_left=3 if self.mode=='line' else max(37,max(self._axis_metrics.horizontalAdvance(t) for t in self._axis_labels)+7)
+        self._pending_chart_data=False;self.hits=[];self.invalidate_layers();self._set_hover('');self.resume_inspection(getattr(self,'_pending_inspection',None));self._pending_inspection=None;self.update()
     def begin_reveal(self):self._apply_chart_data();self.ensure_layers();self._resume_time=None;self.reveal.prepare()
     def freeze_reveal(self):
         self._resume_time=self.reveal.animation.currentTime() if self.reveal.animation.state()==QAbstractAnimation.State.Running else None
@@ -113,74 +128,51 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
     def hideEvent(self,event):self.dismiss_inspection();self.reveal.stop();super().hideEvent(event)
     def chart_rect(self):
         top=19 if self.mode=='line' else math.ceil(self._axis_metrics.height()/2)+2
-        return QRectF(self._axis_left,top,max(1,self.width()-self._axis_left-6),max(1,self.height()-self._axis_metrics.height()-6-top))
+        return QRectF(3,top,max(1,self.width()-9),max(1,self.height()-self._axis_metrics.height()-6-top))
     def chart_mode(self):return self.mode
     trace_color=COLORS[0]
-    def paintEvent(self,event):self.paint_combo() if self.mode=='line' else self.paint_layers()
+    def paintEvent(self,event):self.paint_combo()
     def render_layers(self,p,dynamic):
-        if self.mode=='line':return self._render_combo(p,dynamic)
-        chart=self.chart_rect();bottom=chart.bottom();self.hits=[];self._combo_records=[]
-        if self.mode=='line':values=self.report.get('hours',[0]*24);top=max(values,default=0)
-        else:
-            bins=self.series['bins'];values=[b['values'].get(self.selected,0) if self.selected else b['total'] for b in bins];top=max(values,default=0)
-        p.setFont(self._axis_font)
-        for f,text in zip((0,.5,1),self._axis_labels):
-            y=bottom-chart.height()*f;p.setPen(QPen(QColor(theme_color('#e9e1ef')),.7));p.drawLine(QPointF(chart.left(),y),QPointF(chart.right(),y))
-            p.setPen(theme_color(MUTED))
-            baseline=y+(self._axis_metrics.ascent()-self._axis_metrics.descent())/2
-            if self.mode!='line':p.drawText(QPointF(chart.left()-6-self._axis_metrics.horizontalAdvance(text),baseline),text)
-        slot=chart.width()/max(1,len(values));points=[];self.points=points;self.curve=None;path=QPainterPath();static=p;p=dynamic
         if self.mode=='line':
-            for i,value in enumerate(values):
-                point=QPointF(chart.left()+(i+.5)*chart.width()/24,bottom-chart.height()*value/max(1,top));points.append(point)
-                self.hits.append((QRectF(point.x()-slot/2,chart.top(),slot,chart.height()),f"{i:02}:00–{i+1:02}:00  {value:,} Tokens"))
-            self.curve=SmoothTrace(points);path=self.curve.path
-            fill=QPainterPath(path);fill.lineTo(points[-1].x(),bottom);fill.lineTo(points[0].x(),bottom);fill.closeSubpath();p.fillPath(fill,QColor(theme_color('#ebe2f2')))
-            p.setPen(QPen(QColor(chart_color(original=COLORS[0])),2,Qt.PenStyle.SolidLine,Qt.PenCapStyle.RoundCap,Qt.PenJoinStyle.RoundJoin));p.drawPath(path)
-            labels=[(0,'00'),(.5,'12'),(1,'24时')]
-        else:
-            model_order=[m['model'] for m in self.series['models']]
-            for i,(b,value) in enumerate(zip(bins,values)):
-                y=bottom
-                total_height=chart.height()*value/max(1,top)
-                p.save()
-                p.setClipPath(bar_shape(QRectF(chart.left()+i*slot,bottom-total_height,max(.8,slot-1.5),total_height)),Qt.ClipOperation.IntersectClip)
-                for j,model in enumerate(model_order):
-                    if self.selected and model!=self.selected:continue
-                    amount=b['values'].get(model,0);height=chart.height()*amount/max(1,top)
-                    if height<=0:continue
-                    p.fillRect(QRectF(chart.left()+i*slot,y-height,max(.8,slot-1.5),height),QColor(model_swatch(j)));y-=height
-                p.restore()
-                label=b['start'] if b['start']==b['end'] else b['start']+' 至 '+b['end']
-                rect=QRectF(chart.left()+i*slot,chart.top(),slot,chart.height())
-                self.hits.append((rect,label+f'  {value:,} Tokens'))
-                rows=[(self.selected or 'Token 用量',compact_tokens(value),None)]
-                if not self.selected:
-                    ranked=sorted(enumerate(model_order),key=lambda entry:-b['values'].get(entry[1],0))
-                    used=[(j,model) for j,model in ranked if b['values'].get(model,0)>0]
-                    for j,model in used[:3]:
-                        rows.append((model,compact_tokens(b['values'][model]),model_swatch(j)))
-                    if len(used)>3:rows.append(('其他模型',compact_tokens(sum(b['values'][m] for _,m in used[3:])),None))
-                self._combo_records.append(dict(rect=rect,label=label,subtitle=self.selected or '全部模型',rows=rows))
-            labels=[(0,self.series['start'][5:].replace('-','/')),(1,self.series['end'][5:].replace('-','/'))]
-        p=static;p.setFont(font(10,True));p.setPen(theme_color(MUTED))
-        for f,text in labels:
-            x=chart.left()+f*chart.width();rect=QRectF(x-(30 if f==1 else 0 if f==0 else 15),bottom+4,32,self._axis_metrics.height()+2)
-            p.drawText(rect,Qt.AlignmentFlag.AlignVCenter| (Qt.AlignmentFlag.AlignRight if f==1 else Qt.AlignmentFlag.AlignLeft),text)
-        if not top:p.drawText(chart,Qt.AlignmentFlag.AlignCenter,'暂无 Token 用量')
+            self._render_combo(p,dynamic)
+            return
+        chart=self.chart_rect()
+        series=self.series
+        selected=self.selected
+        bins=[]
+        for bucket in series['bins']:
+            models={selected:bucket['values'].get(selected,0)} if selected else bucket['values']
+            label=bucket['start'] if bucket['start']==bucket['end'] else bucket['start']+' 至 '+bucket['end']
+            bins.append(dict(bucket,label=label,models=models,value=sum(models.values()),future=bucket['start']>series['through']))
+        rates=(self.report.get('rates') or {}).get('days') or {}
+        items=daily_rates(bins,{day:value for day,value in rates.items() if day<=series['through']})
+        order={entry['model']:index for index,entry in enumerate(series['models'])}
+        rate_label='全模型回合均速' if selected else '回合均速'
+        self.combo_layers(p,dynamic,bins,items,chart,by_model=True,model_order=order,rate_label=rate_label)
+        self.hits=[(record['rect'],record['label']+'  '+record['amount']) for record in self._combo_records]
+        self.points=[QPointF(record['rect'].center().x(),chart.bottom()) for record in self._combo_records]
+        p.setFont(self._axis_font);p.setPen(theme_color(MUTED))
+        for edge,day in enumerate((series['start'],series['end'])):
+            x=chart.right()-30 if edge else chart.left()
+            align=Qt.AlignmentFlag.AlignRight if edge else Qt.AlignmentFlag.AlignLeft
+            p.drawText(QRectF(x,chart.bottom()+4,32,self._axis_metrics.height()+2),
+                       align|Qt.AlignmentFlag.AlignVCenter,day[5:].replace('-','/'))
+        if not any(bucket['value'] for bucket in bins):
+            p.drawText(chart,Qt.AlignmentFlag.AlignCenter,'暂无 Token 用量')
     def _render_combo(self,p,dynamic):
         values=self.report.get('hours',[0]*24);plot=self.chart_rect()
         models=self.report.get('hour_models') or []
         bins=[dict(label=f'{i:02}:00–{i+1:02}:00',value=v,models=models[i] if i<len(models) else {}) for i,v in enumerate(values)]
-        items=(self.report.get('rates') or {}).get('yesterday') or []
-        self.combo_layers(p,dynamic,bins,items,plot,by_model=True)
+        rates=self.report.get('rates') or {}
+        items=rates.get('yesterday') or []
+        self.combo_layers(p,dynamic,bins,items,plot,by_model=True,output_rates=rates.get('yesterday_output') or [])
         self.hits=[(r['rect'],b['label']+'  '+format(b['value'],',')+' Tokens') for r,b in zip(self._combo_records,bins)]
         self.points=[QPointF(r['rect'].center().x(),plot.bottom()) for r in self._combo_records]
         theme,bar,line=rate_colors();p.setFont(font(10));p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(bar));p.drawRoundedRect(QRectF(3,3,5,7),1,1)
         if any(models):
             p.setBrush(QColor(model_swatch(0)));p.drawRoundedRect(QRectF(3,3,5,7),1,1)
         p.setPen(QColor(theme['muted']));p.drawText(QRectF(12,0,53,16),Qt.AlignmentFlag.AlignVCenter,'模型用量' if any(models) else '用量')
-        p.setPen(QPen(QColor(line),1.8));p.drawLine(QPointF(62,7),QPointF(74,7));p.setPen(QColor(theme['muted']));p.drawText(QRectF(79,0,65,16),Qt.AlignmentFlag.AlignVCenter,'回合均速')
+        p.setPen(QPen(QColor(line),1.8));p.drawLine(QPointF(62,7),QPointF(74,7));p.setPen(QColor(theme['muted']));p.drawText(QRectF(79,0,85,16),Qt.AlignmentFlag.AlignVCenter,'小时输出速率')
         p.setPen(QColor(theme['muted']));p.setFont(font(10))
         for f,label in [(0,'00时'),(.5,'12'),(1,'24时')]:
             p.drawText(QRectF(plot.left()+f*plot.width()-(32 if f==1 else 15 if f==.5 else 0),plot.bottom()+2,32,18),Qt.AlignmentFlag.AlignVCenter|(Qt.AlignmentFlag.AlignRight if f==1 else Qt.AlignmentFlag.AlignLeft),label)
@@ -245,17 +237,24 @@ class DailyReport(QWidget):
     MIN_WIDTH=268
     def __init__(self,bubble):
         flags=Qt.WindowType.Tool|Qt.WindowType.FramelessWindowHint
-        if bubble.windowFlags()&Qt.WindowType.WindowStaysOnTopHint:flags|=Qt.WindowType.WindowStaysOnTopHint
+        from surface_policy import card_layer
+        layer=card_layer(bubble)
+        if layer=='top':flags|=Qt.WindowType.WindowStaysOnTopHint
+        elif layer=='bottom':flags|=Qt.WindowType.WindowStaysOnBottomHint
         super().__init__(bubble,flags);self.bubble=bubble;self.requested=False;self.page='overview';self.period='all';self.selected_model=None
         self.snapshot={};self.natural_height=412;self._overview_height=412;self.fraction=0.;self._building=False
         self.book_index=0;self._book_opened=False
         self._animating=False;self._frame=None;self._pending_rebuild=False;self._syncing=False;self._series_cache={}
         self.refresh_busy=False;self._body_cache={};self._data_revision=0
+        self.calendar=None;self.calendar_picks={'models':{},'projects':{}}
+        self._calendar_transition=False;self._failed_cost_range=None
+        self._cost_range_cache=OrderedDict()
+        self._calendar_usage={};self._calendar_usage_rows=None
         self._host_open_page=None;self._host_prepared_page=None;self._host_return=False;self._host_closing=False
         self.setWindowTitle('白龙数据面板');self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating);self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         set_theme_style(self,'QLabel{'+FONT_CSS+'color:#393343;background:transparent;}QScrollArea{border:0;background:transparent;}QScrollBar:vertical{background:#f5f0f8;width:7px;margin:0;border-radius:3px;}QScrollBar::handle:vertical{background:#c7b7d7;min-height:18px;border-radius:3px;}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}')
-        self.surface=QWidget(self);self.layout=QVBoxLayout(self.surface);self.layout.setContentsMargins(10,8,10,8);self.layout.setSpacing(5)
+        self.surface=QWidget(self);self.surface.installEventFilter(self);self.layout=QVBoxLayout(self.surface);self.layout.setContentsMargins(10,8,10,8);self.layout.setSpacing(5)
         from data_page_motion import PageFade
         self.page_fade=PageFade(self.surface)
         self._page_motion_scope=False
@@ -284,22 +283,25 @@ class DailyReport(QWidget):
     def set_snapshot(self,snapshot):
         snapshot=snapshot or {};previous=self.snapshot;self.snapshot=snapshot
         r=snapshot.get('report') or {};old=previous.get('report') or {}
-        if r==old and all(snapshot.get(k)==previous.get(k) for k in ('partial','unavailable','week_cycle','quota_history','projects')):return
+        if r==old and all(snapshot.get(k)==previous.get(k) for k in ('partial','unavailable','refresh_failed','week_cycle','quota_history','projects')):return
         self._data_revision+=1
         if r.get('day')!=old.get('day') or r.get('daily_models')!=old.get('daily_models'):self._series_cache.clear()
         if self._animating or self.follow.active:
             self._pending_rebuild=True;return
         if self.requested:
             if r and self.report:
-                self.report=r;self.day_label.setText(r['day'][5:].replace('-','/')+' 昨日' if self.page not in ('cycle','projects') else '')
+                self.report=r
+                self.day_label.setText(r['day'][5:].replace('-','/')+' 昨日' if self.page=='overview' else '')
                 if self.page=='overview':
                     self.stats.report=r;self.stats.update()
                     self.hour_total.setText(compact_tokens(r.get('yesterday_total',0)));self.daily_cost.set_data(r,self.snapshot.get('projects'))
                     if any(r.get(key)!=old.get(key) for key in ('hours','hour_models','rates')):self.plot.set_data(r)
                     self.readout.setText(self._daily_readout(r))
                     self._update_analogy(r)
-                elif self.page=='models':self._update_models()
-                elif self.page=='projects':self.project_view.set_data(snapshot.get('projects'),self.period)
+                elif self.page=='models':
+                    if r.get('day')!=old.get('day'):self.ensure_chrome(r)
+                    self._update_models()
+                elif self.page=='projects':self._update_projects()
                 else:self._update_cycle()
                 self.note_label.setText(self._note(r));self.update()
                 self._update_data_state()
@@ -309,13 +311,15 @@ class DailyReport(QWidget):
                 self.rebuild();self.sync_geometry();self.chart_entry()
     def _daily_readout(self,r):
         item=(r.get('rates') or {}).get('yesterday_mean') or {}
-        return '昨日均速  '+(rate_text(item) if item.get('rate') is not None else '—')
+        return '昨日回合均速  '+(rate_text(item) if item.get('rate') is not None else '—')
     def open_yesterday_cost(self):
-        self.period='yesterday';self.set_page('projects')
+        self.calendar_picks['projects'].pop(DAY,None)
+        self.period=DAY;self.set_page('projects')
+        self.ensure_chrome(self.report)
         view=self.project_view
         view.search.clear();view.archive='all'
         blocked=view.archive_control.blockSignals(True);view.archive_control.setCurrentIndex(view.archive_control.findData('all'),False);view.archive_control.blockSignals(blocked)
-        view.set_data(self.snapshot.get('projects'),'yesterday');view.reset_navigation()
+        self._update_projects();view.reset_navigation()
 
     def show_cost_explanation(self):
         ExplanationOverlay(self.scroll.viewport(),'金额怎么估算',[
@@ -323,6 +327,7 @@ class DailyReport(QWidget):
             '非缓存输入 × 输入价\n＋ 缓存输入 × 缓存价\n＋ 输出 × 输出价',
             '推理已包含在输出中。未知模型、价格或计数不完整的部分不当作零元。',
             '回合均速为输出 Token（含推理）除以整轮任务耗时，包含思考、工具和等待，不能据此直接断定模型限速。首 Token 等待仅在有可靠记录时显示。',
+            '小时输出速率按日志中的输出增量和采样时长计算。间隔超过 5 分钟的采样留空，跨整点的短区间按时长分摊。',
             '昨日按本地时间 00:00–24:00 统计。点击昨日金额可查看当日全部项目，含已归档项目。'])
 
     def request_refresh(self):
@@ -335,16 +340,130 @@ class DailyReport(QWidget):
         self.refresh_busy=False;self.refresh_button.finish(success)
         self.refresh_button.setToolTip('数据已刷新' if success else '刷新失败，保留上次统计；点击重试')
     def _series(self):
-        if self.period not in self._series_cache:self._series_cache[self.period]=model_series(self.report,self.period)
-        series=self._series_cache[self.period]
-        if self.selected_model and not any(item['model']==self.selected_model for item in series['models']):self.selected_model=None
+        bounds=self._calendar_bounds('models');key=(self.period,bounds)
+        if key not in self._series_cache:
+            self._series_cache[key]=model_series(self.report,self.period,bounds) if bounds else model_series(self.report,self.period)
+            while len(self._series_cache)>10:self._series_cache.pop(next(iter(self._series_cache)))
+        series=self._series_cache[key]
+        if self.selected_model and self.selected_model not in self._model_calendar_data():self.selected_model=None
         return series
+    def _model_calendar_data(self):
+        rows=self.report.get('daily_models')
+        if rows is not self._calendar_usage_rows:
+            available={}
+            for row in rows or ():
+                if row['total']>0:available.setdefault(row['model'],set()).add(date.fromisoformat(row['day']))
+            self._calendar_usage=available;self._calendar_usage_rows=rows
+        return self._calendar_usage
+    def _cutoff(self,kind):
+        value=(self.snapshot.get('projects') or {}).get('yesterday') if kind=='projects' else None
+        value=value or (self.snapshot.get('report') or {}).get('day')
+        return date.fromisoformat(value) if value else date.today()-timedelta(days=1)
+    def _calendar_bounds(self,kind):
+        if self.period not in CALENDAR_PERIODS:return None
+        cutoff=self._cutoff(kind)
+        return date_bounds(self.period,self.calendar_picks[kind].get(self.period,cutoff))
+    def _watch_project_range(self,bounds,*,refresh=True):
+        activity=getattr(self.bubble.owner_pet(),'activity',None)
+        watch=getattr(activity,'set_project_range',None)
+        if watch:
+            if refresh:watch(bounds)
+            else:watch(bounds,refresh=False)
+        return bool(watch)
+    def _update_projects(self):
+        projects=self.snapshot.get('projects') or {}
+        bounds=self._calendar_bounds('projects')
+        title=period_text(self.period,bounds,cost=True)
+        period=self.period
+        if bounds and (projects.get('yesterday') or self.period in self.calendar_picks['projects']):
+            period=DAY if self.period==DAY and bounds[0]==self._cutoff('projects') else range_key(bounds)
+        custom=period.startswith('calendar:')
+        ranges=projects.get('ranges',{})
+        cached=False
+        if custom:
+            revision=projects.get('price_revision')
+            key=(period,revision)
+            if period in ranges and not projects.get('initial_pending'):
+                rows=ranges[period]
+                if key not in self._cost_range_cache or self._cost_range_cache[key][1] is not rows:
+                    self._cost_range_cache[key]=(monotonic(),rows)
+                self._cost_range_cache.move_to_end(key)
+                if len(self._cost_range_cache)>8:self._cost_range_cache.popitem(last=False)
+            elif key in self._cost_range_cache:
+                stamp,rows=self._cost_range_cache[key]
+                if monotonic()-stamp<120:
+                    projects=dict(projects,ranges=ranges|{period:rows})
+                    cached=True
+        default=custom and bounds==date_bounds(self.period,self._cutoff('projects'))
+        requested=bounds if custom and self.requested and (not default or period not in ranges) else None
+        watching=self._watch_project_range(requested,refresh=False) if cached else self._watch_project_range(requested)
+        if custom and period not in projects.get('ranges',{}):
+            failed=bool(self.snapshot.get('refresh_failed')) or self._failed_cost_range==bounds
+            projects=dict(projects,calendar_loading=watching and not failed,calendar_error=failed)
+        elif self._failed_cost_range==bounds:self._failed_cost_range=None
+        self.project_view.set_data(projects,period,date_caption=title,calendar_enabled=bounds is not None)
+    def cost_range_failed(self,bounds):
+        if self.requested and self.page=='projects' and bounds==self._calendar_bounds('projects'):
+            self._failed_cost_range=bounds;self._update_projects()
+    def open_calendar(self,kind):
+        if self.calendar or self._animating or self.follow.active:return
+        cutoff=self._cutoff(kind)
+        if kind=='quota':
+            cycles=self.cycle_view.cycles;selected=self.cycle_view.selected_id
+            if not cycles or selected is None:return
+            args=(selected,cutoff+timedelta(days=1),(),cycles)
+        else:
+            bounds=self._calendar_bounds(kind)
+            if bounds is None:return
+            if kind=='models':
+                available=self._model_calendar_data()
+                all_days=set().union(*available.values())
+                days=available.get(self.selected_model,()) if self.selected_model else all_days
+            else:
+                days={date.fromisoformat(day) for day in (self.snapshot.get('projects') or {}).get('calendar_days',())}
+                all_days=days
+            args=(bounds[0],cutoff,{day for day in days if day<=cutoff},(),min(all_days,default=cutoff))
+        self.page_fade.clear();before=self._calendar_frame()
+        self.calendar=ReportCalendar(self.surface,kind,self.period,*args)
+        self.calendar.set_surface_scale(self.bubble.card_pixels)
+        self.calendar.cancelled.connect(self.close_calendar)
+        self.calendar.accepted.connect(self.apply_calendar)
+        self.calendar.setGeometry(self.surface.rect());self.calendar.show();self.calendar.raise_()
+        self.calendar.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._calendar_slide(before,1)
+    def _calendar_slide(self,before,direction):
+        from panel_transition import settle_visible
+        settle_visible(self.surface)
+        self._calendar_transition=before is not None
+        if self._calendar_transition:
+            self.page_fade.present(before,self.page_fade.snapshot(self.surface),self.surface.rect(),direction=direction)
+    def _calendar_frame(self):
+        from settings_controls import motion_enabled
+        return self.page_fade.snapshot(self.surface) if motion_enabled() and self.isVisible() else None
+    def close_calendar(self,animate=True):
+        if self.calendar is None:return
+        self.page_fade.clear();self._calendar_transition=False;before=self._calendar_frame() if animate else None
+        calendar=self.calendar;self.calendar=None;calendar.hide();calendar.deleteLater()
+        if animate:self._calendar_slide(before,-1)
+    def apply_calendar(self,value):
+        if self.calendar is None:return
+        kind=self.calendar.kind
+        if kind=='quota':self.cycle_view.select_id(value)
+        else:
+            self.calendar_picks[kind][self.period]=value
+            if kind=='models':
+                self.ensure_chrome(self.report);self._update_models()
+            else:
+                self._failed_cost_range=None
+                self.project_view.reset_navigation();self._update_projects()
+        self.close_calendar()
     def chart_entry(self):
         if not self._animating and not self.follow.active and self.plot:
             self.plot.begin_reveal()
             if self.page_fade.animation.state()==QAbstractAnimation.State.Running:self._refresh_page_frame()
             else:QTimer.singleShot(0,self.plot,self.plot.start_reveal)
     def _refresh_page_frame(self):
+        if self._calendar_transition and self.page_fade.animation.state()==QAbstractAnimation.State.Running:return
         if self.page_fade.slide and self.page_fade.animation.state()==QAbstractAnimation.State.Running:
             self.page_fade.next_frame=self._capture_page(self.page_fade.geometry()) if self._page_motion_scope else self.page_fade.snapshot(self.scroll)
     def _page_rect(self,include_scope):
@@ -368,13 +487,15 @@ class DailyReport(QWidget):
         finally:p.end()
         return frame
     def set_page(self,page):
+        self.close_calendar(False)
+        if self.page=='projects' and page!='projects':self._watch_project_range(None)
         if self.page==page:
             if page=='projects':self.project_view.select(None)
             self.page_buttons[page].setChecked(True);return
         if page=='models' and self.period=='yesterday':self.period='all'
         from settings_controls import motion_enabled
         frame=None;previous=self.page
-        scope_change=(previous in ('models','projects'))!=(page in ('models','projects'))
+        scope_change=previous in ('models','projects') or page in ('models','projects')
         include_scope=scope_change or (self.page_fade.isVisible() and self._page_motion_scope)
         if self.isVisible() and not self._animating and not self.follow.active and motion_enabled():
             if self.plot:self.plot.freeze_reveal()
@@ -415,27 +536,35 @@ class DailyReport(QWidget):
                 self.repaint();self.setWindowOpacity(opacity);self.repaint();present_barrier()
                 self.follow.park(self.follow.shield)
     def _page_motion_finished(self):
-        if self.requested and self.isVisible() and self.plot:self.plot.start_reveal()
+        self._calendar_transition=False
+        if self.requested and self.isVisible() and self.plot and not self.calendar:self.plot.start_reveal()
     def set_period(self,period):
         if self.period==period:
             if period in self.range_buttons:self.range_buttons[period].setChecked(True)
             return
-        self.period=period;self.selected_model=None
-        self.ensure_chrome(self.report)
+        self.period=period
+        self.ensure_chrome(self.report,animate_period=True)
         if self._animating or self.follow.active:self._pending_rebuild=True;return
         self.page_fade.clear()
         if self.page=='models' and self.report:self._update_models();self.chart_entry()
-        elif self.page=='projects' and hasattr(self,'project_view'):self.project_view.set_data(self.snapshot.get('projects'),self.period)
+        elif self.page=='projects' and hasattr(self,'project_view'):self.project_view.reset_navigation();self._update_projects()
     def select_model(self,model):
         self.selected_model=None if self.selected_model==model else model
         if self._animating or self.follow.active:self._pending_rebuild=True;return
         self.page_fade.clear()
-        if self.page=='models' and self.report:self._update_models();self.chart_entry()
+        if self.page=='models' and self.report:
+            # The plot is already on screen. Restarting its entrance scales
+            # every bar to zero and briefly makes the chart look collapsed.
+            self.plot.reveal.stop()
+            self.plot.reveal.pending=False
+            self.plot.reveal.progress=1.
+            self._update_models()
     def _update_models(self):
         series=self._series()
-        shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),series['total'])
-        self.model_total.setText('Token  '+compact_tokens(shown))
+        shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),0) if self.selected_model else series['total']
+        self.model_total.setText(compact_tokens(shown))
         self.plot.set_data(self.report,series,self.selected_model)
+        self.model_usage.set_usage(series,self.selected_model,shown)
         for period,button in self.range_buttons.items():button.setChecked(period==self.period)
         if self.period_control:
             blocked=self.period_control.blockSignals(True)
@@ -459,12 +588,17 @@ class DailyReport(QWidget):
                 row.item=item;row.total=series['total'];row.index=i;row.selected=self.selected_model==item['model']
                 row.setChecked(row.selected)
                 row.setAccessibleName(item['model']+f"  {item['total']:,} Tokens");row.update()
-        self._update_filter_label()
+        self._update_model_rate()
         if 'models' in self._body_cache:self._body_cache['models']['model_state']=(self._data_revision,self.period,self.selected_model)
-    def _update_filter_label(self):
-        if not hasattr(self,'filter_label'):return
-        self.filter_label.setText('筛选：'+self.selected_model if self.selected_model else '范围内全部模型')
-        self.clear_filter.setVisible(bool(self.selected_model))
+    def _update_model_rate(self):
+        series=self._series()
+        rates=(self.report.get('rates') or {}).get('days') or {}
+        value=combined_rate(rate for day,rate in rates.items() if series['start']<=day<=series['through'])
+        self.model_rate_label.unit='tok/s' if value else ''
+        number=f"{value['rate']:.1f}" if value else '—'
+        self.model_rate_label.setText(number)
+        self.model_rate_label.setAccessibleName(('全模型平均 Token 速率 ' if self.selected_model else '平均 Token 速率 ')+number+' '+self.model_rate_label.unit)
+        self.model_rate_label.setAccessibleDescription('曲线和平均速率按所选日期内全部模型的回合输出 Token 除以已记录回合总耗时')
     def _cycle_text(self,text,size=12,strong=False):
         label=QLabel(text);label.setTextFormat(Qt.TextFormat.PlainText)
         label.setFont(font(size,strong));set_theme_style(label,FONT_CSS+f'font-size:{size}px;font-weight:{600 if strong else 500};'
@@ -479,8 +613,6 @@ class DailyReport(QWidget):
     def _update_cycle(self):
         self.cycle_view.set_snapshot(self.snapshot)
         if 'cycle' in self._body_cache:self._body_cache['cycle']['cycle_revision']=self._data_revision
-    def clear_model_filter(self):
-        if self.selected_model:self.select_model(self.selected_model)
     def _add_model_rows(self,series):
         self.model_rows=[]
         for i,item in enumerate(series['models']):
@@ -512,7 +644,7 @@ class DailyReport(QWidget):
         self.book_index=(self.book_index+1)%len(book_catalog()['books'])
         self._update_analogy(self.report)
         self.sync_geometry()
-    def ensure_chrome(self,r):
+    def ensure_chrome(self,r,animate_period=False):
         if not hasattr(self,'header_title'):
             header=QWidget();header.setFixedHeight(28);row=QHBoxLayout(header);row.setContentsMargins(0,0,0,0);row.setSpacing(3)
             self.header_title=self.label('数据面板',12,True);self.day_label=self.secondary(self.label('',11));self.day_label.setFixedWidth(76)
@@ -525,25 +657,52 @@ class DailyReport(QWidget):
                 b=tab(text,lambda checked=False,k=page:self.set_page(k),False);b.setObjectName('report_'+page);row.addWidget(b);self.page_buttons[page]=b
             row.addStretch()
             self.cost_more_button=CostMoreButton();self.cost_more_button.clicked.connect(lambda:self.project_view.more() if hasattr(self,'project_view') else None);row.addWidget(self.cost_more_button)
-            self.scope_row=QWidget();self.scope_row.setFixedHeight(27);scope=QHBoxLayout(self.scope_row);scope.setContentsMargins(0,0,0,0);scope.setSpacing(5)
-            self.scope_left=QStackedWidget();self.scope_left.setMinimumWidth(0);self.scope_left.setFixedHeight(27)
-            self.scope_model_total=ScopeReadout();self.scope_project_search=ProjectSearchBar()
-            self.scope_left.addWidget(self.scope_model_total);self.scope_left.addWidget(self.scope_project_search);scope.addWidget(self.scope_left,1);nav_layout.addWidget(self.scope_row)
-            control=SlidingSegments([('全部','all'),('月','30d'),('周','7d')],compact=True)
+            self.quota_more_button=CostMoreButton();self.quota_more_button.setAccessibleName('更多额度操作')
+            self.quota_more_button.clicked.connect(lambda:self.cycle_view.more(self.quota_more_button))
+            row.addWidget(self.quota_more_button)
+            self.scope_row=QWidget();scope=QHBoxLayout(self.scope_row);scope.setContentsMargins(0,0,0,0);scope.setSpacing(4)
+            self.scope_left=QStackedWidget();self.scope_left.setMinimumWidth(0)
+            model_summary=QWidget();summary=QVBoxLayout(model_summary);summary.setContentsMargins(0,0,0,0);summary.setSpacing(0)
+            self.scope_model_total=ScopeReadout('Token');self.model_rate_label=ScopeReadout('Token 速率')
+            self.scope_model_total.setFixedHeight(27)
+            self.model_rate_label.setObjectName('report_model_rate')
+            summary.addWidget(self.scope_model_total);summary.addWidget(self.model_rate_label);summary.addStretch()
+            self.scope_project_search=ProjectSearchBar()
+            self.scope_left.addWidget(model_summary);self.scope_left.addWidget(self.scope_project_search);scope.addWidget(self.scope_left,1);nav_layout.addWidget(self.scope_row)
+            control=SlidingSegments([('全部','all'),('月','30d'),('周','7d'),('日','yesterday')],compact=True)
             control.setObjectName('report_periods');control.setFixedWidth(94);self.period_control=control;self.range_buttons=control.buttons
             for period,b in control.buttons.items():
-                b.setObjectName('report_range_'+period);b.setAccessibleName({'all':'全部历史','30d':'近30天','7d':'近7天'}[period])
-            control.currentIndexChanged.connect(lambda index:self.set_period(control.currentData()));scope.addWidget(control);self.yesterday_scope=tab('昨日 ×',lambda:self.set_period('all'));self.yesterday_scope.setFixedWidth(94);scope.addWidget(self.yesterday_scope);self.yesterday_scope.hide();self.layout.addWidget(nav)
-        self.day_label.setText(r.get('day','--')[5:].replace('-','/')+' 昨日' if self.page not in ('cycle','projects') else '')
+                b.setObjectName('report_range_'+period);b.setAccessibleName({'all':'全部历史','30d':'按月','7d':'按周','yesterday':'按日'}[period])
+            control.currentIndexChanged.connect(lambda index:self.set_period(control.currentData()))
+            filters=QWidget();filter_layout=QVBoxLayout(filters);filter_layout.setContentsMargins(0,0,0,0);filter_layout.setSpacing(0)
+            filter_layout.addWidget(control,0,Qt.AlignmentFlag.AlignRight)
+            self.model_date_entry=DateButton();self.model_date_entry.setObjectName('report_model_date');self.model_date_entry.clicked.connect(lambda:self.open_calendar('models'))
+            filter_layout.addWidget(self.model_date_entry,0,Qt.AlignmentFlag.AlignRight);filter_layout.addStretch()
+            scope.addWidget(filters);self.layout.addWidget(nav)
+        self.day_label.setText(r.get('day','--')[5:].replace('-','/')+' 昨日' if self.page=='overview' else '')
         for page,b in self.page_buttons.items():b.setChecked(page==self.page)
         show_period=self.page in ('models','projects')
         self.cost_more_button.setVisible(self.page=='projects')
-        self.scope_row.setVisible(show_period);self.nav_panel.setFixedHeight(56 if show_period else 27)
-        self.period_control.setVisible(show_period and self.period!='yesterday')
-        self.yesterday_scope.setVisible(show_period and self.period=='yesterday')
-        self.scope_left.setCurrentWidget(self.scope_project_search if self.page=='projects' else self.scope_model_total)
-        for b in self.range_buttons.values():b.setVisible(self.page in ('models','projects'))
-        blocked=self.period_control.blockSignals(True);self.period_control.setCurrentIndex(self.period_control.findData(self.period),False);self.period_control.blockSignals(blocked)
+        self.quota_more_button.setVisible(self.page=='cycle')
+        height=51 if self.page=='models' else 27
+        self.scope_row.setFixedHeight(height);self.scope_left.setFixedHeight(height)
+        self.scope_row.setVisible(show_period);self.nav_panel.setFixedHeight(29+height if show_period else 27)
+        is_cost=self.page=='projects'
+        self.period_control.setVisible(show_period)
+        self.period_control.setFixedWidth(122 if is_cost else 94)
+        self.scope_left.setCurrentIndex(1 if is_cost else 0)
+        model_bounds=self._calendar_bounds('models') if self.page=='models' else None
+        self.model_date_entry.setVisible(model_bounds is not None)
+        if model_bounds:
+            text=period_text(self.period,model_bounds)
+            self.model_date_entry.setText(text);self.model_date_entry.setAccessibleName(text+'，打开模型日历')
+            self.model_date_entry.updateGeometry();self.model_date_entry.update()
+        for period,b in self.range_buttons.items():b.setVisible(show_period and (period!='yesterday' or is_cost))
+        index=self.period_control.findData(self.period)
+        if self.period_control.currentIndex()!=index:
+            blocked=self.period_control.blockSignals(True)
+            self.period_control.setCurrentIndex(index,animate_period)
+            self.period_control.blockSignals(blocked)
     def rebuild(self):
         if self._animating or self.follow.active:
             self._pending_rebuild=True;return
@@ -578,7 +737,8 @@ class DailyReport(QWidget):
         body=QWidget();set_theme_style(body,'background:transparent;');content=QVBoxLayout(body);content.setContentsMargins(0,0,2,0);content.setSpacing(4)
         self.data_state=self.label('',11,True);self.data_state.setWordWrap(True);set_theme_style(self.data_state,theme_style_source(self.data_state)+'color:#89566c;');content.addWidget(self.data_state);self._update_data_state()
         if self.page=='projects':
-            self.project_view=ProjectCosts(search_bar=self.scope_project_search);self.project_view.set_data(self.snapshot.get('projects'),self.period)
+            self.project_view=ProjectCosts(search_bar=self.scope_project_search);self._update_projects()
+            self.project_view.calendarRequested.connect(lambda:self.open_calendar('projects'))
             self.project_view.more_anchor=self.cost_more_button
             self.project_view.changed.connect(self._refresh_page_frame);content.addWidget(self.project_view,1)
             self.plot=None;self.body_height=270
@@ -587,6 +747,8 @@ class DailyReport(QWidget):
             self.body_height=100
         elif self.page=='cycle':
             self.cycle_view=QuotaCompareView();content.addWidget(self.cycle_view)
+            self.cycle_view.choice.calendar_enabled=True
+            self.cycle_view.choice.calendarRequested.connect(lambda:self.open_calendar('quota'))
             self.plot=self.cycle_view.plot;self._update_cycle();self.body_height=290
         elif self.page=='overview':
             self.stats=OverviewStats(r);self.stats.set_columns(width-22);content.addWidget(self.stats)
@@ -602,22 +764,18 @@ class DailyReport(QWidget):
             content.addWidget(chart)
             hint_row=QHBoxLayout();hint_row.setSpacing(4)
             chart_layout.removeWidget(self.readout);hint_row.addWidget(self.readout,1)
-            info=tab('估算说明',self.show_cost_explanation,checkable=False);info.setFixedHeight(20);hint_row.addWidget(info);chart_layout.addLayout(hint_row)
+            info=tab('估算说明',self.show_cost_explanation,checkable=False);info.setObjectName('report_daily_explanation');info.setFixedHeight(20);hint_row.addWidget(info);chart_layout.addLayout(hint_row)
             self.body_height=self.stats.height()+94+18+17+20
         else:
             series=self._series()
-            shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),series['total'])
-            self.model_total=self.scope_model_total;self.model_total.setText('Token  '+compact_tokens(shown))
-            filter_bar=QWidget();filter_layout=QHBoxLayout(filter_bar);filter_layout.setContentsMargins(0,0,0,0);filter_layout.setSpacing(4)
-            self.filter_label=self.secondary(self.label('',11));self.filter_label.setWordWrap(True);filter_layout.addWidget(self.filter_label,1)
-            self.clear_filter=tab('清除筛选',self.clear_model_filter,checkable=False);self.clear_filter.setObjectName('report_clear_model_filter');filter_layout.addWidget(self.clear_filter);content.addWidget(filter_bar);self._update_filter_label()
+            shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),0) if self.selected_model else series['total']
+            self.model_total=self.scope_model_total;self.model_total.setText(compact_tokens(shown))
             self.plot=ReportPlot(r,'bars',self.period,self.selected_model,series=series);content.addWidget(self.plot)
-            denominator=self.secondary(self.label('模型占比 = 该模型 / 当前时间范围全部模型',10));denominator.setWordWrap(True);content.addWidget(denominator)
-            self.readout=self.secondary(self.label('点击模型筛选  再点一次还原',9))
-            content.addWidget(self.readout)
+            self.model_usage=ModelUsageSummary();self.model_usage.set_usage(series,self.selected_model,shown);content.addWidget(self.model_usage)
+            self._update_model_rate()
             model_group=QWidget();self.model_layout=QVBoxLayout(model_group);self.model_layout.setContentsMargins(0,0,0,0);self.model_layout.setSpacing(4)
             self._add_model_rows(series);content.addWidget(model_group)
-            self.body_height=163+min(4,max(1,len(series['models'])))*43
+            self.body_height=174+min(4,max(1,len(series['models'])))*43
         self.body_height+=30
         if self.readout:
             self.readout.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
@@ -647,7 +805,7 @@ class DailyReport(QWidget):
         self._building=False
         self._measure_overview()
         common=('scroll','plot','readout','data_state','note_label','body_height')
-        extra={'overview':('stats','hour_total','daily_cost','analogy','book_estimate'),'models':('model_total','filter_label','clear_filter','model_rows','model_layout'),'cycle':('cycle_view',),'projects':('project_view',)}
+        extra={'overview':('stats','hour_total','daily_cost','analogy','book_estimate'),'models':('model_total','model_usage','model_rows','model_layout'),'cycle':('cycle_view',),'projects':('project_view',)}
         names=common+extra[self.page] if r or self.page in ('cycle','projects') else common
         self._body_cache[self.page]=dict(ready=bool(r),refs={name:getattr(self,name) for name in names})
         if self.page=='models':self._body_cache[self.page]['model_state']=(self._data_revision,self.period,self.selected_model)
@@ -662,19 +820,21 @@ class DailyReport(QWidget):
                 self._update_models();cached['model_state']=(self._data_revision,self.period,self.selected_model)
         if self.page=='cycle' and cached.get('cycle_revision')!=self._data_revision:
             self._update_cycle();cached['cycle_revision']=self._data_revision
-        if self.page=='projects':self.project_view.set_data(self.snapshot.get('projects'),self.period)
+        if self.page=='projects':self._update_projects()
         self._update_data_state();self.note_label.setText(self._note(r))
     def _measure_overview(self):
         if self.page=='overview':self._overview_height=473
-        self.natural_height=self._overview_height
+        self.natural_height=self.bubble.card_pixels(self._overview_height)
+        if isinstance(self.plot,ReportPlot):self.plot.setFixedHeight(self.bubble.card_pixels(94))
+        if self.calendar:self.calendar.set_surface_scale(self.bubble.card_pixels)
     def reserved_height(self,host_size=None):
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
         height=self.bubble.height() if host_size is None else host_size.height()
-        return min(self.natural_height+self.PAD,max(0,area.height()-height-self.GAP)) if self.requested else 0
+        return min(self.bubble.card_pixels(self._overview_height)+self.PAD,max(0,area.height()-height-self.GAP)) if self.requested else 0
     def panel_width(self,host=None):
         host=self.bubble.geometry() if host is None else host
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
-        return min(max(self.MIN_WIDTH,round(host.width())),max(1,area.width()))
+        return min(max(self.bubble.card_pixels(self.MIN_WIDTH),round(host.width())),max(1,area.width()))
     def geometry_for_host(self,host):
         """Small hosts anchor a readable panel; they do not dictate its width."""
         area=(self.bubble.screen() or QApplication.primaryScreen()).availableGeometry()
@@ -684,7 +844,7 @@ class DailyReport(QWidget):
         # host may touch either screen edge; reserving PAD here shifts only
         # the report and makes equal-width cards visibly misalign.
         x=max(area.left(),min(x,area.right()-width+1))
-        height=max(1,min(self.natural_height,round(host.y())-area.top()-self.GAP-self.PAD))
+        height=max(1,min(self.bubble.card_pixels(self._overview_height),round(host.y())-area.top()-self.GAP-self.PAD))
         return QRect(x,round(host.y())-self.GAP-height,width,height)
     def toggle(self):self.dismiss() if self.requested else self.open()
     def _host_motion_finished(self):
@@ -728,8 +888,8 @@ class DailyReport(QWidget):
                     count=len(book_catalog()['books'])
                     self.book_index=(self.book_index+1+random.randrange(count-1))%count if self._book_opened else random.randrange(count)
                     self._book_opened=True
-                top=bool(self.bubble.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
-                if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=top:self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,top)
+                from surface_policy import card_layer,update_qt_layer
+                if not self.isVisible():update_qt_layer(self,card_layer(self.bubble))
                 # The fixed overview height is established at construction;
                 # a direct quota/cost entry does not need a second body build.
                 if not _prepared:
@@ -790,6 +950,7 @@ class DailyReport(QWidget):
     def _reset_model_visit(self):
         """Fresh panel entry resets UI state, independently of cached data."""
         self.selected_model=None;self.period='all'
+        self.calendar_picks['models'].clear();self.calendar_picks['projects'].clear()
         cached=self._body_cache.get('models')
         if not cached:return
         area=cached['refs']['scroll'];smooth=getattr(area,'_smooth_scroll',None)
@@ -806,6 +967,7 @@ class DailyReport(QWidget):
         if self.follow.active:
             if self.follow.committed:self._dismiss_after_host=True;return
             self.follow.cancel()
+        self.close_calendar(False)
         self.animation.stop();self.requested=False;self._host_closing=True
         if not self._animating:
             self.sync_geometry();self._prepare_frame()
@@ -960,6 +1122,8 @@ class DailyReport(QWidget):
     def eventFilter(self,obj,event):
         if getattr(self,'_open_present_waiting',False) and obj is self.windowHandle() and event.type()==QEvent.Type.Expose:
             QTimer.singleShot(0,self,self._open_present_ready)
+        if obj is self.surface and event.type()==QEvent.Type.Resize and self.calendar:
+            self.calendar.setGeometry(self.surface.rect())
         if obj is self.bubble:
             if event.type() in (QEvent.Type.Move,QEvent.Type.Resize):
                 if not self.follow.active and (self.requested or self.isVisible()):self.sync_geometry()
@@ -969,7 +1133,8 @@ class DailyReport(QWidget):
     def hideEvent(self,event):
         if getattr(self,'_open_present_waiting',False):
             self._open_present_waiting=False;self.setWindowOpacity(self._open_present_opacity)
-        self.page_fade.clear()
+        self.close_calendar(False);self.page_fade.clear()
+        if self.page=='projects':self._watch_project_range(None)
         self.follow.cancel()
         self.animation.stop();self.requested=False;self.fraction=0.;self._animating=False;self._frame=None
         self._host_closing=False

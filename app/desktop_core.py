@@ -1,15 +1,20 @@
 """Desktop configuration, action arbitration and bounded physics (no Qt)."""
 import copy
 import json
+import logging
 import math
 import os
 import time
 from pathlib import Path
 
 from version import VERSION
+PET_SCALE_LIMITS=(.4,2.5)
+CARD_SCALE_LIMITS=(1.,1.25)
+WINDOW_LAYERS=('top','normal','bottom')
 DEFAULTS=dict(schema=2,ui_animation_mode='quality',theme='bailong',theme_accent='#8b78a6',theme_surface='#fcfafc',theme_ink='#393343',scale=1.0,playback_speed=1.0,action_gap=2.0,
     random_interval=25.0,move_speed=55.0,move_range=1.0,wander_range_revision=1,wander_horizontal_only=True,wander_home=None,wander_mode='edge',wander_side='auto',wander_zone=[.50,.18,.99,.99],drag_physics=True,edge_docking=True,
-    on_top=True,video_fullscreen_yield=True,fullscreen_yield_mode='video',no_move=False,mouse_through=False,wandering=True,random_actions=True,
+    on_top=True,window_layer='top',codex_focus_only=False,card_scale=1.0,link_surface_scale=False,
+    video_fullscreen_yield=True,fullscreen_yield_mode='video',no_move=False,mouse_through=False,wandering=True,random_actions=True,
     commentary=True,sound=True,bubble=True,quota_visible=True,quota_decline_threshold=10.,quota_increase_threshold=15.,self_talk=False,character_visible=True,card_anchor=None,panel_detached=False,codex_exit=False,
     status_actions=True,status_action_interval=12.,status_response_revision=2,update_checks=True,token_chart_range='all',bubble_mode='auto',
     capsule_action='chatgpt',capsule_website='',talk_min=30.0,talk_max=90.0,talk_quiet=True,
@@ -17,9 +22,19 @@ DEFAULTS=dict(schema=2,ui_animation_mode='quality',theme='bailong',theme_accent=
     facing=1,character='builtin',character_preferences={},chat_follow=False)
 
 def atomic_json(path,value):
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     import uuid
-    temp=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    path=Path(path)
+    suffix='.'+uuid.uuid4().hex+'.tmp'
+    if os.name=='nt':
+        absolute=os.path.abspath(path)
+        # The adjacent UUID temporary name is longer than the final file.
+        # Use an extended path only when either write can encounter MAX_PATH.
+        units=len(absolute.encode('utf-16-le','surrogatepass'))//2
+        if units+len(suffix)>=260 and not absolute.startswith(('\\\\?\\','\\\\.\\')):
+            prefix='\\\\?\\UNC\\' if absolute.startswith('\\\\') else '\\\\?\\'
+            path=Path(prefix+(absolute[2:] if absolute.startswith('\\\\') else absolute))
+    path.parent.mkdir(parents=True,exist_ok=True)
+    temp=path.with_name(path.name+suffix)
     try:
         temp.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
         for attempt in range(3):
@@ -27,7 +42,9 @@ def atomic_json(path,value):
             except PermissionError:
                 if attempt==2:raise
                 time.sleep(.005*(attempt+1))
-    finally:temp.unlink(missing_ok=True)
+    finally:
+        try:temp.unlink(missing_ok=True)
+        except OSError:logging.getLogger(__name__).warning('JSON 临时文件清理失败',exc_info=True)
 
 def normalized(raw):
     out=copy.deepcopy(DEFAULTS);out.update(raw if isinstance(raw,dict) else {})
@@ -48,7 +65,7 @@ def normalized(raw):
     if out.get('wander_side') not in ('auto','left','right'):out['wander_side']='auto'
     out['wander_zone']=clean_zone(out.get('wander_zone'))
     out['status_response_revision']=2
-    for k,lo,hi in [('scale',.4,2.5),('playback_speed',.25,3),('action_gap',0,60),
+    for k,lo,hi in [('scale',*PET_SCALE_LIMITS),('card_scale',*CARD_SCALE_LIMITS),('playback_speed',.25,3),('action_gap',0,60),
         ('random_interval',3,600),('move_speed',10,300),('move_range',.1,1),
         ('talk_min',5,3600),('talk_max',5,7200),('status_action_interval',8,120),
         ('quota_decline_threshold',1,100),('quota_increase_threshold',1,100)]:
@@ -56,6 +73,9 @@ def normalized(raw):
         except (TypeError,ValueError):out[k]=DEFAULTS[k]
     for k,v in DEFAULTS.items():
         if isinstance(v,bool):out[k]=out[k] if isinstance(out[k],bool) else v
+    if not isinstance(raw,dict) or raw.get('window_layer') not in WINDOW_LAYERS:
+        out['window_layer']='top' if out['on_top'] else 'normal'
+    out['on_top']=out['window_layer']=='top'
     home=out.get('wander_home')
     try:
         if not isinstance(home,dict) or not isinstance(home.get('screen'),str):raise ValueError
@@ -85,6 +105,23 @@ def normalized(raw):
     if not isinstance(out['character_preferences'],dict):out['character_preferences']={}
     out['schema']=2
     return out
+
+def surface_settings(current,changes):
+    """Scale by the same relative step, preserving any pre-existing ratio."""
+    changes=dict(changes)
+    if 'on_top' in changes and 'window_layer' not in changes:
+        changes['window_layer']='top' if changes['on_top'] else 'normal'
+    result=normalized(dict(current,**changes))
+    sized=[key for key in ('scale','card_scale') if key in changes]
+    if result['link_surface_scale'] and len(sized)==1:
+        keys=('scale','card_scale')
+        old={key:current.get(key,1.) for key in keys}
+        key=sized[0];ratio=result[key]/old[key]
+        minimum=max(PET_SCALE_LIMITS[0]/old['scale'],CARD_SCALE_LIMITS[0]/old['card_scale'])
+        maximum=min(PET_SCALE_LIMITS[1]/old['scale'],CARD_SCALE_LIMITS[1]/old['card_scale'])
+        ratio=min(maximum,max(minimum,ratio))
+        for key in keys:result[key]=round(old[key]*ratio,6)
+    return result
 
 PRIORITY={'idle':0,'turn':1,'walk':1,'variant':2,'reaction':2,'click':5,'quota':5,'task':7,'landing':8,'throw':9,'drag':10}
 class ActionGate:

@@ -1,9 +1,10 @@
 """Independent, incremental cost metadata. Never change the existing Token ledger."""
 import hashlib,json,re,time,unicodedata,sqlite3
 from contextlib import closing
-from datetime import datetime,timedelta
+from datetime import date,datetime,timedelta
 from pathlib import PureWindowsPath,Path
 from token_calendar import counter
+from report_dates import MONTH,WEEK,date_bounds,range_key
 
 PRICE_VERSION='2026-10-30-standard-short'
 PRICE_SOURCE='https://developers.openai.com/api/docs/pricing'
@@ -139,7 +140,7 @@ def update(db,files,stop=lambda:False,budget=.35):
     initial=pending and any(str(Path(path).resolve()) not in indexed for path in files)
     return dict(pending=pending,initial_pending=initial,syncing=pending and not initial,errors=errors)
 
-def snapshot(db,now,progress,files=None,home=None):
+def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
     from cost_preferences import prices as saved_prices,price_history as saved_history
     prices=saved_prices();history=saved_history();price_revision=pricing_revision(prices,history)
     from official_api_prices import PriceBook
@@ -227,11 +228,17 @@ def snapshot(db,now,progress,files=None,home=None):
         archived=archived_meta.get(sid,bool(statuses.get(sid)) and all(statuses[sid]))
         project_archives[path]=project_archives.get(path,True) and archived
     yesterday=(midnight-timedelta(days=1)).strftime('%Y-%m-%d')
-    for period,days in [('all',None),('30d',30),('7d',7),('yesterday',1)]:
-        start=yesterday if period=='yesterday' else (midnight-timedelta(days=days-1)).strftime('%Y-%m-%d') if days else ''
+    ranges=[('all','',''),('30d',(midnight-timedelta(days=29)).date().isoformat(),''),
+            ('7d',(midnight-timedelta(days=6)).date().isoformat(),''),('yesterday',yesterday,yesterday)]
+    cutoff=date.fromisoformat(yesterday)
+    calendar_ranges=[date_bounds(period,cutoff) for period in (MONTH,WEEK)]
+    if calendar_range:calendar_ranges.append(calendar_range)
+    for first,last in dict.fromkeys(calendar_ranges):
+        ranges.append((range_key((first,last)),first.isoformat(),min(last.isoformat(),yesterday)))
+    for period,start,end in ranges:
         projects={}
         for path,model,sid,day,tokens,a,c,b,known,original_path,source,applied in grouped:
-            if day<start or (period=='yesterday' and day!=yesterday):continue
+            if day<start or (end and day>end):continue
             display=dict(name='未归属项目',path='') if path==unassigned else catalog.get(path,{})
             name=display.get('name') or (PureWindowsPath(path).name if path else '未识别项目') or path
             p=projects.setdefault(path,dict(id=path,name=name,path=display.get('path',path),tokens=0,cost=0.,parts=[0.,0.,0.],pending_tokens=0,pending_reasons={},sessions=set(),models=set(),archived=True,model_usage={},session_usage={}))
@@ -265,7 +272,7 @@ def snapshot(db,now,progress,files=None,home=None):
             p['model_usage']=sorted(p['model_usage'].values(),key=lambda v:-v['cost'])
             p['session_usage']=sorted(p['session_usage'].values(),key=lambda v:-v['cost'])
         result[period]=sorted(projects.values(),key=lambda p:-p['cost'])
-    return dict(ranges=result,yesterday=yesterday,**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_history=history,price_source=PRICE_SOURCE,checked=now)
+    return dict(ranges=result,yesterday=yesterday,calendar_days=sorted({day for _,_,_,day,*_ in grouped}),**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_history=history,price_source=PRICE_SOURCE,checked=now)
 
 def search_rows(data,period='all',query='',archive='active'):
     def norm(s):return unicodedata.normalize('NFKC',s).casefold().replace('\\','/')

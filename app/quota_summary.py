@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication,QWidget,QToolButton
 from compact_bubble import font,INK,MUTED
 from quota_summary_data import quota_items,today_tokens
 from reset_watch import local_time
-from ui_theme import QUOTA_WEEK,QUOTA_FIVE,QUOTA_LOW
+from ui_theme import QUOTA_WEEK,QUOTA_FIVE,QUOTA_LOW,STATUS_MODULE_RADIUS,status_footer_path
 
 HEIGHT=102
 
@@ -62,17 +62,17 @@ class QuotaSummary(QWidget):
     def _update_anomaly(self,anomaly):
         self.anomaly=anomaly;expanded=self.expanded
         change=anomaly.get('change',0) if anomaly else 0
-        badge_text=(f'{change:+.0f}%' if round(change) else '0%') if anomaly else ''
+        badge_text=('观察中' if change is None else (f'{change:+.0f}%' if round(change) else '0%')) if anomaly else ''
         self.alert_badge.setText(badge_text)
         self.alert_badge.setFixedSize(max(32 if expanded else 38,QFontMetrics(self.alert_badge.font()).horizontalAdvance(badge_text)+(8 if expanded else 10)),15 if expanded else 18)
         self.alert_badge.move(self.alert_rect().topLeft().toPoint())
         reference=bool(anomaly and anomaly.get('kind')=='reference')
-        self.alert_badge.setAccessibleName('周额度参考差异，查看额度对比' if reference else '周额度推测总量'+('上涨' if change>0 else '下降')+'提醒，查看额度对比')
+        self.alert_badge.setAccessibleName('周额度观察中，查看额度对比' if change is None else '周额度参考差异，查看额度对比' if reference else '周额度推测总量'+('上涨' if change>0 else '下降')+'提醒，查看额度对比')
         description=anomaly['description'] if anomaly else ''
         self.alert_badge.setAccessibleDescription(description);self.alert_badge.setToolTip(description)
         self.alert_badge.setProperty('quotaComparisonTitle','额度参考' if reference else '额度对照')
         self.alert_badge.setProperty('quotaComparisonHint',anomaly.get('hover_note',description) if anomaly else '')
-        self.alert_badge.setProperty('quotaComparisonValue',f'{change:+.1f}%' if anomaly else None)
+        self.alert_badge.setProperty('quotaComparisonValue',('观察中' if change is None else f'{change:+.1f}%') if anomaly else None)
         self.refresh_theme_colors()
         self.alert_badge.setVisible(bool(anomaly and self.week_index is not None))
         hints=getattr(self.window(),'inline_explanations',None)
@@ -80,7 +80,7 @@ class QuotaSummary(QWidget):
         self._revision+=1;self._accessible();self.update()
     def refresh_theme_colors(self):
         from theme_registry import palette,mix
-        p=palette();up=bool(self.anomaly and self.anomaly.get('change',0)>0)
+        p=palette();up=bool(self.anomaly and (self.anomaly.get('change') or 0)>0)
         reference=bool(self.anomaly and self.anomaly.get('kind')=='reference')
         bg=p['referenceBg'] if reference else p['successBg' if up else 'dangerBg']
         fg=p['referenceBadge'] if reference else p['successBadge'] if up else p.get('dangerBadge',p['danger'])
@@ -194,7 +194,7 @@ class QuotaSummary(QWidget):
         if self._static_key==key:return
         image=QPixmap(max(1,int(self.width()*ratio+.5)),max(1,int(self.height()*ratio+.5)));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
         p=QPainter(image);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
-        radius=11 if self.expanded else 10
+        radius=STATUS_MODULE_RADIUS
         shape=QPainterPath();shape.addRoundedRect(QRectF(self.rect()),radius,radius)
         hover=QColor(theme_color('#e6dcec' if self.pressed else '#ede7f2'))
         p.fillPath(shape,hover if len(self.items)==1 and self.active==0 else QColor(theme_color('#f5f2f7')))
@@ -309,20 +309,18 @@ class TodayTokens(QWidget):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen)
         if getattr(self,'expanded',False) and getattr(self,'compact',False):
             from theme_registry import palette
-            colors=palette();p.setBrush(QColor(colors['selected' if self.hovered or self.pressed else 'panel']));p.drawRoundedRect(QRectF(self.rect()),6,6)
+            colors=palette();p.setBrush(QColor(colors['selected' if self.hovered or self.pressed else 'panel']));p.drawPath(status_footer_path(QRectF(self.rect())))
             p.setFont(font(11));p.setPen(QColor(colors['muted']));p.drawText(QRectF(7,0,25,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日')
             p.setFont(font(10));entry_width=QFontMetrics(p.font()).horizontalAdvance('›');entry_x=self.width()-7-entry_width
             p.drawText(QRectF(entry_x,0,entry_width,self.height()),Qt.AlignmentFlag.AlignVCenter,'›')
             p.setFont(font(11));p.setPen(QColor(colors['ink']));rect=QRectF(35,1,max(0,entry_x-38),self.height())
             value=self.data['display']+(' 部分' if self.data['partial'] else '')
             self.roll.paint(p,rect);return
-        p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
-        p.setPen(theme_color(MUTED));p.setFont(font(10));p.drawText(QRectF(8,0,69,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日 Token')
-        p.setFont(font(12,True));p.setPen(theme_color(INK))
         value=self.data['display']+(' 部分' if self.data['partial'] else '')
+        p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')))
         if getattr(self,'compact',False):
             # Footer half-width: retain today amount and the 24h action, omit duplicate Token label.
-            p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(theme_color('#e6dcec' if self.pressed else '#e8def0' if self.selected else '#eee7f3' if self.hovered else '#f5f2f7')));p.drawRoundedRect(QRectF(self.rect()),6,6)
+            p.drawPath(status_footer_path(QRectF(self.rect()),side=1,alignment=1.))
             p.setFont(font(10));p.setPen(theme_color(MUTED));p.drawText(QRectF(6,0,22,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日')
             metrics=QFontMetrics(p.font());entry_width=metrics.horizontalAdvance('24h ›');entry_x=self.width()-6-entry_width
             arrow_width=metrics.horizontalAdvance('›')
@@ -331,5 +329,7 @@ class TodayTokens(QWidget):
             p.setFont(font(12,True));p.setPen(theme_color(INK));rect=QRectF(32,1,max(0,entry_x-36),self.height())
             if self.roll.width(p.font(),value)>rect.width():p.setFont(font(10,True))
             self.roll.paint(p,rect);return
-        self.roll.paint(p,QRectF(77,0,self.width()-128,self.height()))
+        p.drawRoundedRect(QRectF(self.rect()),6,6)
+        p.setPen(theme_color(MUTED));p.setFont(font(10));p.drawText(QRectF(8,0,69,self.height()),Qt.AlignmentFlag.AlignVCenter,'今日 Token')
+        p.setFont(font(12,True));p.setPen(theme_color(INK));self.roll.paint(p,QRectF(77,0,self.width()-128,self.height()))
         p.setPen(theme_color(QColor(theme_color('#75618d')) if self.selected else MUTED));p.setFont(font(10,self.selected));p.drawText(QRectF(self.width()-45,0,37,self.height()),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignRight,'24h ›')

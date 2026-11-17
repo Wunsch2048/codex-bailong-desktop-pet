@@ -3,14 +3,15 @@ from theme_registry import color as theme_color,chart_color
 from theme_runtime import set_theme_style,theme_style_source
 import time
 from datetime import datetime
-from PySide6.QtCore import Qt,QRectF,QPointF,QEvent,Signal
+from PySide6.QtCore import Qt,QRectF,QPointF,QEvent,Signal,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QPainter,QPen,QColor,QPainterPath,QFontMetrics
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QToolButton,QToolTip,QSizePolicy
 from compact_bubble import font,INK,MUTED,FONT_CSS
 from token_calendar import usage_series,compact_tokens,TOKEN_RANGES
 from chart_reveal import ChartReveal,RasterChart,bar_shape
 from chart_curve import SmoothTrace
-from rate_chart import ComboChart
+from rate_chart import ComboChart,daily_rates
+from settings_controls import play_animation
 
 class TokenPlot(QWidget,RasterChart,ComboChart):
     def __init__(self,snapshot,period,parent=None,now=None):
@@ -24,21 +25,18 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         bucket=lambda stamp:datetime.fromtimestamp(stamp).strftime('%Y-%m-%d-%H' if period=='day' else '%Y-%m-%d')
         same_series=(same_period and bool(self.snapshot)==bool(snapshot) and bucket(self.now)==bucket(now)
                      and all(self.snapshot.get(key)==snapshot.get(key) for key in keys))
+        if same_series and period=='7d':
+            same_series=(self.snapshot.get('report') or {}).get('daily_models')==(snapshot.get('report') or {}).get('daily_models')
         rate_key='today' if period=='day' else 'days'
         same_rates=same_period and (self.snapshot.get('rates') or {}).get(rate_key)==(snapshot.get('rates') or {}).get(rate_key)
+        if same_rates and period=='day':
+            same_rates=(self.snapshot.get('rates') or {}).get('today_output')==(snapshot.get('rates') or {}).get('today_output')
         held=self.hold_inspection() if same_period and not (same_series and same_rates) else None
         if not (same_series and same_rates) and held is None:self.dismiss_inspection()
         self.period=period
         self.snapshot=snapshot;self.now=now
         if not same_series:self.series=usage_series(snapshot,period,now)
         if not (same_series and same_rates):self.invalidate_layers()
-        if not same_series and period=='all' and self.series.get('bucket_days',1)>1:
-            # Keep daily rate observations daily even when long-history usage used grouped columns.
-            from datetime import timedelta
-            first=datetime.fromisoformat(self.series['start']).date();last=datetime.fromisoformat(self.series['end']).date()
-            history=self.snapshot.get('history_days',self.snapshot.get('days',{})) or {}
-            self.series['bins']=[dict(start=str(first+timedelta(days=i)),end=str(first+timedelta(days=i)),label=str(first+timedelta(days=i)),value=history.get(str(first+timedelta(days=i)),0),current=first+timedelta(days=i)==last,future=False) for i in range((last-first).days+1)]
-            self.series['bucket_days']=1
         s=self.series;bucket=s.get('bucket_days',1)
         description=f"{s['title']}，{s['total']:,} Tokens；{s['start']} 至 {s['end']}。"
         description+='每小时消耗，非累计曲线；当天00–24时，当前小时尚未结束。' if s['mode']=='line' else f'每根柱覆盖{bucket}天，悬停查看日期与用量。'
@@ -47,7 +45,8 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         if not s['available']:description+='统计中或暂不可用。'
         if self.snapshot.get('partial'):description+='部分日志暂不可读。'
         self.setAccessibleName('Codex Token '+('小时曲线' if s['mode']=='line' else '用量柱状图'))
-        self.setAccessibleDescription(description+' 回合均速包含思考、工具和等待时间。');self.setToolTip('')
+        rate_description=' 曲线按小时显示采样期间的输出速率。' if period=='day' else ' 回合均速包含思考、工具和等待时间。'
+        self.setAccessibleDescription(description+rate_description);self.setToolTip('')
         if not (same_series and same_rates):self.resume_inspection(held);self.update()
 
     def chart_rect(self):
@@ -65,9 +64,11 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         s=self.series;plot=self.chart_rect();bins=s['bins'];rates=self.snapshot.get('rates') or {}
         if s['mode']=='line':items=rates.get('today') or [];left,right='00时','24时'
         else:
-            items=[(rates.get('days') or {}).get(b['start']) for b in bins]
+            items=daily_rates(bins,rates.get('days') or {})
             left,right=s['start'][5:].replace('-','/'),s['end'][5:].replace('-','/')
-        self.combo_layers(p,dynamic,bins,items,plot,s['available'],by_model=s['mode']=='line')
+        hourly=s['mode']=='line'
+        self.combo_layers(p,dynamic,bins,items,plot,s['available'],by_model=hourly or self.period=='7d',
+                          output_rates=(rates.get('today_output') or []) if hourly else None)
         self.hits=[(record['rect'],b) for record,b in zip(self._combo_records,bins)]
         self.points=[QPointF(record['rect'].center().x(),plot.bottom()) for record,b in zip(self._combo_records,bins) if not b.get('future') and s['available']]
         p.setFont(font(10 if getattr(self,'expanded',False) else 11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2
@@ -99,25 +100,69 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         if event.type() in (QEvent.Type.Move,QEvent.Type.Resize) and hasattr(self,'_popup'):self.dismiss_inspection()
         return super().event(event)
 
+class TokenRangeTabs(QWidget):
+    """Move one highlight while keeping the chart's compact controls fixed."""
+    changed=Signal(str)
+
+    def __init__(self,period,parent=None):
+        super().__init__(parent);self.setFixedHeight(18);self.buttons={};self.period=period
+        self.pill=QRectF();self.source=QRectF();self.target=QRectF()
+        self.animation=QVariantAnimation(self);self.animation.setDuration(170)
+        self.animation.setStartValue(0.);self.animation.setEndValue(1.)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic);self.animation.valueChanged.connect(self.advance)
+        row=QHBoxLayout(self);row.setContentsMargins(0,0,0,0);row.setSpacing(1)
+        for key,text,tip in [('all','全部','全部本机记录；较长时间自动合并日期分组'),('30d','30天','最近30天，每天一根柱'),('7d','7天','最近7天，每天一根柱')]:
+            button=QToolButton();button.setObjectName('token_range_'+key);button.setText(text);button.setToolTip(tip)
+            button.setAccessibleName(tip);button.setCheckable(True);button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus);button.setCursor(Qt.CursorShape.PointingHandCursor);button.setFixedHeight(18)
+            set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:11px;font-weight:500;color:#76638c;border:0;padding:0;background:transparent;border-radius:4px;}QToolButton:checked{color:#514360;}QToolButton:hover:!checked{background:#eee7f5;}')
+            button.clicked.connect(lambda checked=False,k=key:self.changed.emit(k));row.addWidget(button,1);self.buttons[key]=button
+        self.select(period,False)
+
+    def select(self,period,animate=True):
+        changed=period!=self.period
+        self.period=period
+        for key,button in self.buttons.items():button.setChecked(key==period)
+        if animate and not changed:return
+        self.layout().activate()
+        button=self.buttons.get(period)
+        self.animation.stop();self.source=QRectF(self.pill)
+        self.target=QRectF(button.geometry()) if button else QRectF(self.source.center().x(),0,0,self.height())
+        if self.source.isEmpty() and button:
+            self.source=QRectF(self.target.center().x(),self.target.y(),0,self.target.height())
+        if animate and self.isVisible():play_animation(self.animation)
+        else:self.advance(1.)
+
+    def advance(self,progress):
+        a,z=self.source,self.target;old=self.pill
+        self.pill=QRectF(a.x()+(z.x()-a.x())*progress,z.y(),a.width()+(z.width()-a.width())*progress,z.height())
+        self.update(old.united(self.pill).adjusted(-1,-1,1,1).toAlignedRect())
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event);self.select(self.period,False)
+
+    def hideEvent(self,event):
+        self.select(self.period,False);super().hideEvent(event)
+
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen);p.setBrush(theme_color('#e8def0'));p.drawRoundedRect(self.pill,4,4)
+
+
 class TokenChartCard(QWidget):
     rangeChanged=Signal(str)
     def __init__(self,snapshot=None,parent=None,period='all',now=None,expanded=False):
         super().__init__(parent);self.setMinimumWidth(0)
         self.period=period if period in TOKEN_RANGES else 'all';self.range_buttons={}
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
-        tabs=QWidget();tabs.setFixedHeight(18);row=QHBoxLayout(tabs);row.setContentsMargins(0,0,0,0);row.setSpacing(1)
-        for key,text,tip in [('all','全部','全部本机记录；较长时间自动合并日期分组'),('30d','30天','最近30天，每天一根柱'),('7d','7天','最近7天，每天一根柱')]:
-            button=QToolButton();button.setObjectName('token_range_'+key);button.setText(text);button.setToolTip(tip)
-            button.setAccessibleName(tip);button.setCheckable(True);button.setChecked(self.period==key);button.setMinimumWidth(0)
-            button.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Fixed)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus);button.setCursor(Qt.CursorShape.PointingHandCursor);button.setFixedHeight(18)
-            set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:11px;font-weight:500;color:#76638c;border:0;padding:0;background:transparent;border-radius:4px;}QToolButton:checked{background:#e8def0;color:#514360;}QToolButton:hover{background:#eee7f5;}')
-            button.clicked.connect(lambda checked=False,k=key:self.rangeChanged.emit(k));row.addWidget(button,1);self.range_buttons[key]=button
+        tabs=TokenRangeTabs(self.period);self.range_tabs=tabs;self.range_buttons=tabs.buttons
+        tabs.changed.connect(self.rangeChanged.emit)
         layout.addWidget(tabs);self.plot=TokenPlot(snapshot,self.period,self,now);layout.addWidget(self.plot,1)
         if expanded:tabs.hide();self.plot.expanded=True;self.plot.invalidate_layers()
         self.setAccessibleName(self.plot.accessibleName());self.setAccessibleDescription(self.plot.accessibleDescription())
 
     def set_period(self,period):
         self.period=period
-        for key,button in self.range_buttons.items():button.setChecked(key==period)
+        self.range_tabs.select(period)
         self.plot.set_data(self.plot.snapshot,period);self.plot.begin_reveal();self.plot.start_reveal()

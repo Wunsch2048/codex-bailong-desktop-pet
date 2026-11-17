@@ -168,7 +168,25 @@ def token_span(db,start,end,models=False):
 
 
 REFERENCE_BADGE_MIN=5
+REFERENCE_BADGE_DROP=15
+REFERENCE_BASELINE_DROP=20
+REFERENCE_SWING_LIMIT=10
 STRICT_BADGE_REMAINING=70
+
+
+def recent_reference_totals(db,samples,drop,estimate):
+    """Three cumulative readings across at least four observed quota points."""
+    totals=[estimate]
+    first=samples[0]
+    for stamp,_,remaining,*_ in reversed(samples[:-1]):
+        covered=first[2]-remaining
+        if covered>drop-2*len(totals):continue
+        if covered<5:break
+        tokens,_=token_span(db,first[0],stamp)
+        if tokens<=0:break
+        totals.append(round(tokens*100/covered))
+        if len(totals)==3:break
+    return totals
 
 
 def summarize_cycles(db,now=None,complete=True,pending=False):
@@ -200,10 +218,12 @@ def summarize_cycles(db,now=None,complete=True,pending=False):
         # Wide observation coverage and stable workload are needed to compare.
         eligible=bool(valid and drop>=20 and len({s[2] for s in samples})>=3 and
             model and model!='未识别模型' and share>=.7 and known)
+        recent=recent_reference_totals(db,samples,drop,estimate) if c is periods[-1] and not closed and valid and drop>=REFERENCE_BADGE_DROP else []
         result.append(dict(id=c['id'],start=c['start'],end=end,through=last[0],reset_at=c['deadline'],
             kind=c['kind'],closed=closed,remaining=last[2],used=used,records=records,
             estimated_total=estimate,per_percent=estimate/100 if estimate else None,
             reference_total=round(observed*100/drop) if reference_valid else None,
+            recent_reference_totals=recent,
             estimate_low=round(observed*100/(drop+1)) if valid else None,
             estimate_high=round(observed*100/max(1,drop-1)) if valid else None,
             observed_tokens=observed,drop=round(max(0,drop),1),sample_count=len(samples),distinct_readings=len({s[2] for s in samples}),
@@ -237,6 +257,26 @@ def capacity_reference(current,previous,pending=False):
     return dict(change=round((values[0]/values[1]-1)*100,1),
                 reason='两轮各按当轮用法估算，差异也会受模型和档位影响',
                 preliminary=any(c.get('drop',0)<20 for c in (current,previous)))
+
+
+def current_reference(current,previous,pending=False):
+    """Gate the live number independently of descriptive historical estimates."""
+    reference=capacity_reference(current,previous,pending)
+    if reference['change'] is None:return reference
+    drop=current['drop']
+    if drop<REFERENCE_BADGE_DROP:
+        observing=f'已观察 {drop:g} / {REFERENCE_BADGE_DROP} 个百分点。'
+    elif previous['drop']<REFERENCE_BASELINE_DROP:
+        observing='对照周期的有效观测不足，差异暂不稳定。'
+    else:
+        base=previous['estimated_total']
+        changes=[(total/base-1)*100 for total in current.get('recent_reference_totals',())]
+        if len(changes)==3:
+            low,high=min(changes),max(changes)
+            if low>-REFERENCE_BADGE_MIN and high<REFERENCE_BADGE_MIN:return reference
+            if (low>0 or high<0) and high-low<=REFERENCE_SWING_LIMIT:return reference
+        observing=f'已观察 {drop:g} 个百分点。等待最近三次估算方向一致、波动收窄。'
+    return dict(reference,change=None,observing=observing)
 
 
 def cycle_label(cycle):
@@ -387,8 +427,9 @@ def visible_quota_change(snapshot,windows,now=None,decline_threshold=10,increase
     if current.get('closed') or not 0<=now-current.get('through',0)<=900:return None
     baseline,reason=comparison_baseline(current,cycles[1:]) if current.get('eligible') else (None,current.get('comparison_reason',''))
     previous=baseline or previous
-    reference=capacity_reference(current,previous)
-    if reference['change'] is None or abs(reference['change'])<REFERENCE_BADGE_MIN:return None
+    reference=current_reference(current,previous)
+    observing=reference.get('observing')
+    if not observing and (reference['change'] is None or abs(reference['change'])<REFERENCE_BADGE_MIN):return None
     week=next((w for w in windows if w.get('name')=='一周'),None)
     if not week or week.get('plan')!=current.get('plan'):return None
     from reset_watch import epoch
@@ -396,6 +437,9 @@ def visible_quota_change(snapshot,windows,now=None,decline_threshold=10,increase
     if not deadline or deadline<=now or not reset or abs(deadline-reset)>1800:return None
     remaining=week.get('remaining')
     if remaining is not None and remaining>current.get('remaining',100)+5:return None
+    if observing:
+        return dict(kind='reference',change=None,hover_note=observing,
+                    description=observing+'点击查看额度详情。')
     if baseline:
         change=(current['estimated_total']/baseline['estimated_total']-1)*100
         if max(current['remaining'],remaining if remaining is not None else 0)>STRICT_BADGE_REMAINING:

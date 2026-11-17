@@ -12,8 +12,15 @@ def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,ho
     from project_membership import root_session
     from project_cost_store import active_event_stream
     now=time.time() if now is None else now;today=datetime.fromtimestamp(now).replace(hour=0,minute=0,second=0,microsecond=0)
-    start=0 if period=='all' else (today-timedelta(days=29 if period=='30d' else 6 if period=='7d' else 1)).timestamp()
-    end=today.timestamp() if period=='yesterday' else now
+    from report_dates import parse_range_key
+    bounds=parse_range_key(period)
+    if bounds:
+        first,last=bounds
+        start=datetime.combine(first,datetime.min.time()).timestamp()
+        cutoff=min(today.timestamp(),datetime.combine(last+timedelta(days=1),datetime.min.time()).timestamp())
+    else:
+        start=0 if period=='all' else (today-timedelta(days=29 if period=='30d' else 6 if period=='7d' else 1)).timestamp()
+        cutoff=today.timestamp() if period=='yesterday' else float('inf')
     with closing(sqlite3.connect(Path(db_path).as_uri()+'?mode=ro',uri=True,timeout=.5)) as db:
         db.execute('BEGIN')
         parents=dict(db.execute('SELECT * FROM cost_parent')) if db.execute("SELECT 1 FROM sqlite_master WHERE name='cost_parent'").fetchone() else {}
@@ -21,7 +28,7 @@ def detail_snapshot(db_path,project,period='all',now=None,cancel=lambda:False,ho
         events,_=active_event_stream(db,prepare=False)
         for row in events:
             if cancel():return None
-            if root_session(row[2],parents) in roots and start<=row[1]<=end:rows.append(row)
+            if root_session(row[2],parents) in roots and start<=row[1]<=now and row[1]<cutoff:rows.append(row)
         ids={r[0] for r in rows};sources=list(db.execute('SELECT a.path,a.offset,a.state,a.revision FROM cost_source_active a JOIN temp.cost_selected_source s ON a.path=s.path AND a.revision=s.revision'))
         # Release the read snapshot before any large log IO, so the existing
         # writer can continue its bounded indexing slices.
@@ -88,6 +95,9 @@ def export_rows(data,period,query,archive):
     from project_cost import search_rows
     checked=datetime.fromtimestamp(data.get('checked') or time.time());end=checked.strftime('%Y-%m-%d');start='' if period=='all' else (checked-timedelta(days=29 if period=='30d' else 6 if period=='7d' else 1)).strftime('%Y-%m-%d')
     if period=='yesterday':end=start
+    from report_dates import parse_range_key
+    bounds=parse_range_key(period)
+    if bounds:start,end=(day.isoformat() for day in bounds)
     for project in search_rows(data,period,query,archive):
         for m in project['model_usage']:
             yield dict(project=project['name'],period=period,range_start=start,range_end=end,model=m['model'],tokens=m['tokens'],usd_cost=round(m['cost'],6),unpriced_tokens=m['pending_tokens'])

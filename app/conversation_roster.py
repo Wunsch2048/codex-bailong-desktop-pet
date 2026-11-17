@@ -1,8 +1,10 @@
 """Two stable conversation slots; unread completion plus active work first."""
 from session_read_state import session_id
 import re
+import time
 LABELS={'thinking':'思考中','working':'执行中','responding':'回复中','waiting':'待操作','complete':'已完成','interrupted':'已中断'}
 ACTIVE={'thinking','working','responding','waiting'}
+SHORT_STATUS_SECONDS=2.
 
 def title_keywords(title):
     text=re.sub(r'\s+',' ',str(title)).strip()
@@ -24,7 +26,7 @@ class ConversationRoster:
         disposable=[sid for sid in self.names if sid not in self.items and sid not in self.pending]
         for sid in disposable[:-256]:self.names.pop(sid,None)
         return changed
-    def observe(self,event):
+    def observe(self,event,now=None):
         sid=session_id(event.get('session',''))
         if not sid:return
         self.serial+=1;old=self.items.get(sid,{})
@@ -32,11 +34,18 @@ class ConversationRoster:
         start=old.get('start',self.serial) if old.get('state') in ACTIVE else self.serial
         detail=event.get('display') or {'thinking':'正在思考','working':'正在处理任务','responding':'正在整理回复','waiting':'等待你的操作','complete':'任务已完成','interrupted':'任务已中断'}.get(state,'等待新任务')
         self.items[sid]=dict(session=sid,state=state,compacting=bool(event.get('compacting')),waiting_reason=event.get('waiting_reason','') if state=='waiting' else '',title=self.names.get(sid) or event.get('conversation_name') or event.get('title') or old.get('title') or '会话 '+sid[-4:],text=detail,turn=event.get('turn',''),start=start,updated=self.serial)
+        if state in ('thinking','working','responding') and not event.get('compacting'):
+            now=time.monotonic() if now is None else now
+            if event.get('short_status'):
+                self.items[sid]['short_status']=(detail,now+SHORT_STATUS_SECONDS)
+            elif old.get('turn')==event.get('turn','') and not event.get('turn_started') and not event.get('user_message'):
+                held=old.get('short_status')
+                if held and held[1]>now:self.items[sid]['short_status']=held
         if state in ('complete','waiting'):self.page=0
         # Bound old in-memory details; pending IDs remain available separately.
         disposable=sorted((s for s,v in self.items.items() if v['state'] not in ACTIVE and s not in self.pending),key=lambda s:self.items[s]['updated'],reverse=True)
         for sid in disposable[64:]:self.items.pop(sid,None)
-    def selection(self,unread):
+    def selection(self,unread,now=None):
         pending=list(dict.fromkeys(session_id(s) for s,t in reversed(unread)));self.pending=set(pending)
         done=[dict(self.items.get(sid,dict(session=sid,title=self.names.get(sid) or '会话 '+sid[-4:],text='')),state='complete') for sid in pending]
         active=sorted([v for v in self.items.values() if v['state'] in ACTIVE and v['session'] not in pending],key=lambda v:(v['state']!='waiting',v['start'],v['session']))
@@ -51,5 +60,7 @@ class ConversationRoster:
             chosen=(waiting+kept+[v for v in active if v not in kept and v not in waiting])[:2]
         else:chosen=done[:2]
         self.pinned=[v['session'] for v in chosen]
+        now=time.monotonic() if now is None else now
+        chosen=[dict(v,text=v['short_status'][0]) if 'short_status' in v and v['short_status'][1]>now and v['state']!='complete' else v for v in chosen]
         return chosen,max(0,len(pool)-len(chosen))
     def cycle(self):self.page+=1

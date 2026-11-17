@@ -85,7 +85,11 @@ def build(legacy_formats=False,application_only=True):
     tls_data=ssl_runtime_data()
     (ROOT/'build').mkdir(exist_ok=True)
     version_info=ROOT/'build/windows-version-info.txt';version_info.write_text(windows_version_resource(VERSION),encoding='utf-8')
-    subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--icon',str(ROOT/'app/branding/bailong.ico'),'--version-file',str(version_info),'--onedir','--name','BailongEnhanced','--distpath','release','--workpath','build','--specpath','build','--paths','app','--exclude-module','imageio_ffmpeg',*tls_data,'app/enhanced.py'],cwd=ROOT,check=True)
+    # Character packages support WebP, GIF, and externally converted WebM.
+    # Pillow's AVIF plugin registers a codec the application never offers.
+    subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--icon',str(ROOT/'app/branding/bailong.ico'),'--version-file',str(version_info),'--onedir','--name','BailongEnhanced','--distpath','release','--workpath','build','--specpath','build','--paths','app',
+                    '--exclude-module','imageio_ffmpeg','--exclude-module','PIL.AvifImagePlugin',
+                    '--exclude-module','PIL._avif',*tls_data,'app/enhanced.py'],cwd=ROOT,check=True)
     release=ROOT/'release/BailongEnhanced'
     libraries=[release/'_internal'/name for name in OPENSSL_DLLS]
     for library in libraries:

@@ -94,14 +94,33 @@ def _preserve_references(candidate,persisted):
             provider['credential_id']=''
 
 
-def save_chat_config(root,config,provider_id=None,key=''):
+CHAT_PREFERENCE_KEYS=('system_prompt','history_messages','history_chars')
+
+
+def save_chat_preferences(root,prompt,count,chars):
+    config=load_chat_config(root)
+    config.update(system_prompt=prompt,history_messages=count,history_chars=chars)
+    atomic_json(Path(root)/'chat.json',_validated(config))
+
+
+def _provider_configuration(config,persisted):
+    candidate=_validated(config)
+    for key in ('service','chatgpt_model',*CHAT_PREFERENCE_KEYS):
+        candidate[key]=persisted[key]
+    _preserve_references(candidate,persisted)
+    return candidate
+
+
+def save_chat_config(root,config,provider_id=None,key='',*,provider_only=False):
     """Commit settings and an optional new key, returning a new configuration.
 
     Blank keys keep the *persisted* reference, including an explicit clear. A
     draft opened before clearing a key cannot silently resurrect that old key.
     """
     persisted=load_chat_config(root);store=_store(root);store.read()
-    candidate=_validated(config);_preserve_references(candidate,persisted)
+    if provider_only:candidate=_provider_configuration(config,persisted)
+    else:
+        candidate=_validated(config);_preserve_references(candidate,persisted)
     if not isinstance(key,str):raise OSError('密钥格式无效。')
     provider=next((p for p in candidate['providers'] if p['id']==provider_id),None)
     if provider_id is not None and provider is None:raise OSError('待保存的模型服务不存在。')
@@ -143,7 +162,7 @@ def clear_provider_key(root,provider_id):
 def delete_chat_provider(root,config,provider_id):
     persisted=load_chat_config(root);_store(root).read()
     old=next((p for p in persisted['providers'] if p['id']==provider_id),None)
-    candidate=_validated(config);_preserve_references(candidate,persisted)
+    candidate=_provider_configuration(config,persisted)
     candidate['providers']=[p for p in candidate['providers'] if p['id']!=provider_id]
     if candidate['active']==provider_id:
         candidate['active']=candidate['providers'][0]['id'] if candidate['providers'] else ''

@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt,QObject,Signal,QTimer,QUrl,QRectF,QPointF
 from PySide6.QtGui import QTextCursor,QDesktopServices,QTextBlockFormat,QTextCharFormat,QColor,QPainter,QPainterPath,QPen,QFontMetricsF
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QComboBox,QPushButton,
-    QPlainTextEdit,QTextEdit,QLabel,QCheckBox,QDialog,QFormLayout,QLineEdit,QSpinBox,QStackedWidget,QScrollArea,QMenu,QFrame,QToolButton)
+    QPlainTextEdit,QTextEdit,QLabel,QCheckBox,QDialog,QFormLayout,QLineEdit,QSpinBox,QStackedWidget,QScrollArea,QFrame,QToolButton)
 from desktop_core import atomic_json
 from choice_controls import ChoiceCombo as QComboBox
 from number_controls import IntegerField as QSpinBox
@@ -20,17 +20,26 @@ from chat_protocol import ProviderValidationError,normalize_provider,endpoint_fo
 from ui_theme import hide_scrollbars
 from typography import FONT_CSS,ui_font
 from theme_registry import color as theme_color
+from card_motion import AnimatedDisclosure
+from data_page_motion import PageFade
+from panel_transition import settle_visible
+from settings_controls import motion_enabled
 
 
 class ChatNotice(QLabel):
     """Errors stay selectable; empty routine state does not reserve a text row."""
+    changed=Signal(str)
     def __init__(self,text='',parent=None):
         super().__init__(parent);self.setTextFormat(Qt.TextFormat.PlainText);self.setWordWrap(True)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         set_theme_style(self,FONT_CSS+'font-size:11px;color:#706879;background:transparent;')
         self.setText(text)
     def setText(self,text):
-        super().setText(text);self.setVisible(bool(text))
+        changed=text!=self.text()
+        super().setText(text)
+        # A parentless QLabel would briefly become a native top-level window.
+        if not text or self.parentWidget() is not None:self.setVisible(bool(text))
+        if changed:self.changed.emit(text)
 
 
 class ChatGlyphButton(QToolButton):
@@ -51,7 +60,7 @@ def chat_symbol(text,tip,slot,parent=None):
     button=ChatGlyphButton({'+':'plus','⋯':'more','‹':'back','↑':'send'}.get(text,text),parent);button.setToolTip(tip);button.setAccessibleName(tip)
     button.setFixedSize(25,25);button.setCursor(Qt.CursorShape.PointingHandCursor)
     set_theme_style(button,'QToolButton{'+FONT_CSS+'font-size:15px;border:0;border-radius:6px;background:transparent;color:#75618d;}'
-        'QToolButton:hover{background:#e8dff0;}QToolButton:pressed{background:#e4dfea;}QToolButton:disabled{color:#8b8195;}QToolButton::menu-indicator{image:none;}'
+        'QToolButton:hover{background:#e8dff0;}QToolButton:pressed,QToolButton:checked{background:#e4dfea;}QToolButton:disabled{color:#8b8195;}'
         'QToolButton[role="primary"]{background:#8b78a6;}QToolButton[role="primary"]:hover{background:#5f4c77;}')
     if slot:button.clicked.connect(slot)
     return button
@@ -244,7 +253,8 @@ class ProviderDialog(QDialog):
         self.embedded=embedded
         if embedded:self.setWindowFlags(Qt.WindowType.Widget)
         self.setObjectName('provider_settings')
-        set_theme_style(self,'QWidget#provider_settings{background:transparent;}QLabel{'+FONT_CSS+'font-size:11px;color:#706879;background:transparent;}'
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        set_theme_style(self,'QWidget#provider_settings{background:#fcfafc;}QLabel{'+FONT_CSS+'font-size:11px;color:#706879;background:transparent;}'
             'QLineEdit,QPlainTextEdit{'+FONT_CSS+'font-size:11px;color:#393343;background:#f5f2f7;border:1px solid #ded2e7;border-radius:6px;padding:6px 8px;}'
             'QLineEdit{min-height:14px;max-height:14px;}'
             'QLineEdit:focus,QPlainTextEdit:focus{border:1px solid #8b78a6;}'
@@ -258,19 +268,19 @@ class ProviderDialog(QDialog):
         self.setWindowTitle('白龙聊天服务');self.resize(420,580);layout=QVBoxLayout(self)
         layout.setContentsMargins(0 if embedded else 12,0 if embedded else 12,0 if embedded else 12,0 if embedded else 12);layout.setSpacing(0)
         header=QHBoxLayout();header.setContentsMargins(0,0,0,0);header.setSpacing(5)
-        if embedded:header.addWidget(chat_symbol('‹','返回聊天，保留未保存输入',self.reject))
-        title=QLabel('聊天服务');set_theme_style(title,FONT_CSS+'font-size:12px;color:#393343;');header.addWidget(title,1)
-        more=chat_symbol('⋯','服务管理',None);menu=QMenu(more);self.services_menu=menu.addMenu('切换服务')
-        add=menu.addAction('添加服务');add.triggered.connect(lambda:QTimer.singleShot(0,self,self.add));self.mutation_buttons.append(add);menu.addSeparator()
-        for text,slot in [('删除当前服务…',self.remove),('清除此服务密钥…',self.clear_key)]:
-            action=menu.addAction(text);action.triggered.connect(lambda checked=False,s=slot:QTimer.singleShot(0,self,s));self.mutation_buttons.append(action)
-        more.setMenu(menu);more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup);header.addWidget(more);layout.addLayout(header);layout.addSpacing(8)
+        if embedded:header.addWidget(chat_symbol('‹','返回，保留未保存输入',self.reject))
+        title=QLabel('自定义 API');set_theme_style(title,FONT_CSS+'font-size:12px;font-weight:600;color:#393343;');header.addWidget(title,1)
+        layout.addLayout(header);layout.addSpacing(8)
         self.body_scroll=hide_scrollbars(QScrollArea());self.body_scroll.setWidgetResizable(True);self.body_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.body_scroll.setObjectName('provider_body_scroll');set_theme_style(self.body_scroll,'QScrollArea#provider_body_scroll{background:transparent;border:0;}')
         self.body_scroll.viewport().setAutoFillBackground(False)
         body=QWidget();body.setAutoFillBackground(False);set_theme_style(body,'background:transparent;');body_layout=QVBoxLayout(body)
         body_layout.setContentsMargins(3,10,3,0);body_layout.setSpacing(0);self.body_scroll.setWidget(body);layout.addWidget(self.body_scroll,1)
-        self.select=QComboBox(self);self.select.hide()
+        body.setAutoFillBackground(False)
+        service_row=QHBoxLayout();service_row.setSpacing(6)
+        self.select=QComboBox(self);self.select.setAccessibleName('切换自定义服务');service_row.addWidget(self.select,1)
+        add=chat_symbol('+','添加服务',self.add);service_row.addWidget(add);self.mutation_buttons.append(add)
+        body_layout.addLayout(service_row);body_layout.addSpacing(10)
         self.confirmation=InlineConfirmation();body_layout.addWidget(self.confirmation)
         self.status=ChatNotice();body_layout.addWidget(self.status)
         form=QVBoxLayout();form.setSpacing(10);body_layout.addLayout(form)
@@ -283,7 +293,7 @@ class ProviderDialog(QDialog):
         self.key_status=ChatNotice()
         self.fields['base_url'].textChanged.connect(self.update_endpoint)
         self.fields['key'].textChanged.connect(self.update_key_status)
-        self.advanced_toggle=ChatFoldButton('高级设置');self.advanced_toggle.setCheckable(True);self.advanced_toggle.setFixedHeight(34)
+        self.advanced_toggle=ChatFoldButton('连接详情');self.advanced_toggle.setCheckable(True);self.advanced_toggle.setFixedHeight(34)
         set_theme_style(self.advanced_toggle,'QPushButton{'+FONT_CSS+'font-size:11px;text-align:left;color:#75618d;background:transparent;border:0;border-top:1px solid #e4dfea;border-radius:0;padding:9px 0 0;}QPushButton:hover,QPushButton:checked{background:transparent;color:#393343;}')
         body_layout.addSpacing(9);body_layout.addWidget(self.advanced_toggle)
         self.advanced=QWidget();advanced=QFormLayout(self.advanced);advanced.setContentsMargins(0,0,0,0)
@@ -291,11 +301,18 @@ class ProviderDialog(QDialog):
         advanced.addRow(self.key_status)
         self.endpoint=ChatNotice();advanced.addRow('实际请求地址',self.endpoint)
         self.timeout=QSpinBox();self.timeout.setRange(5,600);advanced.addRow('超时（秒）',self.timeout)
-        self.prompt=hide_scrollbars(QPlainTextEdit());self.prompt.setFixedHeight(76);self.prompt.setPlainText(self.config.get('system_prompt',CHAT_DEFAULT['system_prompt']));advanced.addRow('角色系统提示词',self.prompt)
-        self.count=QSpinBox();self.count.setRange(2,200);self.count.setValue(self.config.get('history_messages',40));advanced.addRow('历史消息上限',self.count)
-        self.chars=QSpinBox();self.chars.setRange(1000,200000);self.chars.setSingleStep(1000);self.chars.setValue(self.config.get('history_chars',24000));advanced.addRow('历史字符上限',self.chars)
-        body_layout.addWidget(self.advanced);self.advanced.hide();self.advanced_toggle.toggled.connect(self._toggle_advanced)
-        note=ChatNotice('使用 OpenAI 兼容的 Chat Completions 接口。\n仅主动发送时请求，不会自动发送 Codex 会话。');set_theme_style(note,FONT_CSS+'font-size:10px;color:#706879;background:transparent;');body_layout.addWidget(note)
+        self.connection_disclosure=AnimatedDisclosure(self.advanced)
+        body_layout.addWidget(self.connection_disclosure);self.advanced_toggle.toggled.connect(self._toggle_advanced)
+        body_layout.addSpacing(9)
+        self.management=QWidget();management=QVBoxLayout(self.management);management.setContentsMargins(0,0,0,0);management.setSpacing(6)
+        management.addWidget(QLabel('服务管理'))
+        actions=QHBoxLayout();actions.setSpacing(6)
+        for text,slot in [('清除密钥…',self.clear_key),('删除服务…',self.remove)]:
+            button=QPushButton(text)
+            set_theme_style(button,'QPushButton{'+FONT_CSS+'font-size:11px;color:#89566c;background:#f3eaf0;border:0;'
+                'border-radius:6px;padding:5px 8px;}QPushButton:hover{background:#e8dff0;}QPushButton:disabled{color:#8b8195;}')
+            button.clicked.connect(slot);actions.addWidget(button);self.mutation_buttons.append(button)
+        management.addLayout(actions);body_layout.addWidget(self.management)
         self.recovery=QPushButton('打开配置目录');self.recovery.clicked.connect(lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.root))));body_layout.addWidget(self.recovery);self.recovery.hide();body_layout.addStretch()
         footer=QWidget();footer.setObjectName('provider_footer');row=QHBoxLayout(footer);row.setContentsMargins(0,9,0,0);row.setSpacing(7)
         set_theme_style(footer,'QWidget#provider_footer{border-top:1px solid #e4dfea;background:transparent;}')
@@ -308,7 +325,7 @@ class ProviderDialog(QDialog):
         from PySide6.QtGui import QShortcut,QKeySequence
         self.save_shortcut=QShortcut(QKeySequence('Ctrl+S'),self);self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut);self.save_shortcut.activated.connect(self.save)
     def _toggle_advanced(self,visible):
-        self.advanced.setVisible(visible);self.advanced_toggle.update()
+        self.connection_disclosure.set_expanded(visible);self.advanced_toggle.update()
     def prepare_visit(self):
         self.confirmation.cancel();self.body_scroll.verticalScrollBar().setValue(0)
     def block_writes(self,message):
@@ -330,21 +347,20 @@ class ProviderDialog(QDialog):
         self.status.setText(str(error)+' 配置尚未保存。')
         field=self.timeout if error.field=='timeout' else self.fields.get(error.field)
         if field:
-            if field is self.timeout:self.advanced_toggle.setChecked(True)
+            if field is self.timeout:
+                self.advanced_toggle.setChecked(True);self.connection_disclosure.complete()
             self.body_scroll.ensureWidgetVisible(field);field.setFocus();field.selectAll()
     def reload(self):
         self.current=None
         self.select.blockSignals(True);self.select.clear()
         for p in self.config.get('providers',[]):self.select.addItem(p.get('name','未命名'),p['id'])
         idx=self.select.findData(self.config.get('active'));self.select.setCurrentIndex(max(0,idx));self.select.blockSignals(False);self.change()
-        self.services_menu.clear()
-        for index,provider in enumerate(self.config.get('providers',[])):
-            action=self.services_menu.addAction(provider.get('name','未命名'));action.setCheckable(True);action.setChecked(index==self.select.currentIndex())
-            action.triggered.connect(lambda checked=False,i=index:self.select.setCurrentIndex(i))
+        self.select.setVisible(bool(self.select.count()))
     def change(self):
         self.confirmation.cancel()
         if self.current:self.drafts[self.current['id']]={**{key:w.text() for key,w in self.fields.items()},'timeout':self.timeout.value()}
         self.current=next((p for p in self.config.get('providers',[]) if p['id']==self.select.currentData()),None)
+        self.management.setVisible(self.current is not None)
         values=self.drafts.get(self.current['id'],self.current) if self.current else {}
         for k,w in self.fields.items():w.setText(values.get(k,''))
         self.timeout.setValue(values.get('timeout',90))
@@ -398,8 +414,8 @@ class ProviderDialog(QDialog):
         current=next(p for p in candidate['providers'] if p['id']==self.current['id'])
         current.update(normalized)
         try:
-            candidate.update(active=current['id'],system_prompt=self.prompt.toPlainText(),history_messages=self.count.value(),history_chars=self.chars.value())
-            self.config=save_chat_config(self.root,candidate,current['id'],entered['key'])
+            candidate['active']=current['id']
+            self.config=save_chat_config(self.root,candidate,current['id'],entered['key'],provider_only=True)
             self.drafts.pop(current['id'],None);self.reload();self.status.setText('配置已保存；尚未验证连通，请主动发送消息验证。');self.accept()
         except OSError as error:self.status.setText('服务配置未提交；输入已保留。'+str(error))
 
@@ -417,6 +433,8 @@ class ChatWindow(QWidget):
         self.session=self.store.sessions[0] if self.store.sessions else self.store.blank()
         if not self.store.sessions and not self.store.load_error:self.store.sessions.append(self.session)
         self.stream=None;self.partial='';self.busy=False;self.provider_dialog=None
+        self.provider_page=None;self.settings_page=None;self.preferences_page=None;self._provider_from_settings=False
+        self.session_actions=None
         self.account_job=None;self.account_preparing=False;self.chatgpt_models={}
         self._stream_pending=[];self._rendered_text='';self._rendered_session=None
         self.stream_timer=QTimer(self);self.stream_timer.setSingleShot(True);self.stream_timer.setInterval(33);self.stream_timer.timeout.connect(self.flush_stream)
@@ -427,17 +445,16 @@ class ChatWindow(QWidget):
             'QPushButton:hover{background:#e8dff0;}QPushButton[role="primary"]{color:#ffffff;background:#75618d;border-color:#75618d;}'
             'QPushButton[role="primary"]:hover{background:#5f4c77;}QPushButton:disabled{color:#8b8195;background:#efebf2;}')
         outer=QVBoxLayout(self);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0);self.pages=QStackedWidget();outer.addWidget(self.pages)
+        self.page_motion=PageFade(self.pages)
         self.chat_body=QWidget();self.pages.addWidget(self.chat_body);layout=QVBoxLayout(self.chat_body)
         layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         row=QHBoxLayout();row.setSpacing(5);self.sessions=ChatSessionChoice();self.sessions.setObjectName('chat_sessions');self.sessions.setMinimumWidth(0);row.addWidget(self.sessions,1)
         row.addWidget(chat_symbol('+','新建会话',self.new))
-        manage=chat_symbol('⋯','会话管理',None);menu=QMenu(manage)
-        for title,slot in [('清空当前会话…',self.clear),('删除当前会话…',self.delete)]:
-            menu.addAction(title,lambda checked=False,s=slot:QTimer.singleShot(0,self,s))
-        manage.setMenu(menu);manage.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup);row.addWidget(manage)
+        self.session_actions_button=chat_symbol('⋯','会话管理',self.toggle_session_actions)
+        self.session_actions_button.setCheckable(True);row.addWidget(self.session_actions_button)
         layout.addLayout(row);layout.addSpacing(5);self.sessions.currentIndexChanged.connect(self.switch)
-        self.service_button=QPushButton();self.service_button.setObjectName('chat_service');self.service_button.setFixedHeight(27);self.service_button.clicked.connect(self.show_service_menu)
-        self.service_button.setAccessibleName('配置聊天服务');self.service_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.service_button=QPushButton();self.service_button.setObjectName('chat_service');self.service_button.setFixedHeight(27);self.service_button.clicked.connect(self.open_chat_settings)
+        self.service_button.setAccessibleName('聊天设置');self.service_button.setCursor(Qt.CursorShape.PointingHandCursor)
         set_theme_style(self.service_button,'QPushButton{background:#f5f2f7;border:0;border-radius:7px;padding:0;min-height:27px;max-height:27px;}QPushButton:hover{background:#e8dff0;}')
         service_layout=QHBoxLayout(self.service_button);service_layout.setContentsMargins(8,0,8,0);service_layout.setSpacing(10)
         self.service_name=QLabel();self.service_model=QLabel();self.service_model.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter)
@@ -469,26 +486,37 @@ class ChatWindow(QWidget):
             config=load_chat_config(self.root)
             service=next((p for p in config.get('providers',[]) if p['id']==config.get('active')),None)
         except OSError:config={};service=None
-        self._service_name=service.get('name','聊天服务') if service else '设置聊天服务'
+        self._service_name=service.get('name','自定义 API') if service else '自定义 API'
         self._service_model=service.get('model','') if service else '尚未配置'
+        connected=bool(service)
         if config.get('service')=='chatgpt':
             from chatgpt_oauth import ChatGPTAccount
             self._service_name='ChatGPT 套餐 · 预览'
             model=config.get('chatgpt_model','')
+            connected=False
             try:
                 connected=bool(ChatGPTAccount(self.root).record())
                 self._service_model=self.chatgpt_models.get(model,'已连接') if connected else '待授权'
             except OSError:self._service_model='授权不可读'
         self.service_button.setToolTip(self._service_name+' / '+self._service_model)
         self._fit_service_summary()
+        if self.settings_page:
+            summary=' / '.join(part for part in (self._service_name,self._service_model) if part)
+            self.settings_page.sync(config,summary,connected)
     def _fit_service_summary(self):
         from PySide6.QtGui import QFontMetrics
         f=ui_font(11);f.setPixelSize(10)
-        for widget,text in ((self.service_name,getattr(self,'_service_name','')), (self.service_model,getattr(self,'_service_model','')+'  ▾')):
-            widget.setText(QFontMetrics(f).elidedText(text,Qt.TextElideMode.ElideRight,max(40,widget.width())))
+        self.service_name.setText('聊天设置 ›')
+        summary=self._service_name if self._service_model not in ('尚未配置','待授权','授权不可读') else self._service_model
+        self.service_model.setText(QFontMetrics(f).elidedText(summary,Qt.TextElideMode.ElideRight,max(40,self.service_model.width())))
     def resizeEvent(self,event):
         super().resizeEvent(event)
+        if hasattr(self,'page_motion'):self.page_motion.clear()
         if hasattr(self,'service_button'):QTimer.singleShot(0,self,self._fit_service_summary)
+    def hideEvent(self,event):
+        self.page_motion.clear()
+        if self.session_actions:self.session_actions.close()
+        super().hideEvent(event)
     def save_follow(self,value):self.pet.settings['chat_follow']=value;self.pet.save_settings()
     def follow_pet(self):
         if not self.isVisible() or self.isMinimized() or not self.follow.isChecked():return
@@ -567,31 +595,55 @@ class ChatWindow(QWidget):
         try:self.store.save()
         except OSError:self.store.sessions=previous;self.status.setText('删除失败，原会话已保留。');return
         self.session=remaining[0];self.reload();self.status.setText('会话已删除。')
-    def show_service_menu(self):
-        if self.busy:return
-        try:config=load_chat_config(self.root)
-        except OSError as error:self.status.setText(str(error));return
-        menu=QMenu(self.service_button)
-        set_theme_style(menu,'QMenu{'+FONT_CSS+'font-size:11px;color:#393343;background:#fcfafc;border:1px solid #ded2e7;padding:4px;}'
-            'QMenu::item{padding:6px 12px 6px 22px;border-radius:5px;}QMenu::item:selected{background:#e8dff0;}')
-        menu.aboutToHide.connect(menu.deleteLater)
-        for service,label in (('chatgpt','ChatGPT 套餐 · 预览'),('custom','自定义 API')):
-            action=menu.addAction(label);action.setCheckable(True);action.setChecked(config['service']==service)
-            action.triggered.connect(lambda checked=False,s=service:self.choose_service(s))
-        menu.addSeparator()
-        if config['service']=='chatgpt':
-            if self.account_job:
-                menu.addAction('取消授权',self.cancel_account_job)
-            else:
-                menu.addAction('Continue with ChatGPT',self.connect_account)
-                if self.chatgpt_models:
-                    models=menu.addMenu('选择模型')
-                    for slug,label in self.chatgpt_models.items():
-                        action=models.addAction(label);action.setCheckable(True);action.setChecked(config['chatgpt_model']==slug)
-                        action.triggered.connect(lambda checked=False,m=slug:self.choose_service('chatgpt',m))
-                menu.addAction('断开本机授权',self.disconnect_account)
-        else:menu.addAction('配置自定义 API…',self.provider)
-        menu.popup(self.service_button.mapToGlobal(self.service_button.rect().bottomLeft()))
+    def toggle_session_actions(self):
+        if self.session_actions and self.session_actions.isVisible():
+            self.session_actions.close();return
+        if self.session_actions is None:
+            from project_cost_ui import CostActions
+            self.session_actions=CostActions(self.session_actions_button,(
+                ('清空当前会话…',self.clear),('删除当前会话…',self.delete)))
+            self.destroyed.connect(self.session_actions.deleteLater)
+        self.session_actions.open()
+
+    def switch_chat_page(self,target,direction):
+        previous=self.pages.currentWidget()
+        if previous is target:return
+        if self.session_actions:self.session_actions.close()
+        self.settle_chat_dropdowns(previous)
+        frame=None
+        if previous.isVisible() and motion_enabled() and not self.pages.size().isEmpty():
+            frame=self.page_motion.current_frame()
+            if frame is None:frame=PageFade.snapshot(previous)
+            self.page_motion.hold(frame,self.pages.rect())
+        self.pages.setCurrentWidget(target)
+        if frame is not None:
+            self.page_motion.raise_();settle_visible(target)
+            self.page_motion.present(frame,PageFade.snapshot(target),self.pages.rect(),direction=direction)
+        else:self.page_motion.clear()
+
+    def settle_chat_dropdowns(self,page):
+        for field in page.findChildren(QComboBox):field.hidePopup()
+
+    def return_to_chat(self):
+        self.switch_chat_page(self.chat_body,-1)
+
+    def open_chat_settings(self):
+        previous=self.pages.currentWidget()
+        if self.busy and previous is self.chat_body:return
+        if self.settings_page is None:
+            from chat_settings_ui import ChatSettingsPage
+            self.settings_page=ChatSettingsPage(self)
+            self.pages.addWidget(self.settings_page)
+            self.status.changed.connect(self.settings_page.feedback.setText)
+        self.refresh_service_summary()
+        self.switch_chat_page(self.settings_page,1 if previous is self.chat_body else -1)
+
+    def open_chat_preferences(self):
+        if self.preferences_page is None:
+            from chat_settings_ui import ChatPreferencesPage
+            self.preferences_page=ChatPreferencesPage(self)
+            self.pages.addWidget(self.preferences_page)
+        self.switch_chat_page(self.preferences_page,1)
 
     def choose_service(self,service,model=None):
         if self.busy:return
@@ -603,7 +655,7 @@ class ChatWindow(QWidget):
             if service=='chatgpt':
                 from chatgpt_oauth import ChatGPTAccount
                 if not ChatGPTAccount(self.root).record():
-                    self.status.setText('在聊天服务菜单选择 Continue with ChatGPT 完成授权。')
+                    self.status.setText('请在聊天设置中连接 ChatGPT。')
         except OSError as error:self.status.setText(str(error))
 
     def launch_account_job(self,work,finished):
@@ -630,6 +682,7 @@ class ChatWindow(QWidget):
         job.finished.connect(complete,Qt.ConnectionType.QueuedConnection)
         job.progress.connect(progress,Qt.ConnectionType.QueuedConnection)
         job.start(work)
+        if self.settings_page:self.refresh_service_summary()
 
     def connect_account(self):
         if self.account_job or self.busy:return
@@ -654,6 +707,7 @@ class ChatWindow(QWidget):
         if job:
             job.cancelled.set()
             self.status.setText('已取消 ChatGPT 操作。')
+            if self.settings_page:self.refresh_service_summary()
 
     def disconnect_account(self):
         if self.account_job or self.busy:return
@@ -664,19 +718,22 @@ class ChatWindow(QWidget):
         self.refresh_service_summary()
         self.status.setText('已断开本机 ChatGPT 授权。')
 
-    def provider(self):
+    def provider(self,*,from_settings=False):
         self.confirmation.cancel()
-        if self.embedded:
-            if not self.provider_dialog:
+        if self.embedded or from_settings:
+            if self.provider_page is None:
                 self.provider_dialog=ProviderDialog(self.root,self,embedded=True)
                 self.provider_page=self.provider_dialog
                 self.pages.addWidget(self.provider_page)
                 self.provider_dialog.finished.connect(self.provider_finished)
-            self.provider_dialog.prepare_visit();self.pages.setCurrentWidget(self.provider_page);self.provider_dialog.show();return
+            self._provider_from_settings=from_settings
+            self.provider_page.prepare_visit();self.switch_chat_page(self.provider_page,1);return
         if self.provider_dialog and self.provider_dialog.isVisible():self.provider_dialog.raise_();return
         self.provider_dialog=ProviderDialog(self.root,self);self.provider_dialog.finished.connect(self.provider_finished);self.provider_dialog.show()
     def provider_finished(self,result):
-        if self.embedded:self.pages.setCurrentWidget(self.chat_body)
+        if self.provider_page is not None and self.pages.currentWidget() is self.provider_page:
+            if self._provider_from_settings:self.open_chat_settings()
+            else:self.return_to_chat()
         self.refresh_service_summary()
         if result==QDialog.DialogCode.Accepted:self.status.setText('聊天配置已保存；尚未验证连通，发送消息时才会请求服务。')
     def send(self):
@@ -785,9 +842,11 @@ class ChatWindow(QWidget):
         self.partial='';self.render()
     def closeEvent(self,event):self.cancel_account_job();self.stop();self.hide();event.ignore()
     def keyPressEvent(self,event):
-        if self.embedded and event.key()==Qt.Key.Key_Escape:
+        if event.key()==Qt.Key.Key_Escape and (self.embedded or self.pages.currentWidget() is not self.chat_body):
             if self.confirmation.callback is not None:self.confirmation.cancel()
             elif self.provider_dialog and self.pages.currentWidget() is self.provider_page:self.provider_dialog.reject()
+            elif self.pages.currentWidget() is self.preferences_page:self.open_chat_settings()
+            elif self.pages.currentWidget() is self.settings_page:self.return_to_chat()
             else:self.pet.bubble.return_to_status()
             event.accept();return
         super().keyPressEvent(event)

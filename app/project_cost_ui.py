@@ -1,14 +1,15 @@
 """Compact project costs with local search and stable scrolling and local detail navigation."""
-from PySide6.QtCore import Qt,Signal,QRectF,QSize,QTimer,QEasingCurve,QAbstractAnimation,QPropertyAnimation,QObject,QEvent,QPointF,QThread
-from PySide6.QtGui import QPainter,QFontMetrics,QPen,QColor,QWheelEvent
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLineEdit,QLabel,QToolButton,QSizePolicy,QListWidget,QListWidgetItem,QStyledItemDelegate,QStyle,QScrollArea,QStackedWidget,QFrame,QApplication,QAbstractScrollArea,QMenu,QPushButton,QFileDialog,QMessageBox
+from PySide6.QtCore import Qt,Signal,QRectF,QSize,QTimer,QEasingCurve,QAbstractAnimation,QPropertyAnimation,QObject,QEvent,QPoint,QPointF,QThread
+from PySide6.QtGui import QPainter,QFontMetrics,QPen,QColor,QWheelEvent,QCursor
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLineEdit,QLabel,QToolButton,QSizePolicy,QListWidget,QListWidgetItem,QStyledItemDelegate,QStyle,QScrollArea,QStackedWidget,QFrame,QApplication,QAbstractScrollArea,QPushButton,QFileDialog,QMessageBox
 from compact_bubble import font,FONT_CSS
 from theme_registry import color
 from theme_runtime import set_theme_style
 from settings_controls import SlidingSegments,motion_enabled
-from data_page_motion import PageFade
+from data_page_motion import PageFade,ReportSubpage
 from token_calendar import compact_tokens
 from project_cost import search_rows,PRICE_SOURCE
+from report_calendar import DateButton
 
 def dollars(n):
     from cost_preferences import money
@@ -77,10 +78,62 @@ class MetricLine(QWidget):
 class CostMoreButton(QToolButton):
     def __init__(self,parent=None):
         super().__init__(parent);self.setFixedSize(22,23);self.setAccessibleName('更多成本操作');self.setCursor(Qt.CursorShape.PointingHandCursor)
-        set_theme_style(self,'QToolButton{background:transparent;border:0;border-radius:6px;}QToolButton:hover{background:#eae1f2;}')
+        self.setCheckable(True)
+        set_theme_style(self,'QToolButton{background:transparent;border:0;border-radius:6px;}QToolButton:checked{background:#eae1f2;}')
     def paintEvent(self,event):
         super().paintEvent(event);p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(color('#75618d')))
         for x in (6,11,16):p.drawEllipse(QRectF(x-1.4,10,2.8,2.8))
+
+class CostActions(QFrame):
+    """One in-panel popup. Outside presses close it without consuming clicks."""
+    def __init__(self,anchor,actions):
+        super().__init__(anchor.window())
+        self.anchor=anchor
+        self.native=None;self.foreground=0
+        self.outside_timer=QTimer(self);self.outside_timer.setInterval(20);self.outside_timer.timeout.connect(self.check_outside)
+        self.setObjectName('cost_actions')
+        set_theme_style(self,'QFrame#cost_actions{background:#fcfafc;border:1px solid #e4dfea;border-radius:8px;}'
+            'QPushButton{'+FONT_CSS+'font-size:12px;color:#393343;text-align:left;border:0;border-radius:5px;padding:5px 9px;}'
+            'QPushButton:hover,QPushButton:focus{background:#eae1f2;}')
+        layout=QVBoxLayout(self);layout.setContentsMargins(4,4,4,4);layout.setSpacing(1)
+        for text,action in actions:
+            button=QPushButton(text,self);button.clicked.connect(lambda _,fn=action:self.invoke(fn));layout.addWidget(button)
+    def open(self):
+        self.adjustSize();point=self.anchor.mapTo(self.parentWidget(),QPoint(self.anchor.width()-self.width(),self.anchor.height()+3))
+        self.move(max(4,point.x()),point.y());self.show();self.raise_()
+        self.anchor.setChecked(True);self.anchor.repaint()
+        QApplication.instance().installEventFilter(self)
+        if QApplication.platformName()=='windows':
+            if self.native is None:
+                from video_fullscreen import WindowAPI
+                self.native=WindowAPI()
+            self.foreground=self.native.foreground()
+            self.outside_timer.start()
+    def check_outside(self):
+        active=self.native.foreground()
+        if active and self.foreground and active!=self.foreground and active!=int(self.parentWidget().winId()):
+            self.close();return
+        if self.native.mouse_button_down():
+            hit=QApplication.widgetAt(QCursor.pos())
+            if hit is not self.anchor and hit is not self and not (hit and self.isAncestorOf(hit)):self.close()
+    def invoke(self,action):
+        self.close();action()
+    def eventFilter(self,obj,event):
+        kind=event.type()
+        if kind==QEvent.Type.KeyPress and event.key()==Qt.Key.Key_Escape:
+            self.close();return True
+        if kind in (QEvent.Type.MouseButtonPress,QEvent.Type.TouchBegin):
+            if isinstance(obj,QWidget) and obj is not self.anchor and obj is not self and not self.isAncestorOf(obj):self.close()
+        elif obj is self.anchor and kind in (QEvent.Type.Hide,QEvent.Type.Resize):
+            self.close()
+        elif obj is self.parentWidget() and kind in (QEvent.Type.Hide,QEvent.Type.Resize,QEvent.Type.WindowDeactivate):
+            self.close()
+        return False
+    def hideEvent(self,event):
+        self.outside_timer.stop()
+        QApplication.instance().removeEventFilter(self)
+        self.anchor.setChecked(False);self.anchor.repaint()
+        super().hideEvent(event)
 
 class SessionButton(QToolButton):
     def __init__(self,session):
@@ -97,32 +150,34 @@ class SessionButton(QToolButton):
 
 def estimated(cost,tokens,pending):return dollars(None if pending and pending>=tokens else cost)
 
-class ExplanationOverlay(QWidget):
+class ExplanationOverlay(ReportSubpage):
     """Local, fixed-size explanation view; never resizes the report window."""
     def __init__(self,parent,title,paragraphs):
         super().__init__(parent);self.setObjectName('explanationOverlay')
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         set_theme_style(self,'QWidget#explanationOverlay{background:#fcfafc;}QLabel{'+FONT_CSS+'font-size:12px;color:#706879;background:transparent;}QToolButton{'+FONT_CSS+'font-size:12px;color:#75618d;border:0;background:transparent;text-align:left;}')
-        layout=QVBoxLayout(self);layout.setContentsMargins(3,3,3,3);layout.setSpacing(10)
-        self.back=QToolButton();self.back.setText('‹ 返回');self.back.setFixedHeight(27);self.back.clicked.connect(self.close);layout.addWidget(self.back)
+        layout=QVBoxLayout(self);layout.setContentsMargins(3,3,3,3);layout.setSpacing(6)
+        self.back=QToolButton();self.back.setText('‹ 返回');self.back.setFixedHeight(27);self.back.clicked.connect(self.go_back)
+        set_theme_style(self.back,'QToolButton{'+FONT_CSS+'font-size:11px;color:#75618d;background:#f5f0f8;border:0;border-radius:6px;padding:3px 7px;}QToolButton:hover{background:#eae1f2;}')
+        layout.addWidget(self.back,0,Qt.AlignmentFlag.AlignLeft)
         area=QScrollArea();area.setWidgetResizable(True)
         from ui_theme import hide_scrollbars
         hide_scrollbars(area);set_theme_style(area,'QScrollArea{border:0;background:transparent;}');body=QWidget();body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground,True);set_theme_style(body,'background:#fcfafc;');content=QVBoxLayout(body);content.setContentsMargins(3,0,3,0);content.setSpacing(12)
         heading=QLabel(title);set_theme_style(heading,FONT_CSS+'font-size:14px;font-weight:600;color:#393343;background:transparent;');content.addWidget(heading)
-        for text in paragraphs:
-            label=QLabel(text);label.setTextFormat(Qt.TextFormat.PlainText);label.setWordWrap(True);label.setMinimumWidth(0);content.addWidget(label)
+        for paragraph in paragraphs:
+            if isinstance(paragraph,tuple):
+                title,text=paragraph
+                block=QWidget();column=QVBoxLayout(block);column.setContentsMargins(0,0,0,0);column.setSpacing(3)
+                section=QLabel(title);set_theme_style(section,FONT_CSS+'font-size:12px;font-weight:600;color:#393343;background:transparent;');column.addWidget(section)
+                content.addWidget(block)
+            else:
+                text=paragraph;column=content
+            label=QLabel(text);label.setTextFormat(Qt.TextFormat.PlainText);label.setWordWrap(True);label.setMinimumWidth(0);column.addWidget(label)
         content.addStretch();area.setWidget(body);layout.addWidget(area)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose);parent.installEventFilter(self);self.setGeometry(parent.rect());self.show();self.raise_();self.setFocus()
-    def keyPressEvent(self,event):
-        if event.key()==Qt.Key.Key_Escape:self.close();event.accept();return
-        super().keyPressEvent(event)
+        self.show_page();self.setFocus()
     def paintEvent(self,event):
         painter=QPainter(self);painter.fillRect(self.rect(),QColor(color('#fcfafc')))
-    def eventFilter(self,obj,event):
-        if event.type()==QEvent.Type.Resize:self.setGeometry(obj.rect())
-        elif event.type()==QEvent.Type.Hide:self.close()
-        return False
 
 class SearchButton(QToolButton):
     def paintEvent(self,event):
@@ -150,7 +205,9 @@ class CostSummary(QLabel):
         meta=meta or {};title,_,amount=text.split('\n')[0].rpartition('  ')
         p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(color('#f5f0f8')));p.drawRoundedRect(QRectF(0,0,rect.width(),rect.height()+3),10,10)
         from cost_preferences import current
-        p.setFont(font(11));p.setPen(QColor(color('#706879')));p.drawText(9,18,'API 等价估算');p.drawText(QRectF(100,3,rect.width()-109,20),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,current()['currency'])
+        p.setFont(font(11));p.setPen(QColor(color('#706879')))
+        if not meta.get('date_button'):p.drawText(9,18,meta.get('date_caption') or '全部时间')
+        p.drawText(QRectF(100,3,rect.width()-109,20),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,current()['currency'])
         p.setFont(font(22,True));p.setPen(QColor(color('#393343')));p.drawText(9,44,amount)
         if meta.get('pending'):
             x=9+QFontMetrics(p.font()).horizontalAdvance(amount)+5;p.setFont(font(11));p.setPen(QColor(color('#706879')));p.drawText(x,43,'部分')
@@ -267,6 +324,7 @@ class CostDelegate(QStyledItemDelegate):
 
 class ProjectCosts(QWidget):
     changed=Signal()
+    calendarRequested=Signal()
     def __init__(self,parent=None,search_bar=None):
         super().__init__(parent);self.data={};self.period='all';self.archive='active';self.selected=None;self._detail_key=None
         self.session_rows=None;self.session=None;self.detail_job=None;self.detail_ticket=0;self._sessions_key=None;self.session_order='time';self.session_position=0
@@ -284,12 +342,12 @@ class ProjectCosts(QWidget):
         set_theme_style(self.back,'QToolButton{'+FONT_CSS+'font-size:12px;color:#514360;background:transparent;border:0;text-align:left;}QToolButton:hover{background:#eae1f2;border-radius:5px;}')
         self.back.clicked.connect(self.go_back);body.addWidget(self.back);self.back.hide()
         self.summary=CostSummary(self);self.summary.hide();self._row_ids=[]
+        self.date_caption='';self.calendar_enabled=False
         self.stack=QStackedWidget();body.addWidget(self.stack,1)
         if self._external_search:
             body.removeWidget(self.back)
             self.search_bar.layout().addWidget(self.back,0,Qt.AlignmentFlag.AlignLeft)
         self.info_button=CostMoreButton()
-        set_theme_style(self.info_button,'QToolButton{'+FONT_CSS+'font-size:12px;color:#75618d;border:0;background:transparent;text-align:left;}')
         self.info_button.clicked.connect(self.more)
         if not self._external_search:
             toolbar=QHBoxLayout();toolbar.addStretch();toolbar.addWidget(self.info_button);body.insertLayout(0,toolbar)
@@ -297,6 +355,9 @@ class ProjectCosts(QWidget):
         self.list=QListWidget();self.list.setMouseTracking(True);self.list.setItemDelegate(CostDelegate(self.list));self.list.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel);self.list.setMinimumSize(0,0);self.stack.addWidget(self.list)
+        self.date_button=DateButton(self.list.viewport());self.date_button.setObjectName('report_cost_date')
+        self.date_button.clicked.connect(self.calendarRequested.emit);self.date_button.hide()
+        self.list.viewport().installEventFilter(self);self.list.verticalScrollBar().valueChanged.connect(self._sync_date_button)
         self.details=QScrollArea();self.details.setWidgetResizable(True);self.details.setMinimumSize(0,0);self.details.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.details.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn);self.stack.addWidget(self.details)
         self.empty=self.label('');self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter);self.empty.setWordWrap(True);self.stack.addWidget(self.empty)
         style='QListWidget,QScrollArea{background:transparent;border:0;outline:0;}QListWidget::item{border:0;}QScrollBar:vertical{background:transparent;width:3px;margin:2px 0 2px 0;border-radius:2px;}QScrollBar::handle:vertical{background:#e4dfea;min-height:30px;border-radius:2px;}QScrollBar::handle:vertical:hover{background:#8b78a6;}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}'
@@ -312,7 +373,6 @@ class ProjectCosts(QWidget):
     def activate_row(self,item):
         value=item.data(Qt.ItemDataRole.UserRole)
         if '_summary' not in value:self.select(value);return
-        from PySide6.QtGui import QCursor
         local=self.list.viewport().mapFromGlobal(QCursor.pos())-self.list.visualItemRect(item).topLeft()
         width=self.list.visualItemRect(item).width()
         if QRectF(width-93,101,84,20).contains(QPointF(local)):
@@ -326,9 +386,13 @@ class ProjectCosts(QWidget):
         bubble=getattr(self.window(),'bubble',None)
         return bubble.owner_pet() if bubble is not None else None
     def more(self):
-        menu=QMenu(self);set_theme_style(menu,'QMenu{'+FONT_CSS+'font-size:12px;color:#393343;background:#fcfafc;border:1px solid #e4dfea;border-radius:8px;padding:5px;}QMenu::item{padding:7px 12px;border-radius:5px;}QMenu::item:selected{background:#eae1f2;}')
-        menu.addAction('导出统计',self.show_export);menu.addAction('计价设置',self.show_pricing);menu.addAction('估算说明',self.show_info);menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        anchor=getattr(self,'more_anchor',self.info_button);menu.ensurePolished();menu.popup(anchor.mapToGlobal(__import__('PySide6.QtCore',fromlist=['QPoint']).QPoint(anchor.width()-menu.sizeHint().width(),anchor.height()+3)))
+        menu=getattr(self,'_cost_actions',None)
+        if menu is None:
+            anchor=getattr(self,'more_anchor',self.info_button)
+            menu=self._cost_actions=CostActions(anchor,(('导出统计',self.show_export),('计价设置',self.show_pricing),('估算说明',self.show_info)))
+            self.destroyed.connect(menu.deleteLater)
+        if menu.isVisible():menu.close()
+        else:menu.open()
     def show_pricing(self):
         from pricing_ui import open_editor
         models={m['model'] for p in self.data.get('ranges',{}).get('all',[]) for m in p['model_usage']}
@@ -501,9 +565,24 @@ class ProjectCosts(QWidget):
             '昨日按本地时间 00:00–24:00 统计。项目跟随当前会话归属，迁移不重复累计历史用量。',
             '正在整理历史记录。' if self.data.get('initial_pending') else '正在同步新增记录。' if self.data.get('pending') else '按已读取记录估算，其他设备的用量可能不完整。'])
         self.explanation.destroyed.connect(lambda:setattr(self,'explanation',None))
-    def set_data(self,data,period):
+    def set_data(self,data,period,date_caption=None,calendar_enabled=False):
         if period!=self.period:self.session=None;self.turn_limit=60
-        self.data=data or {};self.period=period;self.refresh()
+        self.data=data or {};self.period=period
+        self.date_caption=date_caption or '';self.calendar_enabled=calendar_enabled;self.refresh()
+    def eventFilter(self,obj,event):
+        if obj is self.list.viewport() and event.type() in (QEvent.Type.Resize,QEvent.Type.Show):
+            self._sync_date_button()
+        return super().eventFilter(obj,event)
+    def _sync_date_button(self,*_):
+        item=self.list.item(0)
+        rect=self.list.visualItemRect(item) if item else None
+        visible=self.calendar_enabled and self.stack.currentWidget() is self.list and rect is not None and rect.y()>=-2
+        self.date_button.setVisible(visible)
+        if visible:
+            self.date_button.setText(self.date_caption)
+            self.date_button.setAccessibleName(self.date_caption+'，打开成本日历')
+            self.date_button.setGeometry(rect.x()+8,rect.y()+2,self.date_button.sizeHint().width(),24)
+            self.date_button.raise_()
     def reset_navigation(self):
         """Fresh entry starts at the list's top; in-visit Back keeps its position."""
         self._detail_transition+=1;self.detail_motion.clear();self.session=None;self.turn_limit=60
@@ -621,16 +700,24 @@ class ProjectCosts(QWidget):
                 self._detail_key=key
             self.back.setText('‹ 项目' if not self.session else '‹ '+selected['name'])
             self.stack.setCurrentWidget(self.details)
-        elif rows:self.stack.setCurrentWidget(self.list)
+        elif rows or self.calendar_enabled:self.stack.setCurrentWidget(self.list)
         else:
             self.empty.setText('正在整理项目记录…' if self.data.get('pending') else '部分用量暂不能核对' if self.data.get('limited') or self.data.get('errors') else '没有匹配项目');self.stack.setCurrentWidget(self.empty)
         note=('已定价部分' if unknown else 'API 等价估算')+'  '+estimated(cost,tokens,unknown)+'\n'+compact_tokens(tokens)+' Token'
         if unknown:note+='\n'+compact_tokens(unknown)+' 待定价'
         elif self.data.get('pending'):note+='\n整理中' if self.data.get('initial_pending',True) else '  同步中'
         elif self.data.get('limited') or self.data.get('errors'):note+='  记录不完整'
-        self.summary.setText(note if rows else ('记录不完整' if self.data.get('limited') or self.data.get('errors') else ''))
-        header={'_summary':self.summary.text(),'sort_name':getattr(self,'sort_name',False),'projects':len(rows),'tokens':sum(p['tokens'] for p in rows),'pending':sum(p['pending_tokens'] for p in rows)}
+        if self.calendar_enabled and not rows:
+            status='正在读取所选日期…' if self.data.get('calendar_loading') else '没有匹配项目'
+            if self.data.get('initial_pending'):status='正在整理项目记录…'
+            elif self.data.get('calendar_error'):status='读取失败，可点刷新重试'
+            elif self.data.get('limited') or self.data.get('errors'):status='部分用量暂不能核对'
+            note='—  —\n'+status
+        self.summary.setText(note if rows or self.calendar_enabled else ('记录不完整' if self.data.get('limited') or self.data.get('errors') else ''))
+        header={'_summary':self.summary.text(),'sort_name':getattr(self,'sort_name',False),'projects':len(rows),'tokens':sum(p['tokens'] for p in rows),'pending':sum(p['pending_tokens'] for p in rows),
+                'date_caption':self.date_caption,'date_button':self.calendar_enabled}
         if self.list.item(0).data(Qt.ItemDataRole.UserRole)!=header:self.list.item(0).setData(Qt.ItemDataRole.UserRole,header)
+        self._sync_date_button()
         if self.updatesEnabled() and self.detail_motion.slide and self.detail_motion.animation.state()==QAbstractAnimation.State.Running:
             # A worker may finish inside the entry animation. QWidget.render
             # drops child text while updates are disabled; capture a settled

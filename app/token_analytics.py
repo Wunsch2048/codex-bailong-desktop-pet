@@ -1,7 +1,7 @@
 """Incremental analytics metadata; store identifiers and counters, never prose."""
 import hashlib,json,math
 from datetime import date,datetime,timedelta
-from token_calendar import counter
+from token_calendar import counter,daily_bucket_size
 
 UNKNOWN='未识别模型'
 
@@ -245,13 +245,16 @@ def report_snapshot(db,now,rows=None):
                 messages=messages,yesterday_total=sum(hours),peak_hour=max(range(24),key=lambda h:hours[h]) if any(hours) else None,
                 metadata_incomplete=bool(db.execute("SELECT 1 FROM usage WHERE stamp<=? AND (session='' OR model=?) LIMIT 1",(now,UNKNOWN)).fetchone()))
 
-def model_series(report,period='7d'):
+def model_series(report,period='7d',bounds=None):
     report=report or {};end=report.get('day',datetime.now().strftime('%Y-%m-%d'))
     last=datetime.strptime(end,'%Y-%m-%d').date();rows=[r for r in report.get('daily_models',[]) if r['day']<=end]
-    first=min((r['day'] for r in rows),default=end) if period=='all' else (last-timedelta(days=29 if period=='30d' else 6)).isoformat()
-    rows=[r for r in rows if r['day']>=first];totals={}
+    if bounds:
+        first=bounds[0].isoformat()
+        last=bounds[1];end=last.isoformat()
+    else:first=min((r['day'] for r in rows),default=end) if period=='all' else (last-timedelta(days=29 if period=='30d' else 6)).isoformat()
+    rows=[r for r in rows if first<=r['day']<=end];totals={}
     first_day=datetime.strptime(first,'%Y-%m-%d').date()
-    span=(last-first_day).days+1;step=max(1,math.ceil(span/24)) if period=='all' else 1
+    span=(last-first_day).days+1;step=daily_bucket_size(span,period)
     bins=[];cursor=first_day
     while cursor<=last:
         end_day=min(last,cursor+timedelta(days=step-1))
@@ -259,16 +262,25 @@ def model_series(report,period='7d'):
         cursor=end_day+timedelta(days=1)
     # Assign each row once. The previous nested scan reformatted two dates for
     # every row in every bin, blocking the GUI on large local histories.
-    day_bins={}
+    day_bins={};daily_usage={}
     for r in rows:
         m=totals.setdefault(r['model'],dict(model=r['model'],total=0,input=0,output=0,known=True))
         m['total']+=r['total'];m['input']+=r['input'] or 0;m['output']+=r['output'] or 0;m['known']&=r['known']
         day=r['day']
         if day not in day_bins:day_bins[day]=(date.fromisoformat(day)-first_day).days//step
+        daily=daily_usage.setdefault(day,{})
+        daily[r['model']]=daily.get(r['model'],0)+r['total']
         bucket=bins[day_bins[day]];values=bucket['values']
         values[r['model']]=values.get(r['model'],0)+r['total'];bucket['total']+=r['total']
     models=sorted(totals.values(),key=lambda m:(-m['total'],m['model']));total=sum(m['total'] for m in models)
-    return dict(models=models,bins=bins,total=total,start=first,end=end)
+    peak=None;model_peaks={}
+    for daily in daily_usage.values():
+        amount=sum(daily.values())
+        peak=amount if peak is None else max(peak,amount)
+        for model,value in daily.items():model_peaks[model]=max(value,model_peaks.get(model,0))
+    through=min(end,report.get('day',end))
+    days=max(1,(date.fromisoformat(through)-first_day).days+1)
+    return dict(models=models,bins=bins,total=total,start=first,end=end,through=through,days=days,peak=peak,model_peaks=model_peaks)
 
 def token_analogy(total,index=0):
     from book_reference import analogy

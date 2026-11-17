@@ -2,7 +2,7 @@
 from settings_controls import play_animation
 from theme_registry import color as theme_color,palette
 import weakref
-from PySide6.QtCore import Qt,QObject,QEvent,QPoint,QRect,QRectF,QTimer,QVariantAnimation,QEasingCurve
+from PySide6.QtCore import Qt,QObject,QEvent,QPoint,QPointF,QRect,QRectF,QTimer,QVariantAnimation,QEasingCurve
 from PySide6.QtGui import QColor,QCursor,QFontMetrics,QPainter,QPainterPath,QPen
 from PySide6.QtWidgets import QWidget,QToolTip,QApplication
 from typography import ui_font
@@ -31,7 +31,11 @@ class HintBubble(QWidget):
     def present(self,title,subtitle,anchor,screen,*,card_top=None,topmost=True,owner=None,geometry=None,initial_level=0.):
         self.animation.stop();self.title=str(title);self.subtitle=str(subtitle)
         width,height=self.hint_size()
-        if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=bool(topmost):
+        bubble=getattr(owner,'bubble',None) or (owner if hasattr(owner,'owner_pet') else None)
+        if bubble is not None:
+            from surface_policy import card_layer,update_qt_layer
+            update_qt_layer(self,card_layer(bubble))
+        elif bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=bool(topmost):
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,bool(topmost))
         # A report is an owned native Tool window above the main card. Merely
         # raising an unrelated Tool surface does not establish that hierarchy.
@@ -52,12 +56,12 @@ class HintBubble(QWidget):
         self.setAccessibleDescription(self.subtitle)
         if not self.isVisible():
             self.level=initial_level
-            # Clear a cold/reused layered HWND before exposing it. This keeps
-            # the normal alpha entrance without a native blank/stale rectangle.
+            # Opaque hints publish their complete first frame. Animated hints
+            # still start with a clear backing store.
             self.native_seeded=False
             if QApplication.platformName()=='windows':
                 from native_landing import publish
-                try:self.native_seeded=publish(self,None)
+                try:self.native_seeded=publish(self,self.grab() if initial_level>=1. else None)
                 except OSError:self.native_seeded=False
             self.show()
         self.raise_()
@@ -67,12 +71,14 @@ class HintBubble(QWidget):
         self.update()
 
     def hint_size(self):
-        metrics=QFontMetrics(self.font());width=max(metrics.horizontalAdvance(self.title),metrics.horizontalAdvance(self.subtitle))+22
-        width=max(42,min(260,width))
-        if not self.subtitle:return width,32
+        title_metrics=QFontMetrics(ui_font(13,True))
+        metrics=QFontMetrics(ui_font(12))
+        width=max(title_metrics.horizontalAdvance(self.title)+2,metrics.horizontalAdvance(self.subtitle))+24
+        width=max(42,min(280,width))
+        if not self.subtitle:return width,34
         flags=Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignLeft
         height=metrics.boundingRect(QRect(0,0,width-22,1000),flags,self.subtitle).height()
-        return width,max(50,height+32)
+        return width,max(58,height+38)
 
     def _animate(self,target):
         self.animation.stop()
@@ -103,18 +109,23 @@ class HintBubble(QWidget):
         arrow=QPainterPath();edge=body.top() if self.below else body.bottom()
         arrow.moveTo(self.tip_x-4,edge);arrow.lineTo(self.tip_x,edge-4 if self.below else edge+4)
         arrow.lineTo(self.tip_x+4,edge);arrow.closeSubpath();shape=shape.united(arrow)
-        p.setPen(QPen(QColor(theme_color(BORDER)),1));p.setBrush(QColor(theme_color(SURFACE)));p.drawPath(shape)
-        p.setFont(self.font());p.setPen(QColor(theme_color(INK)))
+        surface=QColor(theme_color(SURFACE));surface.setAlpha(255)
+        p.setPen(QPen(QColor(theme_color(BORDER)),1));p.setBrush(surface);p.drawPath(shape)
+        p.setFont(ui_font(13,True));p.setPen(QColor(theme_color(INK)))
         if self.subtitle:
-            p.drawText(body.adjusted(10,5,-10,-body.height()+23),Qt.AlignmentFlag.AlignVCenter,self.title)
-            p.setPen(QColor(theme_color(MUTED)));p.drawText(body.adjusted(10,22,-10,-4),Qt.AlignmentFlag.AlignVCenter|Qt.TextFlag.TextWordWrap,self.subtitle)
+            p.drawText(body.adjusted(10,4,-10,-body.height()+23),Qt.AlignmentFlag.AlignVCenter,self.title)
+            p.setPen(QColor(theme_color(BORDER)));p.drawLine(QPointF(10,body.top()+26),QPointF(body.right()-10,body.top()+26))
+            p.setFont(ui_font(12));p.setPen(QColor(theme_color(MUTED)))
+            p.drawText(body.adjusted(10,30,-10,-4),Qt.AlignmentFlag.AlignVCenter|Qt.TextFlag.TextWordWrap,self.subtitle)
         else:p.drawText(body,Qt.AlignmentFlag.AlignCenter,self.title)
         p.end()
 
 
-def detail_size(screen,height):
-    area=screen.availableGeometry()
-    return min(DETAIL_WIDTH,max(1,area.width()-4)),min(max(1,area.height()-4),max(DETAIL_MIN_HEIGHT,height))
+def detail_size(host,height):
+    normal_width=getattr(host.window(),'normal_card_width',None)
+    width=normal_width() if normal_width else DETAIL_WIDTH
+    area=host.screen().availableGeometry()
+    return min(width,max(1,area.width()-4)),min(max(1,area.height()-4),max(DETAIL_MIN_HEIGHT,height))
 
 
 def detail_position(host,anchor,size):
@@ -132,9 +143,11 @@ class DetailHint(HintBubble):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing);painter.setOpacity(self.level)
         body=QRectF(1,1,self.width()-2,self.height()-2)
         painter.setPen(QColor(theme['border']));painter.setBrush(QColor(theme['surface']));painter.drawRoundedRect(body,9,9)
-        painter.setFont(ui_font(11,True));painter.setPen(QColor(theme['ink']))
+        painter.setBrush(QColor(theme['panel']));painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(body.adjusted(5,3,-5,-body.height()+28),6,6)
+        painter.setFont(ui_font(13,True));painter.setPen(QColor(theme['ink']))
         painter.drawText(QRectF(11,6,self.width()-22,21),Qt.AlignmentFlag.AlignVCenter,self.title)
-        painter.setPen(QColor(theme['accentText']))
+        painter.setFont(ui_font(16,True));painter.setPen(QColor(theme['accentText']))
         painter.drawText(QRectF(11,6,self.width()-22,21),Qt.AlignmentFlag.AlignVCenter|Qt.AlignmentFlag.AlignRight,value)
         painter.setPen(QColor(theme['border']));painter.drawLine(11,30,self.width()-11,30)
         return theme
@@ -214,10 +227,10 @@ class HeaderHints(QObject):
         owner=report if report is not None and report.isVisible() else b
         self.popup.comparison_value=button.property('quotaComparisonValue')
         if self.popup.comparison_value is not None:
-            width,_=detail_size(button.screen(),DETAIL_MIN_HEIGHT)
+            width,_=detail_size(button,DETAIL_MIN_HEIGHT)
             flags=Qt.AlignmentFlag.AlignLeft|Qt.TextFlag.TextWordWrap
-            height=QFontMetrics(ui_font(11)).boundingRect(QRect(0,0,width-22,1000),flags,detail).height()+46
-            self.popup.comparison_size=detail_size(button.screen(),height)
+            height=QFontMetrics(ui_font(11)).boundingRect(QRect(0,0,max(1,width-22),1000),flags,detail).height()+46
+            self.popup.comparison_size=detail_size(button,height)
             target=detail_position(button,anchor,self.popup.comparison_size)
             self.popup.present(text,detail,anchor,button.screen(),owner=owner,
                                topmost=bool(b.windowFlags()&Qt.WindowType.WindowStaysOnTopHint),
@@ -337,7 +350,7 @@ class TrayHints(QObject):
         rect=self.tray.geometry()
         from PySide6.QtGui import QGuiApplication
         screen=QGuiApplication.screenAt(rect.center()) or QGuiApplication.primaryScreen()
-        self.popup.present(self.title,self.subtitle,rect,screen)
+        self.popup.present(self.title,self.subtitle,rect,screen,initial_level=1.)
 
     def _check(self):
         if not self._inside():self.dismiss()

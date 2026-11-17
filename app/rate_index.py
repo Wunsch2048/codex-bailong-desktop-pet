@@ -4,6 +4,34 @@ from datetime import datetime,timedelta
 from token_rate import RateStore,MetadataCollector
 from token_analytics import continuation,stamp_of
 
+MAX_OUTPUT_SAMPLE_GAP=300
+
+def hourly_output(db,start,end):
+    """Aggregate verified output deltas over observed session time."""
+    previous={};hours={}
+    rows=db.execute('''SELECT session,stamp,MAX(output_tokens),MIN(known),COUNT(*)
+        FROM usage WHERE stamp>=? AND stamp<=? AND session<>''
+        GROUP BY session,stamp ORDER BY stamp''',(start-MAX_OUTPUT_SAMPLE_GAP,end))
+    for session,stamp,output,known,count in rows:
+        reliable=bool(known and count==1 and output is not None and output>=0)
+        prior=previous.get(session)
+        previous[session]=(stamp,reliable)
+        if not prior or not prior[1] or not reliable:continue
+        elapsed=stamp-prior[0]
+        if not 0<elapsed<=MAX_OUTPUT_SAMPLE_GAP:continue
+        cursor=max(start,prior[0])
+        while cursor<stamp:
+            local=datetime.fromtimestamp(cursor)
+            hour_end=cursor+3600-local.minute*60-local.second-local.microsecond/1e6
+            boundary=min(stamp,hour_end)
+            seconds=boundary-cursor
+            key=local.strftime('%Y-%m-%dT%H')
+            total,covered=hours.get(key,(0.,0.))
+            hours[key]=(total+output*seconds/elapsed,covered+seconds)
+            cursor=boundary
+    return {key:dict(rate=total/seconds,sampled_seconds=seconds)
+            for key,(total,seconds) in hours.items()}
+
 def migrate(db):
     store=RateStore.using(db)
     db.execute('CREATE TABLE IF NOT EXISTS rate_files(path TEXT PRIMARY KEY,offset INTEGER,state TEXT)')
@@ -72,15 +100,18 @@ def update(db,files,stop=lambda:False,budget=.15):
     db.execute('INSERT OR REPLACE INTO rate_cursor VALUES(1,?)',(next_position,))
     return dict(pending=pending,bytes=scanned,errors=errors)
 
-def snapshot(db,now,progress=None):
+def snapshot(db,now,progress=None,*,include_output=False):
     store=migrate(db);today=datetime.fromtimestamp(now).replace(hour=0,minute=0,second=0,microsecond=0);yesterday=today-timedelta(days=1)
     first=db.execute('SELECT MIN(stamp) FROM rate_samples WHERE stamp<=?',(now,)).fetchone()[0]
     start=max(first or yesterday.timestamp(),now-86400*3659)
     daily=store.query(start,now+.001)['bins'];hours=store.query(yesterday.timestamp(),now+.001,bucket='hour')['bins']
-    def item(g):return dict(rate=g['task_tokens_per_second'],median_rate=g['task_median_tokens_per_second'],first_token_ms=g['first_token_ms'],samples=g['samples'],valid_samples=g['task_samples'])
+    def item(g):return dict(rate=g['task_tokens_per_second'],median_rate=g['task_median_tokens_per_second'],first_token_ms=g['first_token_ms'],
+                            samples=g['samples'],valid_samples=g['task_samples'],output=g['task_output'],duration_ms=g['task_ms'])
     days={g['key']:item(g) for g in daily};groups={g['key']:item(g) for g in hours}
+    output=hourly_output(db,yesterday.timestamp(),now) if include_output else {}
     # RateStore default local timestamps have no zone suffix. Fixed source uses OS local time.
-    def hourly(day):return [groups.get(day.replace(hour=h).strftime('%Y-%m-%dT%H')) for h in range(24)]
+    def hourly(day,values=groups):return [values.get(day.replace(hour=h).strftime('%Y-%m-%dT%H')) for h in range(24)]
     return dict(days=days,today=hourly(today),yesterday=hourly(yesterday),yesterday_mean=days.get(yesterday.strftime('%Y-%m-%d')),
+                today_output=hourly(today,output),yesterday_output=hourly(yesterday,output),
                 pending=bool((progress or {}).get('pending')),errors=(progress or {}).get('errors',0),metric='task',
                 description='输出 Token（含推理）÷ 回合总耗时；含思考、工具和等待时间，不代表纯生成速度')

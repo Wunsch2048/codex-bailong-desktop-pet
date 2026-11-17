@@ -26,7 +26,9 @@ def settle_visible(root):
     isVisibleTo ignores the deliberately hidden root used during preparation,
     while rejecting explicitly hidden descendants and their entire subtrees.
     """
+    from theme_runtime import prepare_theme_widget
     widgets=[root]+[w for w in root.findChildren(QWidget) if w.isVisibleTo(root)]
+    for widget in widgets:prepare_theme_widget(widget)
     for widget in reversed(widgets):
         widget.ensurePolished()
         if widget.layout():widget.layout().activate()
@@ -73,8 +75,8 @@ class NativeLanding(QWidget):
         if preserve_layered_style(self,event_type,message):return True,0
         return super().nativeEvent(event_type,message)
     def prepare(self,rect):
-        top=bool(self.parentWidget().windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
-        if bool(self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)!=top:self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,top)
+        from surface_policy import card_layer,update_qt_layer
+        if not self.isVisible():update_qt_layer(self,card_layer(self.parentWidget()))
         # Expose an empty, input-transparent surface during the animation.
         # A first show at the final resize may not be paintable synchronously.
         if self.geometry()!=rect:self.setGeometry(rect)

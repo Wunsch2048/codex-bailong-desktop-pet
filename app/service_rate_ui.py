@@ -29,8 +29,9 @@ def service_bubble(Base):
             opening=not self.isVisible();self.host=host;self.rows=list(value.get('details') or []);self.total=value.get('rate')
             if opening:self.page=page or 'sessions';self.scroll=0;self.detail_scroll=0
             elif page is not None:self.page=page
-            self.width_limit,self.limit=detail_size(host.screen(),340)
-            self.prepare_document();owner=host.window();report=getattr(owner,'report',None)
+            owner=host.window()
+            self.width_limit,self.limit=detail_size(host,340)
+            self.prepare_document();report=getattr(owner,'report',None)
             if report is not None and report.isVisible():owner=report
             anchor=QRect(host.mapToGlobal(QPoint()),host.size())
             target=detail_position(host,anchor,self.hint_size());topmost=bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint)
@@ -103,10 +104,12 @@ def service_bubble(Base):
                 p.fillRect(QRectF(2,y,self.width()-4,23),QColor(theme['surface']));p.setPen(QColor(theme['border']));p.drawLine(10,y,self.width()-10,y)
                 value=self.service.value;ink,dot=service_colors(theme,value['tone']);p.setFont(font(11));p.setPen(QColor(theme['muted']));p.drawText(11,y+18,'服务')
                 baseline=y+18
+                p.setFont(font(12,True))
                 center=baseline+QFontMetricsF(p.font(),p.device()).tightBoundingRect(value['title']).center().y()+.5
                 p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(dot));p.drawEllipse(QRectF(43,center-2.5,5,5));p.setPen(QColor(ink));p.drawText(54,baseline,value['title'])
                 checked=value.get('checked');stamp=datetime.fromtimestamp(checked).strftime('%H:%M') if checked else '未更新'
                 if self.focusable:
+                    p.setFont(font(11))
                     p.setPen(QColor(theme['muted']));p.drawText(QRectF(self.width()-80,y+2,69,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,stamp+' ›')
                 return
             theme=palette();p=QPainter(self);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent);p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver);p.setOpacity(self.level);p.setRenderHint(QPainter.RenderHint.Antialiasing)

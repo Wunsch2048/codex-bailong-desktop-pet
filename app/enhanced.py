@@ -63,6 +63,9 @@ class ActivityThread(QThread):
         from live_today import LiveTodayTotal
         self.today_total=LiveTodayTotal(self.token_index.path);self.tail.usage_observer=self.today_total.ingest;self.last_live_today=None
         self.week_cycle=None
+        self.project_range=None
+        self.project_wake=threading.Event()
+        self.project_progress=None
         self.token_runs=RefreshRuns()
         self.last_presence_scan=0;self.presence_reader=None;self.desktop_open=None;self.last_read_scan=0;self.last_name_scan=-10;self.conversation_names={}
         self.restored_turns=set()
@@ -181,6 +184,9 @@ class ActivityThread(QThread):
                 self.token_runs.reserve()
                 self.token_reader=threading.Thread(target=self.read_tokens,name='BailongTokenIndex',daemon=True)
                 self.token_reader.start()
+            elif self.project_wake.is_set() and not self.stop.is_set() and (self.token_reader is None or not self.token_reader.is_alive()):
+                self.token_reader=threading.Thread(target=self.read_project_range,name='BailongCostRange',daemon=True)
+                self.token_reader.start()
             self.stop.wait(1)
         if self.token_reader:self.token_reader.join(4)
         if self.presence_reader:self.presence_reader.join(1)
@@ -192,6 +198,34 @@ class ActivityThread(QThread):
             if self.week_cycle==cycle:return
             self.week_cycle=cycle
         self.token_wake.set()
+    def set_project_range(self,bounds,*,refresh=True):
+        with self.context_lock:
+            if self.project_range==bounds:return
+            self.project_range=bounds
+            if bounds is None or not refresh:self.project_wake.clear()
+            elif self.project_progress is None:self.token_wake.set()
+            else:self.project_wake.set()
+    def read_project_range(self):
+        with self.context_lock:
+            self.project_wake.clear()
+            bounds,progress=self.project_range,self.project_progress
+        if bounds is None or progress is None:return
+        try:
+            projects=self.token_index.project_snapshot(progress,bounds)
+        except Exception:
+            if not self.stop.is_set():self.event.emit(dict(kind='project_range_error',bounds=bounds))
+            return
+        with self.context_lock:
+            current=self.project_range==bounds
+        if current and not self.stop.is_set():self.event.emit(dict(kind='project_cost',projects=projects))
+    def _project_progress(self,project):
+        if project is None:return
+        with self.context_lock:
+            self.project_progress={key:project[key] for key in ('pending','initial_pending','syncing','errors') if key in project}
+    def _publish_project_progress(self,progress,bounds):
+        result=self.token_index.project_snapshot(progress,bounds) if bounds else self.token_index.project_snapshot(progress)
+        self._project_progress(result)
+        self.event.emit(dict(kind='project_cost',projects=result))
     def read_presence(self):
         from desktop_services import codex_desktop_open
         try:value=codex_desktop_open()
@@ -215,10 +249,13 @@ class ActivityThread(QThread):
                     self.last_token_scan=min(self.last_token_scan,time.monotonic()-29)
                     health=dict(kind='connection_health',capabilities={'tokens':dict(state='degraded',code='index_maintenance')})
                     return
-            with self.context_lock:cycle=self.week_cycle
+            with self.context_lock:
+                cycle=self.week_cycle;project_range=self.project_range;self.project_wake.clear()
             options=dict(stop=self.stop.is_set)
             if cycle:options['cycle']=cycle
+            if project_range:options['calendar_range']=project_range
             snapshot=self.token_index.poll(**options)
+            self._project_progress(snapshot.get('projects'))
             self.today_total.reconcile(snapshot);snapshot['_live_today']=self.today_total.snapshot()
             if snapshot.get('scan_pending') or (snapshot.get('quota_history') or {}).get('pending'):
                 # Bound each import slice and allow the UI/status worker to run.
@@ -245,7 +282,7 @@ class ActivityThread(QThread):
             # Share the background index worker. Yield frequently and publish at most once/second.
             deadline=time.monotonic()+3;last_publish=0
             try:
-                while not self.stop.is_set() and not self.token_wake.is_set() and time.monotonic()<deadline:
+                while not self.stop.is_set() and not self.token_wake.is_set() and not self.project_wake.is_set() and time.monotonic()<deadline:
                     rates=self.token_index.rate_step(self.stop.is_set)
                     if not rates['pending'] or time.monotonic()-last_publish>=1:
                         self.event.emit(dict(kind='token_rate',rates=rates));last_publish=time.monotonic()
@@ -256,9 +293,9 @@ class ActivityThread(QThread):
             from project_cost_drain import drain
             try:
                 drain(lambda:self.token_index.project_step(self.stop.is_set),
-                      lambda progress:self.event.emit(dict(kind='project_cost',projects=self.token_index.project_snapshot(progress))),
+                      lambda progress:self._publish_project_progress(progress,project_range),
                       self.stop.is_set,self.stop.wait,
-                      lambda:self.token_wake.is_set() or time.monotonic()-self.last_token_scan>=30)
+                      lambda:self.token_wake.is_set() or self.project_wake.is_set() or time.monotonic()-self.last_token_scan>=30)
             except Exception:
                 # Retain the last complete snapshot; the regular poll retries.
                 pass
@@ -459,16 +496,7 @@ class EnhancedPet(Pet):
 
     def position_bubble(self):
         if not self.enhanced_ready:return super().position_bubble()
-        screen=QApplication.screenAt(self.frameGeometry().center()) or QApplication.primaryScreen()
-        area=screen.availableGeometry()
-        x=self.x()+(self.width()-self.bubble.width())//2
-        y=self.y()-self.bubble.height()-8
-        if self.y()-self.bubble.placement_height()-8<area.top():y=self.y()+self.height()+8
-        x=max(area.left(),min(x,area.right()-self.bubble.width()+1))
-        reserve=self.bubble.report.reserved_height(self.bubble.size())+6 if self.bubble.report and self.bubble.report.requested else 0
-        reserve=min(reserve,max(0,area.height()-self.bubble.height()))
-        y=max(area.top()+reserve,min(y,area.bottom()-self.bubble.height()+1))
-        self.bubble.move(x,y)
+        self.bubble.move(self.bubble.attached_geometry(self,self.bubble.size()).topLeft())
         if self.bubble.enabled and self.isVisible() and self.windowFlags()&Qt.WindowType.WindowStaysOnTopHint and self.can_raise_bubble():
             self.bubble.raise_()
 
@@ -754,6 +782,8 @@ class EnhancedPet(Pet):
             if self.bubble.token_snapshot:
                 self.bubble.token_snapshot=dict(self.bubble.token_snapshot,projects=event['projects'])
                 if self.bubble.report:self.bubble.report.set_snapshot(self.bubble.token_snapshot)
+        elif kind=='project_range_error':
+            if self.bubble.report:self.bubble.report.cost_range_failed(event['bounds'])
         elif kind=='token_usage_error':
             if self.bubble.token_snapshot:self.bubble.token_snapshot=dict(self.bubble.token_snapshot,partial=True,refresh_failed=True)
             else:self.bubble.token_snapshot=dict(month=time.strftime('%Y-%m'),days={},total=0,partial=True,unavailable=True)

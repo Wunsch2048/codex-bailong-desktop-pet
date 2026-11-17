@@ -36,28 +36,103 @@ def safe_time(value):
         return time.time()
 
 
+TOOL_OPERATIONS={
+    'send_message_to_thread':'chat_send','send_input':'chat_send',
+    'wait_threads':'chat_wait','wait_agent':'chat_wait',
+    'view_image':'image_view','imagegen':'image_create','image_gen':'image_create',
+    'update_plan':'plan','spawn_agent':'collab_start','resume_agent':'collab_resume',
+    'close_agent':'collab_close','create_thread':'thread_start','fork_thread':'thread_fork',
+    'handoff_thread':'thread_handoff',
+}
+COLLAB_OPERATIONS={
+    'wait':'chat_wait','sendinput':'chat_send','spawnagent':'collab_start',
+    'resumeagent':'collab_resume','closeagent':'collab_close',
+}
+ITEM_OPERATIONS={
+    'commandexecution':'execute','filechange':'edit','websearch':'research',
+    'imageview':'image_view','imagegeneration':'image_create','plan':'plan',
+    'enteredreviewmode':'review','exitedreviewmode':'review',
+}
+TERMINAL_FAILURES=('task_failed','turn_failed')
+CONFIRMED_OPERATIONS={'chat_send','chat_wait','image_create','thread_start','thread_fork','thread_handoff',
+                      'collab_start','collab_resume','collab_close'}
+SHORT_OPERATIONS=CONFIRMED_OPERATIONS|{'plan','review','web_open','web_find'}
+TOOL_WRAPPERS=('functions.exec','exec','multi_tool_use.parallel')
+
+
 def operation_kinds(payload):
     """Read tool names only; never turn arbitrary code/content into UI text."""
-    name=str(payload.get('name','')).lower()
+    name=str(payload.get('name') or payload.get('tool') or payload.get('tool_name') or '').lower()
+    if payload.get('namespace')=='collaboration':
+        collab=COLLAB_OPERATIONS.get(name.replace('_',''))
+        if collab:return [collab]
     names=[name]
-    if name in ('functions.exec','exec','multi_tool_use.parallel'):
+    if name in TOOL_WRAPPERS:
         args=payload.get('arguments',payload.get('input',''))
         if isinstance(args,str):
             # exec is a wrapper: identify only explicit nested tool invocations.
             names=re.findall(r'\btools\.([A-Za-z0-9_]+)\s*\(',args) or [name]
     kinds=[]
     for tool in names:
-        kind='read' if any(v in tool.lower() for v in ('read_file','read_mcp','view_image')) else tool_activity(tool)
+        leaf=re.split(r'__|\.',tool.lower())[-1]
+        kind=TOOL_OPERATIONS.get(leaf)
+        if kind is None:
+            kind='read' if any(v in tool.lower() for v in ('read_file','read_mcp')) else tool_activity(tool)
         if kind not in kinds:kinds.append(kind)
     return kinds
 
 
-def operation_label(kinds,finished=False,failed=False):
+def item_operations(item):
+    kind=str(item.get('type','')).casefold()
+    if kind in ('websearch','extension') and (kind=='websearch' or item.get('kind')=='web.search'):
+        action=item.get('action')
+        return [{'openPage':'web_open','findInPage':'web_find'}.get(action.get('type'),'research')
+                if isinstance(action,dict) else 'research']
+    if kind in ('mcptoolcall','dynamictoolcall','extension'):
+        return operation_kinds(item)
+    if kind in ('collabtoolcall','collabagenttoolcall'):
+        tool=str(item.get('tool','')).casefold().replace('_','')
+        return [COLLAB_OPERATIONS.get(tool,'tool')]
+    return [ITEM_OPERATIONS[kind]] if kind in ITEM_OPERATIONS else []
+
+
+def operation_failed(payload):
+    result=payload.get('result',payload.get('output'))
+    return (payload.get('status') in ('failed','error','declined','cancelled','canceled','interrupted')
+            or payload.get('success') is False or payload.get('isError') is True
+            or isinstance(result,dict) and (result.get('isError') is True or result.get('is_error') is True
+                                            or result.get('success') is False))
+
+
+def confirmed_output(payload):
+    # Use explicit result metadata. Tool text can contain arbitrary content.
+    name=str(payload.get('name') or payload.get('tool') or payload.get('tool_name') or '').lower()
+    if name in TOOL_WRAPPERS:return False
+    result=payload.get('output')
+    return (payload.get('success') is True or payload.get('status')=='completed'
+            or isinstance(result,dict) and result.get('success') is True)
+
+
+def operation_label(kinds,finished=False,failed=False,images=0):
     labels={'edit':('正在编辑文件','编辑了文件'),'execute':('正在运行命令','运行了命令'),
             'research':('正在查找资料','查找了资料'),'read':('正在读取文件','读取了文件'),
-            'create':('正在生成内容','生成了内容'),'tool':('正在使用工具','使用了工具')}
-    text=' · '.join(labels.get(kind,labels['tool'])[int(finished)] for kind in kinds)
-    return text+(' · 未成功' if failed else '')
+            'create':('正在生成内容','生成了内容'),'tool':('正在使用工具','使用了工具'),
+            'chat_send':('正在向聊天发送消息','已向聊天发送消息'),
+            'chat_wait':('正在等待其他聊天','已等待聊天'),
+            'image_view':('正在查看图像',f'已查看 {images} 张图像' if images else '已查看图像'),
+            'image_create':('正在生成图像','已生成图像'),'plan':('正在更新计划','已更新计划'),
+            'review':('正在审查代码','已结束代码审查'),
+            'collab_start':('正在启动协作','已启动协作'),'collab_resume':('正在恢复协作','已恢复协作'),
+            'collab_close':('正在结束协作','已结束协作'),
+            'thread_start':('正在新建聊天','已新建聊天'),'thread_fork':('正在分叉聊天','已分叉聊天'),
+            'thread_handoff':('正在交接聊天','已交接聊天'),
+            'web_open':('正在打开网页','已打开网页'),'web_find':('正在查找网页内容','已查找网页内容')}
+    if failed:
+        if len(kinds)==1:
+            return {'execute':'命令未成功','edit':'文件修改未成功','chat_send':'聊天消息发送失败',
+                    'chat_wait':'等待聊天失败','image_create':'图像生成失败'}.get(kinds[0],'操作未成功')
+        return '操作未成功'
+    return ' · '.join(labels.get(kind,labels['tool'])[int(finished)] for kind in kinds)
 
 
 def windows_from_limits(limits):
@@ -102,6 +177,7 @@ class Session:
     provenance_known: bool = False
     display: str = ''
     calls: dict = field(default_factory=dict)
+    image_items: set = field(default_factory=set)
     compacting: bool = False
     waiting_reason: str = ''
     updated: float = 0
@@ -157,7 +233,7 @@ class ActivityReducer:
             state.title=event['title'];state.turn=turn;state.turn_is_fallback=False
             state.done=False;state.historical_only=True;state.state='working'
             state.message=state.display='任务正在进行'
-            state.compacting=False;state.waiting_reason='';state.calls.clear()
+            state.compacting=False;state.waiting_reason='';state.calls.clear();state.image_items.clear()
             state.runtime_turn='';state.runtime_active=None;state.updated=time.monotonic()
         return state
 
@@ -220,7 +296,8 @@ class ActivityReducer:
         explicit_turn=str(p.get('turn_id') or '')
         started=kind=='event_msg' and typ in ('task_started','turn_started')
         if (kind=='event_msg' and explicit_turn and s.turn and not s.turn_is_fallback and explicit_turn!=s.turn
-            and typ in ('task_complete','task_completed','turn_aborted','task_aborted','turn_cancelled')):
+            and typ in ('task_complete','task_completed','turn_aborted','task_aborted','turn_cancelled',
+                        'item_started','item_completed','error','stream_error',*TERMINAL_FAILURES)):
             return events
         if s.closed_turn and s.turn==s.closed_turn:
             new_turn=str(p.get('turn_id') or '') if kind=='event_msg' and typ in ('task_started','turn_started') else ''
@@ -228,6 +305,11 @@ class ActivityReducer:
             else:return events
         changed = False
         user_message = False
+        item_kinds=[]
+        item_failed=False
+        retrying=False
+        image_added=False
+        short_status=False
         was_done, previous_turn=s.done,s.turn
         if kind=='compacted':
             # A saved compaction record proves completion, never its start.
@@ -249,6 +331,15 @@ class ActivityReducer:
             s.done = False
             s.state, s.message = 'thinking', '正在处理消息…'
             changed = True
+        elif kind=='event_msg' and (typ in TERMINAL_FAILURES or typ in ('task_complete','task_completed') and p.get('status')=='failed'):
+            if not s.done:
+                failed=self.terminate(sid,'failed',s.turn)
+                if not historical:events.extend(failed)
+            return events
+        elif kind=='event_msg' and typ in ('error','stream_error'):
+            if not s.done and (p.get('willRetry') is True or p.get('will_retry') is True):
+                s.state='working';s.message=s.display='Codex 正在重试'
+                changed=retrying=True
         elif kind == 'event_msg' and typ in ('task_complete', 'task_completed'):
             changed=s.compacting
             s.compacting=False;s.waiting_reason=''
@@ -264,28 +355,41 @@ class ActivityReducer:
             s.done = True
             s.state, s.message = 'interrupted', '任务已暂停或被中断'
             changed = True
-        elif kind == 'event_msg' and typ == 'item_completed':
+        elif kind == 'event_msg' and typ in ('item_started','item_completed'):
             item = p.get('item') or {}
+            if not isinstance(item,dict):return events
             it = item.get('type')
-            if it == 'UserMessage':
+            if it == 'UserMessage' and typ=='item_completed':
                 user_message = True
                 s.state, s.message, s.done = 'thinking', '正在处理消息…', False
                 changed = True
-            elif it == 'AgentMessage':
+            elif it == 'AgentMessage' and typ=='item_completed':
                 text = content_text(item.get('content'))
                 if text:
                     s.state, s.message = ('responding' if item.get('phase') == 'final_answer' else 'working'), text
                     changed = True
-            elif it in ('CommandExecution', 'McpToolCall', 'FileChange', 'WebSearch', 'Extension'):
+            else:
+                item_kinds=item_operations(item)
+            if item_kinds:
                 turn=p.get('turn_id')
                 if isinstance(turn,str) and turn:
                     if turn==s.completed_turn:return events
                     # A bounded rollout tail can begin after task_started.
                     # Keep the explicit ID so IPC and history can retire it.
                     if not s.turn or s.turn_is_fallback:s.turn=turn;s.turn_is_fallback=False
-                label = {'CommandExecution': '执行命令', 'McpToolCall': '调用工具', 'FileChange': '修改文件', 'WebSearch': '查找资料', 'Extension': '使用扩展工具'}[it]
-                failed = item.get('status') in ('failed', 'error')
-                s.state, s.message = 'working', (label + ('暂未成功，继续处理中…' if failed else '已返回，继续处理中…'))
+                item_failed=operation_failed(item)
+                finished=typ=='item_completed'
+                if finished and not item_failed and str(it).casefold()=='imageview':
+                    image_id=item.get('id')
+                    if isinstance(image_id,str) and image_id and image_id not in s.image_items and len(s.image_items)<128:
+                        s.image_items.add(image_id)
+                        image_added=True
+                if finished and not item_failed and not confirmed_output(item):
+                    item_kinds=['tool' if operation in CONFIRMED_OPERATIONS else operation for operation in item_kinds]
+                if str(it).casefold()=='enteredreviewmode':finished=False
+                s.state='working'
+                s.message=s.display=operation_label(item_kinds,finished,item_failed,len(s.image_items))
+                short_status=typ=='item_completed' and (item_failed or any(v in SHORT_OPERATIONS for v in item_kinds))
                 s.done = False
                 changed = True
         elif kind == 'response_item' and typ == 'message' and p.get('role') == 'user':
@@ -314,24 +418,26 @@ class ActivityReducer:
                 elif not historical and (not explicit_turn or explicit_turn==s.turn):s.historical_only=False
             if user_message or typ in ('task_started','turn_started'):
                 s.display='正在思考';s.calls.clear()
+                if started and previous_turn!=s.turn:s.image_items.clear()
             elif s.state=='complete':s.display='任务已完成'
             elif s.state=='interrupted':s.display='任务已中断';s.calls.clear()
             elif s.state=='responding':s.display='正在整理回复'
             elif kind=='response_item' and typ in ('function_call','custom_tool_call'):
                 kinds=operation_kinds(p);call=str(p.get('call_id',''))
-                if call:s.calls[call]=kinds
+                if call:s.calls[call]=(kinds,str(p.get('name','')).lower() not in TOOL_WRAPPERS)
                 while len(s.calls)>64:s.calls.pop(next(iter(s.calls)))
                 s.display=operation_label(kinds)
-            elif kind=='event_msg' and typ=='item_completed':
-                item=p.get('item') or {};it=item.get('type')
-                kinds={'CommandExecution':['execute'],'FileChange':['edit'],'WebSearch':['research'],'McpToolCall':operation_kinds(item),'Extension':['tool']}.get(it)
-                if kinds:s.display=operation_label(kinds,True,item.get('status') in ('failed','error'))
             elif s.state=='thinking':s.display='正在思考下一步'
             if not s.display:s.display='正在处理任务'
         elif kind=='response_item' and typ in ('function_call_output','custom_tool_call_output'):
-            kinds=s.calls.pop(str(p.get('call_id','')),None)
-            if kinds and not s.done:
-                s.state='working';s.display=operation_label(kinds,True);changed=True
+            call=s.calls.pop(str(p.get('call_id','')),None)
+            if call and not s.done:
+                kinds,direct=call
+                failed=operation_failed(p)
+                if not failed and not (direct and confirmed_output(p)):
+                    kinds=['tool' if kind in CONFIRMED_OPERATIONS else kind for kind in kinds]
+                short_status=failed or any(kind in SHORT_OPERATIONS for kind in kinds)
+                s.state='working';s.display=operation_label(tuple(dict.fromkeys(kinds)),True,failed,len(s.image_items));changed=True
         if changed and not historical:
             activity='commentary'
             if s.state=='thinking':activity='thinking'
@@ -340,10 +446,13 @@ class ActivityReducer:
             elif kind=='response_item' and typ in ('function_call','custom_tool_call'):
                 kinds=operation_kinds(p)
                 activity=next((v for v in ('edit','read','research','execute') if v in kinds),tool_activity(p.get('name','')))
-            elif kind=='event_msg' and typ=='item_completed':
-                item=p.get('item') or {};it=item.get('type')
-                activity='retry' if item.get('status') in ('failed','error') else {'CommandExecution':'execute','FileChange':'edit','WebSearch':'research','McpToolCall':tool_activity(item.get('name',item.get('tool_name','')))}.get(it,'commentary')
-            events.append(self._status(sid,s,activity,user_message,kind=='event_msg' and typ in ('task_started','turn_started')))
+            elif retrying or item_failed:activity='retry'
+            elif item_kinds:
+                activity=next((v for v in item_kinds if v in ('execute','edit','read','research')),
+                              {'image_view':'read','web_open':'research','web_find':'research'}.get(item_kinds[0],'commentary'))
+            status=self._status(sid,s,activity,user_message,started)
+            if (image_added or short_status or retrying) and status['state']=='working':status['short_status']=True
+            events.append(status)
         return events
 
 

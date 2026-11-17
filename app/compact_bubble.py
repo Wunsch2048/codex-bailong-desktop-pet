@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF,QEvent
 from PySide6.QtWidgets import QWidget,QLabel,QHBoxLayout,QVBoxLayout,QToolButton,QApplication,QStackedWidget,QLayout
 from panel_transition import PanelTransition
 from surface_morph import PANEL_RADIUS
+from codex_wordmark import CodexWordmarkButton
 from status_indicator import StatusIndicator
 from refresh_indicator import RefreshButton
 from hover_hints import HeaderHints
@@ -476,6 +477,9 @@ class CompactBubble(Bubble):
         self._chart_entry=False;self._plot_resume=None
         from conversation_roster import ConversationRoster
         self.roster=ConversationRoster();self._roster_pending=False
+        self._short_status_timer=QTimer(self)
+        self._short_status_timer.setSingleShot(True)
+        self._short_status_timer.timeout.connect(self.refresh_status)
         self.panel_page='status';self._editor_origin=None;self._editor_positioned=False;self.editor_stack=QStackedWidget(self);self.editor_stack.hide();self.editor_title=None
         self.editor_stack.setObjectName('integrated_contents')
         set_theme_style(self.editor_stack,editor_stylesheet(FONT_CSS))
@@ -527,7 +531,7 @@ class CompactBubble(Bubble):
                 self._plot_resume=widget.reveal.animation.currentTime()
         for deck in self._deck_cache.values():
             deck.setParent(self.content);deck.hide()
-        self.island=None;self.minimal_quota=None;self._status_title=None;self._status_badge=None;self._header=None;self.status_indicator.set_island(False)
+        self.island=None;self.minimal_quota=None;self._status_title=None;self._header=None;self.status_indicator.set_island(False)
         self.status_indicator.hide();self.status_indicator.setParent(self.content)
         self.refresh_button.hide();self.refresh_button.setParent(self.content)
         while self.layout.count():
@@ -656,7 +660,7 @@ class CompactBubble(Bubble):
             if self.details_tabs:self.detail_scroll={key:area.verticalScrollBar().value() for key,area in self.details_tabs.areas.items()}
             self.quota_refresh_button=None;self.reset_refresh_buttons=[];self.token_refresh_buttons=[]
             self.clear();self.details_tabs=None;self.status_view.hide()
-            header=QWidget();header.setFixedHeight(27);row=QHBoxLayout(header);row.setContentsMargins(0,0,0,0);row.setSpacing(6)
+            header=QWidget(self.content);header.setFixedHeight(27);row=QHBoxLayout(header);row.setContentsMargins(0,0,0,0);row.setSpacing(6)
             row.addWidget(self.status_indicator);self.status_indicator.show()
             self.editor_title=QLabel();row.addWidget(self.editor_title,1)
             codex=action_button('external','打开 Codex',keyboard=True,hit_size=25);codex.setObjectName('open_codex');codex.clicked.connect(lambda:self.codexRequested.emit());row.addWidget(codex)
@@ -674,12 +678,11 @@ class CompactBubble(Bubble):
             elif button.objectName() in ('bubble_pin','bubble_move'):
                 button.blockSignals(True);button.setChecked(self.pinned if button.objectName()=='bubble_pin' else self.wandering);button.blockSignals(False)
                 if button.objectName()=='bubble_move':button.setEnabled(not self.movement_locked)
-        screen=self.screen() or QApplication.primaryScreen();area=screen.availableGeometry()
-        self.content.setFixedWidth(min(EXPANDED_WIDTH,area.width()-24))
+        self.content.setFixedWidth(self.card_width(EXPANDED_WIDTH))
         self.editor_stack.setFixedHeight(max(120,self.editor_height()-94))
         self._redrawing=False;self._fit_height()
         owner=self.owner_pet()
-        if owner is None or owner.isVisible():self.show()
+        if self.host_visible():self.show()
         self._position_now()
 
     def select_dashboard(self,page):
@@ -698,6 +701,7 @@ class CompactBubble(Bubble):
         menu=getattr(self.deck,'range_menu',None)
         if menu:
             blocked=menu.blockSignals(True);menu.setCurrentIndex(menu.findData(self.token_range));menu.blockSignals(blocked)
+            menu.animate_caption(menu.currentText())
     def select_token_range(self,period):
         from token_calendar import TOKEN_RANGES
         if period in TOKEN_RANGES:
@@ -761,25 +765,26 @@ class CompactBubble(Bubble):
         heading=self._status_heading()
         active=sum(v['state'] in ('thinking','working','responding','waiting') for v in self.roster.items.values())
         active=max(active,int(self.status_indicator.active))
-        badge=self._status_badge;badge_text=str(active) if heading=='Codex' and active>1 else ''
-        badge.setText(badge_text);badge.setVisible(bool(badge_text))
-        badge_width=QFontMetrics(font(10,True)).horizontalAdvance(badge_text)+10 if badge_text else 0
-        badge.setFixedWidth(badge_width)
+        count=f'{active} 个会话正在进行' if heading=='Codex' and active>1 else ''
         # Four 28px actions and their five layout gaps are reserved before
         # measuring the title. This stays identical across first paint/update.
         margins=self.layout.contentsMargins();inner=self.content.width()-margins.left()-margins.right()
         actions=sum(button.width() for button in self._header_actions)
         gap=header.layout().spacing();available=inner-actions-gap*(len(self._header_actions)+1)
-        icon_width=self.status_indicator.width()+2
-        badge_space=badge_width+3 if badge_text else 0
-        text_budget=max(1,available-icon_width-badge_space-2)
+        cluster=title.parentWidget();item_gap=cluster.layout().spacing()
+        icon_width=self.status_indicator.width()+item_gap
+        text_budget=max(1,available-icon_width-2)
+        wordmark=heading=='Codex' and text_budget>=CodexWordmarkButton.MARK_WIDTH
+        if title.property('codexWordmark')!=wordmark:title.setProperty('codexWordmark',wordmark);title.update()
         metrics=QFontMetrics(font(12,True));text=metrics.elidedText(heading,Qt.TextElideMode.ElideRight,text_budget)
-        title.setText(text);title.setFixedWidth(metrics.horizontalAdvance(text)+2)
-        title.parentWidget().setFixedSize(icon_width+title.width()+badge_space,28)
-        title.setToolTip(heading+('\n'+str(active)+' 个会话正在进行' if badge_text else '')+'\n点击打开 Codex')
-        title.setAccessibleName(heading+'；点击打开 Codex')
+        title.setText(text)
+        title.setFixedWidth(CodexWordmarkButton.MARK_WIDTH if wordmark else metrics.horizontalAdvance(text)+2)
+        cluster.setFixedSize(icon_width+title.width(),28)
+        title.setToolTip('\n'.join(filter(None,(heading,count,'点击打开 Codex'))))
+        title.setAccessibleName('；'.join(filter(None,(heading,count,'点击打开 Codex'))))
         header.layout().activate()
     def _refresh_conversation_rows(self):
+        self._short_status_timer.stop()
         if self.expanded and getattr(self,'_task_count',None) is not None:
             active=sum(v['state'] in ('thinking','working','responding','waiting') for v in self.roster.items.values())
             self._task_count.setText(f'{active} 个进行中' if active else '暂无进行中任务')
@@ -788,7 +793,11 @@ class CompactBubble(Bubble):
         if self._speech_text:
             self.status_view.clear_conversations();self.status_view.extra=0;self.status_view.overflow.hide()
             self.status_view.set_status(self._speech_text,self.expanded);return
-        selected,extra=self.roster.selection(self.status_indicator.unread)
+        now=time.monotonic()
+        selected,extra=self.roster.selection(self.status_indicator.unread,now)
+        expiries=[v['short_status'][1] for v in selected if 'short_status' in v and v['short_status'][1]>now
+                  and v['text']!=self.roster.items[v['session']]['text']]
+        if expiries:self._short_status_timer.start(max(1,math.ceil((min(expiries)-now)*1000)))
         self.status_view.extra=extra
         self.status_view.overflow.setText('+'+str(extra));self.status_view.overflow.setVisible(bool(extra))
         self.status_view.overflow.setAccessibleName(f'另有 {extra} 个会话，点击切换显示')
@@ -830,18 +839,15 @@ class CompactBubble(Bubble):
         header=self._status_headers.get(self.expanded)
         if header is None:
             header=QWidget(self.content);header.setObjectName('status_header');header.setFixedHeight(27 if self.expanded else 26);row=QHBoxLayout(header);row.setContentsMargins(0,0,0,0);row.setSpacing(6 if self.expanded else 2)
-            title=QToolButton();title.setObjectName('open_codex');title.setFont(font(12,True))
+            title=CodexWordmarkButton();title.setObjectName('open_codex');title.setFont(font(12,True))
             title.setFixedHeight(26)
             title.setFocusPolicy(Qt.FocusPolicy.NoFocus);title.setCursor(Qt.CursorShape.PointingHandCursor)
             set_theme_style(title,'QToolButton{'+FONT_CSS+'font-size:12px;color:#75618d;border:0;padding:0;background:transparent;text-align:left;}QToolButton:hover{color:#8b78a6;}')
             title.setAccessibleName('打开 Codex');title.clicked.connect(lambda:self.codexRequested.emit())
             self._status_title=title
-            name_group=QWidget();name_group.setObjectName('codex_heading');name_group.setFixedHeight(26)
-            name_row=QHBoxLayout(name_group);name_row.setContentsMargins(0,0,0,0);name_row.setSpacing(2)
-            name_row.addWidget(self.status_indicator);self.status_indicator.show();name_row.addWidget(title)
-            badge=QLabel();badge.setObjectName('codex_active_count');badge.setFixedHeight(18)
-            set_theme_style(badge,FONT_CSS+'font-size:11px;font-weight:500;color:#66517e;background:#eee6f4;border-radius:6px;padding:0;')
-            badge.setAlignment(Qt.AlignmentFlag.AlignCenter);name_row.addWidget(badge);self._status_badge=badge
+            name_group=QWidget(header);name_group.setObjectName('codex_heading');name_group.setFixedHeight(26)
+            name_row=QHBoxLayout(name_group);name_row.setContentsMargins(0,0,0,0);name_row.setSpacing(4)
+            name_row.addWidget(title,0,Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(name_group);row.addStretch(1)
             self.refresh_button.setFixedSize(26,26);self.quota_refresh_button=self.refresh_button;row.addWidget(self.refresh_button);self.refresh_button.show()
             report_button=action_button('report','打开 / 收起数据面板',hit_size=26);report_button.setObjectName('bubble_report')
@@ -854,13 +860,13 @@ class CompactBubble(Bubble):
             button=action_button('collapse' if self.expanded else 'details','收起详情' if self.expanded else '展开完整状态、来源与重置说明',hit_size=26)
             button.setObjectName('bubble_details')
             button.clicked.connect(self.toggle_details);row.addWidget(button)
-            header._status_parts=(title,name_group,badge,report_button,mini,button)
+            header._status_parts=(title,name_group,report_button,mini,button)
             self._status_headers[self.expanded]=header
-        title,name_group,badge,report_button,mini,button=header._status_parts
-        name_group.layout().insertWidget(0,self.status_indicator);self.status_indicator.show()
+        title,name_group,report_button,mini,button=header._status_parts
+        name_group.layout().insertWidget(0,self.status_indicator,0,Qt.AlignmentFlag.AlignVCenter);self.status_indicator.show()
         header.layout().insertWidget(2,self.refresh_button);self.refresh_button.show()
         self.quota_refresh_button=self.refresh_button
-        self._status_title=title;self._status_badge=badge
+        self._status_title=title
         compact_target='minimal' if self.bubble_mode=='minimal' or self._edge_compact else 'mini'
         mini.setToolTip('收起到极简模式' if compact_target=='minimal' else '收起到胶囊模式')
         mini.setAccessibleName(mini.toolTip());mini.setVisible(not self.expanded)
@@ -913,9 +919,10 @@ class CompactBubble(Bubble):
         if self.details_tabs:
             self.detail_scroll={key:area.verticalScrollBar().value() for key,area in self.details_tabs.areas.items()}
         self.details_tabs=None
-        self.layout.setContentsMargins(13 if self.expanded else 10,9 if self.expanded else 6,13 if self.expanded else 10,11 if self.expanded else 6);self.layout.setSpacing(0 if self.expanded else 3)
-        screen=self.screen() or QApplication.primaryScreen()
-        width=min(EXPANDED_WIDTH,screen.availableGeometry().width()-24) if self.expanded else 268
+        side_margin=13 if self.expanded else 10
+        self.layout.setContentsMargins(side_margin,9 if self.expanded else 8,side_margin,11 if self.expanded else 10)
+        self.layout.setSpacing(0 if self.expanded else 5)
+        width=self.card_width(EXPANDED_WIDTH) if self.expanded else self.normal_card_width()
         self.content.setFixedWidth(width)
         self.status_view.setFixedWidth(width-(26 if self.expanded else 20))
         self.clear();self.quota_refresh_button=None;self.reset_refresh_buttons=[];self.token_refresh_buttons=[]
@@ -935,7 +942,7 @@ class CompactBubble(Bubble):
         if self.show_quota:
             # Only a new/resolved announcement changes the default front card;
             # routine status, quota and token updates preserve manual switching.
-            from dashboard_cards import CardDeck,DASH_HEIGHT
+            from dashboard_cards import CardDeck
             from quota_summary import QuotaSummary,TodayTokens
             pending=pending_reset(self.reset_snapshot);key=(schedule_key(pending),locally_reset(self.reset_snapshot)) if pending else None
             if key!=self._active_reset_key:
@@ -945,12 +952,19 @@ class CompactBubble(Bubble):
             warning=visible_quota_change(self.token_snapshot,self.windows,decline_threshold=settings.get('quota_decline_threshold',10),
                                    increase_threshold=settings.get('quota_increase_threshold',15))
             container=QWidget(self.content)
-            stack=QVBoxLayout(container);stack.setContentsMargins(0,0,0,10 if self.expanded else 0);stack.setSpacing(6 if self.expanded else 2)
-            cards=QWidget(container);row=QHBoxLayout(cards);row.setContentsMargins(0,0,0,0);row.setSpacing(7 if self.expanded else 6);stack.addWidget(cards)
+            gap=self.card_pixels(8)
+            columns=max(0,width-2*side_margin-gap)
+            left_width=round(columns*29/60)
+            right_width=columns-left_width
+            bottom_padding=10 if self.expanded else 0
+            stack=QVBoxLayout(container);stack.setContentsMargins(0,0,0,bottom_padding);stack.setSpacing(gap)
+            cards=QWidget(container);row=QHBoxLayout(cards);row.setContentsMargins(0,0,0,0);row.setSpacing(gap);stack.addWidget(cards)
             quota=QuotaSummary(self.windows,self.quota_caption,parent=cards,progress_cache=self._ring_values,anomaly=warning,expanded=self.expanded);self.quota_summary_card=quota;quota.expand.connect(self.show_quota_details)
             quota.anomalyRequested.connect(self.quotaCompareRequested.emit)
-            cards.setFixedHeight(quota.height());container.setFixedHeight(quota.height()+(40 if self.expanded else TodayTokens.HEIGHT+2))
-            quota.resetDue.connect(self._quota_reset_due);row.addWidget(quota,1)
+            quota.setFixedHeight(self.card_pixels(quota.height()))
+            footer_height=self.card_pixels(24 if self.expanded else 22)
+            cards.setFixedHeight(quota.height());container.setFixedHeight(quota.height()+footer_height+gap+bottom_padding)
+            quota.setFixedWidth(left_width);quota.resetDue.connect(self._quota_reset_due);row.addWidget(quota,1)
             self.ring_kinds=['quota']*len(quota.items)+['time','tokens']
             deck=self._deck_cache.get(self.expanded)
             if deck is not None and (deck.page!=self.dashboard_page or deck.token_range!=self.token_range):
@@ -961,7 +975,7 @@ class CompactBubble(Bubble):
                 deck.selected.connect(self.select_dashboard)
                 deck.token_range_changed.connect(self.select_token_range)
                 self._deck_cache[self.expanded]=deck
-            self.deck=deck
+            self.deck=deck;deck.set_surface_scale(self.card_pixels);deck.setFixedWidth(right_width)
             row.addWidget(deck,1,Qt.AlignmentFlag.AlignTop);deck.show()
             daily=self.today_tokens_card
             if daily is None:
@@ -969,14 +983,14 @@ class CompactBubble(Bubble):
             else:daily.setParent(container)
             daily.set_selected(self.dashboard_page=='tokens' and self.token_range=='day')
             from live_rate_ui import LiveRateCard
-            footer=QWidget(container);footer.setObjectName('status_footer');footer_row=QHBoxLayout(footer);footer_row.setContentsMargins(0,0,0,0);footer_row.setSpacing(7 if self.expanded else 5)
+            footer=QWidget(container);footer.setObjectName('status_footer');footer_row=QHBoxLayout(footer);footer_row.setContentsMargins(0,0,0,0);footer_row.setSpacing(gap)
             if getattr(self,'live_rate_card',None) is None:self.live_rate_card=LiveRateCard(getattr(self,'live_output_rate',None),footer)
             else:
                 self.live_rate_card.setParent(footer)
                 self.live_rate_card.set_data(getattr(self,'live_output_rate',self.live_rate_card.value))
+            self.live_rate_card.expanded=self.expanded;self.live_rate_card.setFixedSize(left_width,footer_height)
             footer_row.addWidget(self.live_rate_card,1);self.live_rate_card.show()
-            self.live_rate_card.expanded=self.expanded;self.live_rate_card.setFixedHeight(24 if self.expanded else 20)
-            daily.setFixedHeight(24 if self.expanded else TodayTokens.HEIGHT)
+            daily.setFixedSize(right_width,footer_height)
             daily.compact=True;daily.expanded=self.expanded;footer_row.addWidget(daily,1);daily.show();stack.addWidget(footer);self.add(container)
             if self.expanded:
                 from detail_sections import DetailsTabs
@@ -1051,8 +1065,24 @@ class CompactBubble(Bubble):
         today=getattr(self,'today_tokens_card',None)
         if today is not None:today.set_data(self.token_snapshot,live=self.live_today_value)
     def owner_pet(self):return self._owner or self.parentWidget()
+    def card_pixels(self,pixels):
+        owner=self.owner_pet()
+        scale=owner.display_card_scale() if getattr(owner,'_visibility_ready',False) else 1.
+        return round(pixels*scale)
+    def refresh_surface_scale(self):
+        if self.size_transition.running or self.size_transition.preparing:return
+        if self.panel_page=='settings':
+            self.content.setFixedWidth(self.card_width(EXPANDED_WIDTH))
+            self._fit_height()
+            if self.isVisible():self.move(self.content_geometry().topLeft())
+        else:self.redraw()
+    def card_width(self,base):
+        owner=self.owner_pet();screen=self.screen() or QApplication.primaryScreen()
+        if owner:screen=QApplication.screenAt(owner.frameGeometry().center()) or screen
+        return min(self.card_pixels(base),max(1,screen.availableGeometry().width()-24))
+    def normal_card_width(self):return self.card_width(268)
     def expanded_height(self):
-        return min(EXPANDED_HEIGHT,self.expanded_height_limit())
+        return min(self.card_pixels(EXPANDED_HEIGHT),self.expanded_height_limit())
     def expanded_height_limit(self):
         owner=self.owner_pet();screen=self.screen() or QApplication.primaryScreen()
         if owner:screen=QApplication.screenAt(owner.frameGeometry().center()) or screen
@@ -1159,25 +1189,28 @@ class CompactBubble(Bubble):
         self._quota_reset_requested=stamp
         self.quotaRefreshRequested.emit();self.redraw()
     def _redraw_island(self):
-        from island_widgets import StatusIsland,QuotaSatellite,WIDTH,HEIGHT
+        from island_widgets import StatusIsland,QuotaSatellite
         self._redrawing=True
         entering=self._last_compact_surface!='mini'
         if self.details_tabs:self.detail_scroll={key:area.verticalScrollBar().value() for key,area in self.details_tabs.areas.items()}
         self.clear();self._last_compact_surface='mini';self.details_tabs=None;self.status_view.animation.stop();self.status_view.hide()
         self.quota_refresh_button=None;self.reset_refresh_buttons=[];self.token_refresh_buttons=[]
         self.layout.setContentsMargins(0,0,0,0);self.layout.setSpacing(0)
-        self.content.setFixedWidth(WIDTH if self.show_quota else WIDTH-43)
-        cluster=QWidget();cluster.setFixedHeight(38);row=QHBoxLayout(cluster);row.setContentsMargins(0,0,0,0);row.setSpacing(5)
-        circle_style='QToolButton{border:0;border-radius:19px;background:#302a3c;}QToolButton:hover{background:#494052;}QToolButton:pressed{background:#302a3c;}'
+        circle=self.card_pixels(38);gap=self.card_pixels(5);island_width=self.card_pixels(124)
+        self.content.setFixedWidth(circle+gap+island_width+(circle+gap if self.show_quota else 0))
+        # A native status icon must stay under the bubble while being moved.
+        cluster=QWidget(self.content);cluster.setFixedHeight(circle);row=QHBoxLayout(cluster);row.setContentsMargins(0,0,0,0);row.setSpacing(gap)
+        circle_style='QToolButton{border:0;border-radius:'+str(circle//2)+'px;background:#302a3c;}QToolButton:hover{background:#494052;}QToolButton:pressed{background:#302a3c;}'
         from quick_actions import action_info
         key,title,icon=action_info(self.capsule_action)
-        shortcut=action_button(icon,title,keyboard=True);shortcut.setObjectName('island_shortcut');shortcut.setFixedSize(38,38);shortcut.setIconSize(QSize(18,18))
+        shortcut=action_button(icon,title,keyboard=True);shortcut.setObjectName('island_shortcut');shortcut.setFixedSize(circle,circle);shortcut.setIconSize(QSize(self.card_pixels(18),self.card_pixels(18)))
         shortcut.setProperty('themeIconIsland',True)
         if icon!='refresh':shortcut.setIcon(action_icon(icon,island=True))
         set_theme_style(shortcut,circle_style+'QToolButton:focus{border:0;background:#eee8f3;}')
         shortcut.clicked.connect(self.shortcutRequested.emit);row.addWidget(shortcut);self.shortcut_button=shortcut
         if key=='refresh':shortcut.set_busy(self.refresh_busy)
-        self.status_indicator.set_island(True);self.island=StatusIsland(self.status_indicator)
+        self.status_indicator.set_island(True);self.island=StatusIsland(self.status_indicator,cluster)
+        self.island.setFixedSize(island_width,circle)
         from conversation_roster import LABELS
         selected,extra=self.roster.selection(self.status_indicator.unread)
         self.status_indicator.session_summary='/'.join('压缩' if v.get('compacting') and v['state']!='waiting' else LABELS.get(v['state'],'待命').removesuffix('中') for v in selected)+(' +'+str(extra) if extra else '')
@@ -1185,6 +1218,7 @@ class CompactBubble(Bubble):
         self.island.expand.connect(lambda:self.set_mode('auto'));row.addWidget(self.island)
         if self.show_quota:
             quota=QuotaSatellite(self.windows,self.quota_caption);quota.clicked.connect(self.toggle_details)
+            quota.setFixedSize(circle,circle)
             if entering:quota.begin_reveal()
             else:self._restore_quota_reveal(quota,'mini')
             quota.resetDue.connect(self._quota_reset_due);row.addWidget(quota)
@@ -1212,8 +1246,9 @@ class CompactBubble(Bubble):
         entering=self._last_compact_surface!='minimal'
         self.clear();self._last_compact_surface='minimal';self.details_tabs=None;self.status_view.animation.stop();self.status_view.hide()
         self.quota_refresh_button=None;self.reset_refresh_buttons=[];self.token_refresh_buttons=[]
-        self.layout.setContentsMargins(0,0,0,0);self.layout.setSpacing(0);self.content.setFixedWidth(54)
+        size=self.card_pixels(54);self.layout.setContentsMargins(0,0,0,0);self.layout.setSpacing(0);self.content.setFixedWidth(size)
         self.minimal_quota=MinimalQuota(self.windows,self.quota_caption,self)
+        self.minimal_quota.setFixedSize(size,size)
         self.minimal_quota.clicked.connect(self.open_normal_from_minimal);self.minimal_quota.resetDue.connect(self._quota_reset_due)
         if entering:self.minimal_quota.begin_reveal()
         else:self._restore_quota_reveal(self.minimal_quota,'minimal')
@@ -1239,7 +1274,10 @@ class CompactBubble(Bubble):
         if self.panel_page=='help':return min(getattr(self,'_help_height',self.expanded_height()),self.expanded_height_limit())
         if self.panel_page in ('chat','settings'):
             limit=self.expanded_height() if self.expanded_height()<440 else self.expanded_height_limit()
-            return min(getattr(self,'_status_default_height',self.expanded_height()),limit)
+            baseline=getattr(self,'_status_default_height',None)
+            if baseline is None:return self.expanded_height()
+            old=getattr(self,'_status_default_scale_width',268)
+            return min(round(baseline*self.card_pixels(268)/old),limit)
         return self.expanded_height()
     def _fit_height(self):
         if self.size_transition.running:return
@@ -1266,7 +1304,8 @@ class CompactBubble(Bubble):
             height=max(80,self.expanded_height()-94)
             self._status_scroll.setFixedHeight(height);wanted=self.expanded_height()
             self._status_default_height=wanted
-            if self.details_tabs:self.details_tabs.setFixedHeight(170)
+            self._status_default_scale_width=self.card_pixels(268)
+            if self.details_tabs:self.details_tabs.setFixedHeight(self.card_pixels(170))
         elif self.details_tabs:
             old=self.details_tabs.height();prefix=wanted-old
             baseline=self.details_tabs.content_height(1,inner)
@@ -1277,9 +1316,12 @@ class CompactBubble(Bubble):
             if index in (0,1):self._status_height_source=index
             regular=max(baseline,self.details_tabs.content_height(getattr(self,'_status_height_source',0),inner))
             self._status_default_height=prefix+max(60,min(regular,limit-prefix))
+            self._status_default_scale_width=self.card_pixels(268)
             self.details_tabs.setFixedHeight(height);wanted=prefix+height
         minimum=38 if self.is_island() else 40
         if self.content.height()!=max(minimum,wanted):self.content.setFixedHeight(max(minimum,wanted))
+        if not self.expanded and not self.is_compact():
+            self._normal_placement_height=self.placement_height(self.content.height())
         self.setAccessibleName(self.heading+'；'+self.status)
         if not self.size_transition.preparing and self.size()!=self.content.size():self.setFixedSize(self.content.size())
         self.layout.activate();self._fitting_height=False;self._position_now()
@@ -1294,21 +1336,27 @@ class CompactBubble(Bubble):
         edge=getattr(owner,'edge_dock',None)
         if docked and edge and self.is_minimal() and (edge.active or edge.amount>0):
             return edge.card_geometry(size,edge.target_amount if self.size_transition.preparing else None)
+        return self.attached_geometry(owner,size)
+    def attached_geometry(self,owner,size):
         screen=QApplication.screenAt(owner.frameGeometry().center()) or QApplication.primaryScreen();area=screen.availableGeometry()
+        report_open=self.report is not None and self.report.requested
         if self.panel_page!='status' and self._editor_positioned:x,y=self.x(),self.y()
         else:
             x=owner.x()+(owner.width()-size.width())//2;y=owner.y()-size.height()-8
-            reserve=max(0,2*self.status_view.line_height-self.status_view.height()) if not self.expanded and not self.is_island() else 0
-            if y-reserve<area.top():y=owner.y()+owner.height()+8
-        reserve=self.report.reserved_height(size)+6 if self.report and self.report.requested else 0
+            placement=self.placement_height(size.height())
+            # Keep the normal card's side while resizing the report stack.
+            # The report reservation below already accounts for the target height.
+            if report_open and self.expanded:placement=getattr(self,'_normal_placement_height',placement)
+            if owner.y()-placement-8<area.top():y=owner.y()+owner.height()+8
+        reserve=self.report.reserved_height(size)+self.report.GAP if report_open else 0
         reserve=min(reserve,max(0,area.height()-size.height()))
         x=max(area.left(),min(x,area.right()-size.width()+1));y=max(area.top()+reserve,min(y,area.bottom()-size.height()+1))
         return QRectF(x,y,size.width(),size.height()).toRect()
-    def placement_height(self):
+    def placement_height(self,height=None):
         # One-/two-line changes must not flip the bubble to the opposite side
         # of the character near the top edge. Probe with the larger compact size.
         reserve=max(0,2*self.status_view.line_height-self.status_view.height()) if not self.expanded and not self.is_island() else 0
-        return self.height()+reserve
+        return (self.height() if height is None else height)+reserve
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source);p.fillRect(self.rect(),Qt.GlobalColor.transparent)

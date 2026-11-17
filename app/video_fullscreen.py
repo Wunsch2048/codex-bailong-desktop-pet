@@ -54,6 +54,7 @@ class WindowAPI:
         if os.name!='nt':raise OSError('Windows required')
         self.u=ctypes.WinDLL('user32',use_last_error=True)
         self.u.GetForegroundWindow.restype=wintypes.HWND
+        self.u.GetAsyncKeyState.argtypes=[ctypes.c_int];self.u.GetAsyncKeyState.restype=ctypes.c_short
         self.u.GetAncestor.argtypes=[wintypes.HWND,wintypes.UINT];self.u.GetAncestor.restype=wintypes.HWND
         self.u.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];self.u.GetWindow.restype=wintypes.HWND
         self.u.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
@@ -68,6 +69,10 @@ class WindowAPI:
         self.u.GetWindowLongPtrW.argtypes=[wintypes.HWND,ctypes.c_int];self.u.GetWindowLongPtrW.restype=ctypes.c_ssize_t
         self.u.SetWindowPos.argtypes=[wintypes.HWND,wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int,ctypes.c_int,wintypes.UINT]
     def foreground(self):return int(self.u.GetForegroundWindow() or 0)
+    def mouse_button_down(self):
+        return any(self.u.GetAsyncKeyState(button)<0 for button in (1,2,4))
+    def window_pid(self,hwnd):
+        pid=wintypes.DWORD();self.u.GetWindowThreadProcessId(hwnd,ctypes.byref(pid));return pid.value
     def valid(self,hwnd):return bool(hwnd and self.u.IsWindow(hwnd))
     def rect(self,hwnd):
         r=wintypes.RECT()
@@ -75,7 +80,9 @@ class WindowAPI:
         return (r.left,r.top,r.right,r.bottom)
     def topmost(self,hwnd):return bool(self.u.GetWindowLongPtrW(hwnd,-20)&8)
     def above(self,hwnd,target):
-        for _ in range(256):
+        seen=set()
+        while target and target not in seen:
+            seen.add(target)
             target=self.u.GetWindow(target,3)
             if not target:return False
             if target==hwnd:return True
@@ -87,6 +94,12 @@ class WindowAPI:
         if not top and self.valid(behind) and not self.topmost(behind) and self.above(hwnd,behind):
             return bool(self.u.SetWindowPos(hwnd,behind,0,0,0,0,flags))
         return True
+    def set_layer(self,hwnd,layer,from_bottom=False):
+        flags=1|2|0x10|0x200
+        if layer=='bottom':
+            return bool(self.u.SetWindowPos(hwnd,wintypes.HWND(1),0,0,0,0,flags))
+        if not self.set_topmost(hwnd,layer=='top'):return False
+        return not (layer=='normal' and from_bottom) or bool(self.u.SetWindowPos(hwnd,wintypes.HWND(0),0,0,0,0,flags))
     def stack_with(self,hwnd,anchor):
         """Place a companion immediately above its anchor without raising it."""
         if not self.valid(hwnd) or not self.valid(anchor):return False

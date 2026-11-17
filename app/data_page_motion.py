@@ -1,7 +1,7 @@
-"""Short body-only crossfade; headers and the native window never disappear."""
-from settings_controls import play_animation
+"""Body-only page transitions that leave the native window in place."""
+from settings_controls import motion_enabled,play_animation
 from theme_registry import color as theme_color
-from PySide6.QtCore import Qt,QVariantAnimation,QEasingCurve,QPoint,QRect
+from PySide6.QtCore import Qt,QVariantAnimation,QEasingCurve,QPoint,QRect,QEvent,QTimer
 from PySide6.QtGui import QPainter,QPixmap,QColor,QRegion
 from PySide6.QtWidgets import QWidget
 from ui_theme import SURFACE
@@ -78,3 +78,79 @@ class PageFade(QWidget):
         else:
             p.drawPixmap(self.rect(),self.next_frame,self.next_frame.rect())
             p.setOpacity(1.-self.progress);p.drawPixmap(self.rect(),self.frame,self.frame.rect())
+
+
+class ReportSubpage(QWidget):
+    """Slide a child page over a fixed report viewport and restore it on Back."""
+
+    def __init__(self,parent):
+        super().__init__(parent)
+        self.hide()
+        self._motion_ticket=0
+        self._returning=False
+        self._capturing_return=False
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.page_motion=PageFade(self)
+        self.page_motion.animation.finished.connect(self.motion_finished)
+        parent.installEventFilter(self)
+
+    def show_page(self,entry_frame=None):
+        parent=self.parentWidget()
+        entry=entry_frame
+        if entry is None and parent.isVisible() and parent.updatesEnabled() and motion_enabled():
+            entry=PageFade.snapshot(parent)
+        self.setGeometry(parent.rect())
+        self.show()
+        self.raise_()
+        if entry is not None:
+            self._motion_ticket+=1
+            ticket=self._motion_ticket
+            self.page_motion.hold(entry,self.rect())
+            QTimer.singleShot(0,self,lambda:self.present_entry(ticket,entry))
+    def present_entry(self,ticket,frame):
+        if ticket!=self._motion_ticket:return
+        if not self.isVisible() or not self.updatesEnabled() or not motion_enabled():self.page_motion.clear();return
+        try:
+            from panel_transition import settle_visible
+            self.page_motion.hide();settle_visible(self)
+            target=PageFade.snapshot(self)
+            self.page_motion.animation.setDuration(220);self.page_motion.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self.page_motion.present(frame,target,self.rect(),direction=1)
+        except Exception:self.page_motion.clear();raise
+    def go_back(self):
+        if self._returning:return
+        parent=self.parentWidget()
+        if not self.isVisible() or not self.updatesEnabled() or not parent.isVisible() or not motion_enabled():self.close();return
+        self._motion_ticket+=1
+        frame=self.page_motion.current_frame() if self.page_motion.isVisible() else PageFade.snapshot(self)
+        self.page_motion.clear()
+        try:
+            self._capturing_return=True;self.hide()
+            from panel_transition import settle_visible
+            settle_visible(parent);target=PageFade.snapshot(parent)
+            self.show();self.raise_();self._capturing_return=False;self._returning=True
+            self.page_motion.animation.setDuration(220);self.page_motion.animation.setEasingCurve(QEasingCurve.Type.InCubic)
+            self.page_motion.present(frame,target,self.rect(),direction=-1)
+        except Exception:
+            self._capturing_return=False;self.close();raise
+    def motion_finished(self):
+        if self._returning:self.close()
+    def cancel_motion(self):
+        self._motion_ticket+=1;self._returning=False;self.page_motion.clear()
+    def closeEvent(self,event):
+        self.cancel_motion();super().closeEvent(event)
+    def hideEvent(self,event):
+        if hasattr(self,'page_motion') and not self._capturing_return:self.cancel_motion()
+        super().hideEvent(event)
+    def resizeEvent(self,event):
+        if hasattr(self,'page_motion'):
+            returning=self._returning;self.cancel_motion()
+            if returning:self.close()
+        super().resizeEvent(event)
+    def eventFilter(self,obj,event):
+        if event.type()==QEvent.Type.Resize:self.setGeometry(obj.rect())
+        elif event.type()==QEvent.Type.Hide:self.close()
+        return False
+    def keyPressEvent(self,event):
+        if event.key()==Qt.Key.Key_Escape:self.go_back();event.accept();return
+        super().keyPressEvent(event)

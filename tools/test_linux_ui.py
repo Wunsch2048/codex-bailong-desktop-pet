@@ -150,8 +150,9 @@ class LinuxUiTests(unittest.TestCase):
         with ExitStack() as stack:
             ui.install(stack)
             DesktopPet.populate_tray(pet)
-            self.assertEqual(len(pet.tray_menu.actions()), 7)
+            self.assertEqual(sum(action.isSeparator() for action in pet.tray_menu.actions()), 2)
             actions = {a.objectName(): a for a in pet.tray_menu.findChildren(QAction) if a.objectName()}
+            self.assertEqual(set(actions), {'command_'+name for name in ('status','chat','settings','visible','recover','quit')})
             pet._desktop_hidden = True
             pet.settings['character_visible'] = False
             pet.bubble.bubble_mode = 'auto'
@@ -160,9 +161,6 @@ class LinuxUiTests(unittest.TestCase):
                 current = {a.objectName(): a for a in pet.tray_menu.findChildren(QAction) if a.objectName()}
                 self.assertEqual(current, actions)
             self.assertEqual(actions['command_visible'].text(), '显示桌面组件')
-            self.assertFalse(actions['command_character'].isChecked())
-            self.assertTrue(actions['command_mode_auto'].isChecked())
-            self.assertFalse(actions['command_mode_mini'].isChecked())
             actions['command_settings'].trigger()
             APP.processEvents()
             pet.execute_command.assert_called_once_with('settings', False)

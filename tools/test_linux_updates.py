@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 from app_updates import Release
 from app_updates import NoRelease, check_release
 from test_app_updates import payload, Response
@@ -172,7 +172,7 @@ class LinuxUpdateTests(unittest.TestCase):
             titles = {b.text() for b in dialog.findChildren(QPushButton)}
             self.assertNotIn('程序位置与安装管理', titles)
             self.assertNotIn('查看可清理内容', titles)
-            self.assertIn('数据与恢复', titles)
+            self.assertIn('数据与恢复', {label.text() for label in dialog.findChildren(QLabel)})
             buttons = {b.text(): b for b in dialog.findChildren(QPushButton)}
             self.assertEqual(buttons['备份设置'].toolTip(), '不含密钥与对话')
             self.assertEqual(buttons['恢复设置'].toolTip(), '恢复设置备份')

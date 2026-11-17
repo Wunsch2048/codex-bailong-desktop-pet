@@ -28,7 +28,7 @@ class MaterialsStub(QObject):
 class UpdatesStub(QObject):
     changed=Signal(object)
     job=None
-    def snapshot(self):return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None)
+    def snapshot(self):return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None,program_supported=True)
     def check(self):pass
     def download_install(self):pass
     def cancel(self):pass
@@ -63,7 +63,8 @@ class SettingsPresentationTests(unittest.TestCase):
     def setUp(self):
         install_ui_font(APP)
         for target,value in [('desktop_settings.autostart_enabled',False),('codex_startup.enabled',False),
-                             ('codex_connection.saved_paths',{}),('codex_connection.data_home',Path('isolated-codex'))]:
+                             ('codex_connection.saved_paths',{}),('codex_connection.data_home',Path('isolated-codex')),
+                             ('app_updates.program_updates_supported',True)]:
             handle=patch(target,return_value=value);handle.start();self.addCleanup(handle.stop)
         self.pet=SettingsPet();self.pet.resize(334,386)
         self.editor=SettingsDialog(self.pet,embedded=True,lazy=True);self.editor.resize(334,386)

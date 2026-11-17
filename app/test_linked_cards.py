@@ -24,10 +24,28 @@ class LinkedTests(unittest.TestCase):
             transition=b.size_transition
             self.assertTrue(r.requested and r.follow.committed)
             parts=r.follow.module_morph.shared_parts
-            self.assertIn('chrome_0',parts)
-            self.assertIn('chrome_1',parts)
+            self.assertIn('chrome_0/fixed-left-title',parts)
+            self.assertIn('chrome_1/fixed-left-tabs',parts)
             self.assertGreaterEqual(sum(key.startswith('body_') for key in parts),2)
             transition.animation.setCurrentTime(transition.animation.duration()//3)
+            from spring_motion import container_progress
+            progress=container_progress(r.follow.progress)
+            cost=parts['body_hourly/report-panel/fixed-left-cost']
+            self.assertIsNone(cost.buffers)
+            self.assertAlmostEqual(cost.geometry(progress).left(),
+                                   cost.rects[0].left()+(cost.rects[1].left()-cost.rects[0].left())*progress)
+            image=r.follow.frame.toImage()
+            ratio=image.devicePixelRatio()
+            local=cost.geometry(progress).translated(-r.follow.canvas.x(),-r.follow.canvas.y())
+            expected=cost.fixed_frames[-1].toImage()
+            left=round(local.left()*ratio);top=round(local.top()*ratio)
+            # Compare a solid foreground glyph pixel, not the module background.
+            background=expected.pixelColor(0,0)
+            ink=lambda color:sum(abs(a-b) for a,b in zip(color.getRgb(),background.getRgb()))
+            x,y=max(((x,y) for x in range(3,40) for y in range(4,40)),
+                    key=lambda pt:ink(expected.pixelColor(*pt)))
+            self.assertGreater(ink(expected.pixelColor(x,y)),100)
+            self.assertGreater(ink(image.pixelColor(left+x,top+y)),100)
             host=transition.morph.geometry(transition.raw_progress)
             middle=r.follow.geometry()
             self.assertAlmostEqual(middle.width(),host.width(),delta=1)
@@ -54,6 +72,94 @@ class LinkedTests(unittest.TestCase):
             target=QRect(t.target_rect);t.animation.resume();t.complete();r.follow.release()
             self.assertFalse(r.follow.active);self.assertTrue(r.surface.isVisible());self.assertEqual(r.content_geometry().x(),target.x());self.assertEqual(r.content_geometry().width(),target.width())
             self.assertEqual(r.content_geometry().bottom()+1+r.GAP,target.y())
+    def _check_parts_during_width_change(self,*suffixes):
+        b,r=self.b,self.r;page=r.page;scroll=r.scroll
+        for navigate in (b.toggle_details,b.toggle_details):
+            before=r.content_geometry()
+            navigate()
+            transition=b.size_transition
+            self.assertTrue(r.follow.committed)
+            morph=r.follow.module_morph
+            for suffix in suffixes:
+                matches=[part for key,part in morph.shared_parts.items() if key.endswith(suffix)]
+                self.assertTrue(matches,(suffix,list(morph.shared_parts)))
+                if suffix.startswith('/fixed-'):
+                    self.assertTrue(all(part.fixed and part.buffers is None for part in matches))
+            transition.advance(.45)
+            middle=r.follow.geometry()
+            self.assertNotEqual(middle.width(),before.width())
+            self.assertNotEqual(middle.width(),r.follow.end.width())
+            image=r.follow.frame.toImage();ratio=image.devicePixelRatio()
+            local=middle.translated(-r.follow.canvas.x(),-r.follow.canvas.y())
+            self.assertEqual(image.pixelColor(round(local.center().x()*ratio),round(local.center().y()*ratio)).alpha(),255)
+            transition.complete();r.follow.release()
+            self.assertIs(r.scroll,scroll);self.assertEqual(r.page,page)
+            self.assertEqual(r.content_geometry(),r.geometry_for_host(b.geometry()))
+
+    def _open_page(self,page):
+        self.r.set_page(page)
+        APP.processEvents()
+        self.r.page_fade.clear()
+
+    def test_models_and_quota_keep_native_size_labels_and_moving_chart_parts(self):
+        from test_quota_compare_ui import row
+        r=self.r;data=sample()
+        data['quota_history']={'cycles':[row(),row(id='older',closed=True,start=1791695200)]}
+        r.set_snapshot(data)
+        self._open_page('models');r.select_model('gpt-6.1-sol')
+        self._check_parts_during_width_change('/fixed-left-peak','/fixed-left-average','/bars','/fixed-right-date','/fixed-right-title')
+        self.assertEqual(r.selected_model,'gpt-6.1-sol')
+        self._open_page('cycle')
+        self._check_parts_during_width_change('/report-panel8','/bars','/fixed-left-value-axis','/fixed-right-date')
+
+    def test_model_rate_curve_and_weighted_average_follow_all_time_ranges(self):
+        r=self.r;data=sample()
+        data['report']['rates']={'days':{
+            '2026-10-12':dict(rate=10.,output=10,duration_ms=1000),
+            '2026-10-17':dict(rate=30.,output=90,duration_ms=3000)}}
+        r.set_snapshot(data);self._open_page('models')
+        for period in ('all','30d','7d'):
+            r.set_period(period);r.plot.reveal.progress=1.;r.plot.grab()
+            self.assertEqual((r.model_rate_label.text(),r.model_rate_label.unit),('25.0','tok/s'))
+            self.assertEqual(len(r.plot._rate_points),2)
+            self.assertTrue(any(label=='回合均速' for record in r.plot._combo_records for label,_,_ in record['rows']))
+        r.select_model('gpt-6.1-sol');r.plot.grab()
+        self.assertIn('全模型平均 Token 速率',r.model_rate_label.accessibleName())
+
+    def test_cost_list_detail_and_pricing_stay_open_through_width_change(self):
+        from cost_preferences import defaults
+        from pricing_ui import PricingEditor
+        from test_pricing_navigation import Service
+        r=self.r;data=sample()
+        rows=[dict(id=str(i),name='项目 '+str(i),path='D:/p',cost=2.,parts=[1.,.2,.8],
+                   tokens=1000,pending_tokens=0,models=[],sessions=1,archived=False) for i in range(12)]
+        data['projects']={'ranges':{'all':rows}}
+        r.set_snapshot(data);self._open_page('projects');cost=r.project_view
+        self._check_parts_during_width_change('/fixed-right-sort','/fixed-right-name','/progress')
+        bar=cost.list.verticalScrollBar();bar.setValue(150);position=bar.value()
+        self._check_parts_during_width_change('/fixed-right-name','/progress')
+        self.assertEqual(bar.value(),position)
+        with patch.object(cost,'request_sessions'):
+            cost.select(rows[0]);APP.processEvents();cost.detail_motion.clear()
+            self._check_parts_during_width_change('/report-panel10','/fixed-left-name','/report-panel-segment-pill')
+        with patch('pricing_ui.load',return_value=defaults()):
+            editor=PricingEditor(cost,price_service=Service())
+        editor.draft['currency']='HKD'
+        try:
+            self._check_parts_during_width_change('/report-panel9','/report-panel-segments')
+            self.assertTrue(editor.isVisible());self.assertEqual(editor.draft['currency'],'HKD')
+        finally:editor.close()
+
+    def test_quota_official_rates_page_stays_open_and_tracks_its_rows(self):
+        from official_rates_ui import OfficialRatesPage
+        from test_pricing_navigation import Service
+        r=self.r;self._open_page('cycle')
+        page=OfficialRatesPage(r.scroll.viewport(),controller=Service('credits_per_million_tokens'))
+        APP.processEvents();page.cancel_motion()
+        try:
+            self._check_parts_during_width_change('/report-panel8','/fixed-left-control')
+            self.assertTrue(page.isVisible());self.assertEqual(page.geometry(),r.scroll.viewport().rect())
+        finally:page.close()
     def test_preparation_restores_updates_only_under_hidden_target_content(self):
         b=self.b;states=[];original=b.setUpdatesEnabled
         def observe(enabled):

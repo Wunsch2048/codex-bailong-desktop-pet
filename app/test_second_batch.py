@@ -110,7 +110,7 @@ class VisualInteractionTests(unittest.TestCase):
         for i,a in enumerate(targets):
             for other in targets[i+1:]:self.assertFalse(a.intersects(other))
     def test_editors_offer_keyboard_focus_save_and_return(self):
-        s=self.settings();s.fields['scale'].setValue(1.25);s.fields['scale'].setFocus();APP.processEvents()
+        s=self.settings();s.fields['scale'].setValue(125);s.fields['scale'].setFocus();APP.processEvents()
         QTest.keyClick(s.fields['scale'],Qt.Key.Key_S,Qt.KeyboardModifier.ControlModifier);journeys.settle(self.pet)
         self.assertEqual(self.pet.settings['scale'],1.25);self.assertFalse(s.draft.dirty)
         toolbar=next(w for w in self.pet.bubble.findChildren(QToolButton) if w.objectName()=='bubble_chat' and w.isVisible())
@@ -131,12 +131,20 @@ class VisualInteractionTests(unittest.TestCase):
         s=self.settings();s.path_fields['home'].setText('new-value');s.path_job=SimpleNamespace(values=dict(home='old-value',cli=''),isRunning=lambda:False)
         with patch('codex_connection.save_paths') as save:s.paths_done(dict(home='old-value',cli=''));save.assert_not_called()
         self.assertIn('未保存',s.path_status.text())
-    def test_model_filter_explains_denominator_and_clear_preserves_plot(self):
+    def test_model_filter_toggles_without_changing_plot_or_panel_height(self):
         self.pet.open_report();r=self.pet.bubble.report;r.set_snapshot(report_sample());journeys.settle(self.pet);r.animation.setCurrentTime(r.animation.duration());APP.processEvents();self.assertTrue(r.isVisible());r.set_page('models');APP.processEvents()
-        plot=r.plot;series=r._series();model=series['models'][0]['model'];r.select_model(model)
-        self.assertIn(model,r.filter_label.text());self.assertTrue(r.clear_filter.isVisible())
-        self.assertEqual(r.model_rows[0].total,series['total']);self.assertTrue(r.model_rows[0].isChecked())
-        r.clear_filter.click();self.assertIsNone(r.selected_model);self.assertIs(r.plot,plot);self.assertFalse(r.clear_filter.isVisible())
+        r.page_fade.clear();APP.processEvents()
+        plot=r.plot;series=r._series();row=r.model_rows[0]
+        geometry=(r.height(),r.scroll.viewport().height(),plot.geometry())
+        for selected in (True,False,True):
+            row.click()
+            self.assertEqual(plot.reveal.progress,1.)
+            self.assertFalse(plot.reveal.pending)
+            self.assertEqual(row.total,series['total']);self.assertEqual(row.isChecked(),selected)
+            self.assertEqual(r.selected_model,row.item['model'] if selected else None)
+            APP.processEvents()
+            self.assertIs(r.plot,plot);self.assertEqual((r.height(),r.scroll.viewport().height(),plot.geometry()),geometry)
+            self.assertTrue(r.model_rate_label.isVisible())
     def test_removed_selected_model_resets_filter_and_stale_report_is_labeled(self):
         self.pet.open_report();r=self.pet.bubble.report;r.set_snapshot(report_sample());r.animation.setCurrentTime(r.animation.duration());APP.processEvents();r.set_page('models');r.select_model('gpt-6.1-sol')
         fresh=copy.deepcopy(report_sample());fresh['report']['daily_models']=[v for v in fresh['report']['daily_models'] if v['model']!='gpt-6.1-sol'];fresh['unavailable']=True

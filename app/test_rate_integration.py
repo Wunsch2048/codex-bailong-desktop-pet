@@ -28,6 +28,19 @@ def turn(log,name,out,duration):
 class RateIntegration(unittest.TestCase):
     def setUp(self):self.db=sqlite3.connect(':memory:');self.log=Log();self.log.append(dict(id='s'),'session_meta');self.now=datetime(2026,10,2,13).timestamp()
     def tearDown(self):self.db.close()
+    def test_hourly_output_splits_at_hour_boundary_and_does_not_wait_for_completion(self):
+        self.db.execute('CREATE TABLE usage(session TEXT,stamp REAL,output_tokens INTEGER,known INTEGER)')
+        boundary=datetime(2026,10,2,11).timestamp()
+        rows=[('a',boundary-30,0,1),('a',boundary+30,600,1),
+              ('a',boundary+400,20000,1),('a',boundary+420,None,0),
+              ('a',boundary+460,400,1),('a',boundary+480,200,1),
+              ('b',boundary-30,0,1),('b',boundary+30,1200,1),
+              ('c',boundary+3600,0,1),('c',boundary+3950,9000,1)]
+        self.db.executemany('INSERT INTO usage VALUES (?,?,?,?)',rows)
+        rates=snapshot(self.db,self.now,include_output=True)
+        self.assertEqual(rates['today'][10:13],[None,None,None])
+        self.assertEqual(rates['today_output'][10:13],[
+            dict(rate=15.,sampled_seconds=60.),dict(rate=13.75,sampled_seconds=80.),None])
     def test_restart_baseline_and_weighted_rate_survive_duplicate_or_moved_log(self):
         self.log.append(dict(type='task_started',turn_id='first'));update(self.db,[self.log],budget=1)
         self.log.append(dict(type='token_count',info=dict(total_token_usage=dict(input_tokens=100,output_tokens=100,reasoning_output_tokens=0))))
@@ -81,9 +94,15 @@ class ChartInspection(unittest.TestCase):
         self.assertTrue(plot._popup.isVisible());self.assertEqual(plot._popup.record['label'],'03:00–04:00');self.assertIn('12.3',rate_text(plot._popup.record['rate_item']))
         plot.inspect_at(plot.hits[4][0].center());self.assertEqual(plot._popup.record['label'],'04:00–05:00');self.assertEqual(plot.toolTip(),'')
         card.hide();APP.processEvents();self.assertFalse(plot._popup.isVisible());card.close();card.deleteLater();APP.processEvents()
-    def test_long_history_rate_points_remain_daily(self):
+    def test_long_history_uses_same_bucket_boundaries_as_model_page(self):
+        from token_analytics import model_series
         day=datetime(2026,1,1);history={(day+timedelta(days=i)).strftime('%Y-%m-%d'):i for i in range(100)}
         card=TokenChartCard(dict(history_days=history),period='all',now=(day+timedelta(days=99)).timestamp())
-        self.assertEqual(len(card.plot.series['bins']),100);self.assertEqual(card.plot.series['bucket_days'],1);card.close();card.deleteLater();APP.processEvents()
+        model=model_series(dict(day=max(history),daily_models=[
+            dict(day=date,model='m',total=value,input=0,output=value,known=True) for date,value in history.items()]),'all')
+        self.assertEqual([(b['start'],b['end'],b['value']) for b in card.plot.series['bins']],
+                         [(b['start'],b['end'],b['total']) for b in model['bins']])
+        self.assertLessEqual(len(card.plot.series['bins']),24)
+        card.close();card.deleteLater();APP.processEvents()
 
 if __name__=='__main__':unittest.main()

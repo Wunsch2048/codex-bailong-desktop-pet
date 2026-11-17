@@ -113,12 +113,16 @@ class SharedCardTransitionTests(unittest.TestCase):
         self.assertFalse(calls)
         self.assertAlmostEqual(next(iter(self.b.quota_summary_card.values.values())),.73)
         self.assertEqual(self.b.deck.content.plot.reveal.progress,1.)
-    def test_quota_corner_matches_both_live_styles_and_interpolates(self):
-        for expected in ((10,11),(11,10)):
-            transition=self.transition();part=transition.morph.shared_parts['quota']
-            self.assertEqual(part.corners,expected)
-            self.assertEqual(part.corner_at(0),expected[0]);self.assertEqual(part.corner_at(1),expected[1])
-            self.assertEqual(part.corner_at(.5),10.5)
+    def test_module_corners_follow_the_live_cards_in_both_directions(self):
+        from PySide6.QtGui import QPainterPath
+        from ui_theme import status_footer_path
+        rect=QRectF(0,0,120,28);quota=QPainterPath();quota.addRoundedRect(rect,10,10)
+        for start,end in ((1.,0.),(0.,1.)):
+            transition=self.transition();parts=transition.morph.shared_parts
+            for f in (0.,.5,1.):
+                self.assertEqual(parts['quota'].outline_at(rect,f),quota)
+                for key,side in (('live_rate',-1),('today_tokens',1)):
+                    self.assertEqual(parts[key].outline_at(rect,f),status_footer_path(rect,side,start*(1.-f)+end*f))
             transition.complete();APP.processEvents()
     @patch("compact_bubble.time.time",return_value=1800000001.)
     def test_pure_size_toggles_reuse_details_but_new_quota_invalidates_them(self,clock):

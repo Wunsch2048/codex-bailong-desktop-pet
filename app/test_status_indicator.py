@@ -254,7 +254,7 @@ class IndicatorTests(unittest.TestCase):
             app.sendPostedEvents(None,QEvent.Type.DeferredDelete);app.processEvents()
             title=bubble.findChild(__import__('PySide6.QtWidgets',fromlist=['QToolButton']).QToolButton,'open_codex')
             gap=title.mapTo(bubble,title.rect().topLeft()).x()-icon.mapTo(bubble,icon.rect().topRight()).x()-1
-            self.assertEqual(gap,2)
+            self.assertEqual(gap,4)
         finally:bubble.close();bubble.deleteLater()
 
 if __name__=='__main__':unittest.main()

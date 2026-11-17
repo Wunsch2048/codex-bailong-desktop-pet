@@ -36,8 +36,8 @@ class StartupAndSaveBoundaryTests(unittest.TestCase):
         from types import SimpleNamespace
         from PySide6.QtCore import QRect
         screen=SimpleNamespace(availableGeometry=lambda:QRect(0,0,1000,1000),name=lambda:'mock')
-        pet=Mock(enhanced_ready=True,settings_read_failed=False,settings={'theme':'star'},walk_direction=1)
-        pet.frameGeometry.return_value=QRect(0,0,200,200)
+        pet=Mock(enhanced_ready=True,settings_read_failed=False,settings={'theme':'star'},walk_direction=1,_preview_character_rect=None)
+        pet.geometry.return_value=QRect(10,20,200,200)
         for name,value in dict(x=10,y=20,width=200,height=200).items():getattr(pet,name).return_value=value
         with patch('desktop.QApplication.screenAt',return_value=screen),patch('enhanced.save_json') as early,patch('desktop.atomic_json',side_effect=PermissionError) as save:
             with self.assertRaises(PermissionError):DesktopPet.save_settings(pet)

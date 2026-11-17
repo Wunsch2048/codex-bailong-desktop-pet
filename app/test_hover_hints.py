@@ -41,12 +41,29 @@ class HoverHintTests(unittest.TestCase):
         popup=self.h.popup
         self.assertEqual(popup.title,'额度参考')
         self.assertIn('重置类型不同',popup.subtitle)
+        self.assertEqual(popup.width(),self.b.normal_card_width())
         self.assertGreater(popup.height(),50)
         self.assertFalse(QToolTip.isVisible())
         card.set_anomaly(dict(kind='reference',change=21,description='参考差异 +21.0%。\n同一份浮窗。'))
         self.assertIs(self.h.popup,popup);self.assertIn('+21.0%',popup.subtitle)
         card.set_anomaly(None)
         self.assertFalse(popup.isVisible())
+    def test_week_comparison_and_realtime_share_scaled_normal_width_on_large_card(self):
+        from weakref import ref
+        from quota_summary import QuotaSummary
+        self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
+        card=QuotaSummary([dict(name='一周',remaining=65)],parent=self.b,anomaly=dict(change=-22,description='同条件下推测用量下降。'))
+        card.move(14,34);card.show();APP.processEvents()
+        self.h.target=ref(card.alert_badge)
+        live=self.b.live_rate_card
+        for scale in (1.,1.25):
+            with self.subTest(scale=scale),patch.object(self.b,'card_pixels',side_effect=lambda pixels:round(pixels*scale)):
+                self.h._show()
+                live.popup.inspect(live.value,live);live.popup.geometry_motion.setCurrentTime(200)
+                self.assertEqual(self.h.popup.width(),round(268*scale))
+                self.assertEqual(self.h.popup.width(),live.popup.width())
+                self.assertEqual(self.h.popup.level,1.)
+                live.popup.dismiss(True)
     def test_style_events_do_not_traverse_hover_ancestry(self):
         with patch.object(self.b,'isAncestorOf',side_effect=AssertionError('irrelevant ancestry')):
             self.assertFalse(self.h.eventFilter(self.b._header_actions[0],QEvent(QEvent.Type.StyleChange)))

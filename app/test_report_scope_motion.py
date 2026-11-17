@@ -19,6 +19,18 @@ class ScopeMotionTests(unittest.TestCase):
     def tearDown(self):self.f.tearDown()
     def finish(self):
         self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
+    def test_time_filter_pill_moves_in_models_and_cost(self):
+        with patch('settings_controls.motion_enabled',return_value=True):
+            for page,target in (('models','7d'),('projects','yesterday')):
+                self.r.set_page(page);self.finish();control=self.r.period_control
+                start=control.pill
+                self.r.range_buttons[target].click()
+                animation=control.animation;animation.setCurrentTime(animation.duration()//2)
+                self.assertNotEqual(control.pill,start)
+                self.assertNotEqual(control.pill,control.buttons[target].geometry())
+                self.assertEqual(self.r.period,target)
+                animation.setCurrentTime(animation.duration())
+                self.assertEqual(control.pill,control.buttons[target].geometry())
     def test_scope_and_body_move_together_with_stable_navigation_and_outer_bounds(self):
         r=self.r;tabs=r.page_buttons['overview'].parentWidget();tab_rect=QRect(tabs.mapTo(r.surface,QPoint()),tabs.size())
         bounds=r.geometry();size=r.surface.size()
@@ -47,14 +59,14 @@ class ScopeMotionTests(unittest.TestCase):
                     self.finish();self.assertEqual(expected,r._capture_page(rect).toImage())
             cached=r.plot;r.set_page('overview');self.finish();r.set_page('models');self.finish()
             self.assertIs(r.plot,cached)
-    def test_quick_reverse_uses_current_pixels_and_same_scope_pages_remain_body_only(self):
+    def test_quick_reverse_uses_current_pixels_and_model_scope_height_joins_slide(self):
         r=self.r
         with patch('settings_controls.motion_enabled',return_value=True):
             r.set_page('projects');r.page_fade.animation.setCurrentTime(70)
             actual=r._capture_page(r._page_rect(True),include_cover=True).toImage()
             r.set_page('overview');self.assertEqual(r.page_fade.frame.toImage(),actual);self.finish()
             r.set_page('models');self.finish();r.set_page('projects')
-            self.assertFalse(r._page_motion_scope);self.assertEqual(r.page_fade.geometry(),r.scroll.geometry())
+            self.assertTrue(r._page_motion_scope);self.assertTrue(r.page_fade.geometry().contains(r.scroll.geometry()))
             r.hide();self.assertFalse(r.page_fade.isVisible())
     def test_performance_mode_does_not_capture_a_scope_frame(self):
         with patch('settings_controls.motion_enabled',return_value=False),patch.object(self.r,'_capture_page',wraps=self.r._capture_page) as capture:

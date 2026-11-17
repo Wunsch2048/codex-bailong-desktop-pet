@@ -16,7 +16,7 @@ class ReferenceBadgeTests(unittest.TestCase):
         self.now=time.time();self.deadline=self.now+86400
         self.windows=[dict(name='一周',remaining=60,resetsAt=self.deadline,plan='pro')]
         base=dict(closed=True,complete=True,fresh=True,drop=30,estimated_total=1000,plan='pro',eligible=False)
-        self.snapshot=dict(quota_history=dict(cycles=[dict(base,closed=False,estimated_total=856,through=self.now,reset_at=self.deadline,remaining=60),base]))
+        self.snapshot=dict(quota_history=dict(cycles=[dict(base,closed=False,estimated_total=856,recent_reference_totals=[856,850,855],through=self.now,reset_at=self.deadline,remaining=60),base]))
     def test_mixed_usage_reference_is_yellow_payload_not_a_quota_alert(self):
         badge=visible_quota_change(self.snapshot,self.windows,self.now)
         self.assertEqual((badge['kind'],badge['change']),('reference',-14.4))
@@ -39,8 +39,8 @@ class ReferenceBadgeTests(unittest.TestCase):
             self.assertIsNone(visible_quota_change(snapshot,self.windows,self.now))
         self.assertIsNone(visible_quota_change(self.snapshot,[dict(self.windows[0],remaining=90)],self.now))
         self.assertIsNone(visible_quota_change(self.snapshot,[],self.now))
-    def test_five_to_twenty_points_is_explicitly_preliminary_in_hover(self):
-        self.snapshot['quota_history']['cycles'][0]['drop']=5
+    def test_fifteen_stable_points_is_explicitly_preliminary_in_hover(self):
+        self.snapshot['quota_history']['cycles'][0]['drop']=15
         badge=visible_quota_change(self.snapshot,self.windows,self.now)
         self.assertTrue(badge['preliminary']);self.assertIn('初步参考差异',badge['description'])
     def test_yellow_hover_names_baseline_and_explains_why_it_is_a_reference(self):
@@ -81,14 +81,29 @@ class ReferenceBadgeTests(unittest.TestCase):
                     finally:card.close();card.deleteLater();APP.processEvents()
         finally:activate(original,custom)
     def test_small_difference_has_no_card_badge(self):
-        self.snapshot['quota_history']['cycles'][0]['estimated_total']=999
+        self.snapshot['quota_history']['cycles'][0].update(estimated_total=999,recent_reference_totals=[999,1001,1000])
         self.assertIsNone(visible_quota_change(self.snapshot,self.windows,self.now))
 
     def test_first_observed_point_can_show_yellow_at_99_percent(self):
         current=self.snapshot['quota_history']['cycles'][0]
         current.update(remaining=99,drop=1,estimated_total=None,reference_total=1200)
         badge=visible_quota_change(self.snapshot,[dict(self.windows[0],remaining=99)],self.now)
-        self.assertEqual((badge['kind'],badge['change']),('reference',20))
-        self.assertIn('读数取整',badge['description'])
+        self.assertEqual((badge['kind'],badge['change']),('reference',None))
+        self.assertIn('已观察 1 / 15 个百分点',badge['description'])
+        card=QuotaSummary(self.windows,anomaly=badge)
+        self.assertEqual(card.alert_badge.text(),'观察中')
+        self.assertEqual(card.alert_badge.property('quotaComparisonValue'),'观察中')
+        card.deleteLater()
+
+    def test_early_spike_and_direction_flip_hide_the_number(self):
+        current,previous=self.snapshot['quota_history']['cycles']
+        for drop,totals in ((5,[2230]),(14,[1100,1110,1140]),(15,[743,870,1115]),(18,[850,920,980]),(30,[730,735])):
+            with self.subTest(drop=drop):
+                current.update(drop=drop,estimated_total=totals[0],recent_reference_totals=totals)
+                self.assertIsNone(visible_quota_change(self.snapshot,self.windows,self.now)['change'])
+        current.update(drop=19,estimated_total=743,recent_reference_totals=[743,780,800])
+        self.assertEqual(visible_quota_change(self.snapshot,self.windows,self.now)['change'],-25.7)
+        previous['drop']=19
+        self.assertIsNone(visible_quota_change(self.snapshot,self.windows,self.now)['change'])
 
 if __name__=='__main__':unittest.main()

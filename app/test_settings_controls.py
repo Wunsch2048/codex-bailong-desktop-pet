@@ -96,7 +96,7 @@ class ControlsTests(unittest.TestCase):
         with patch('desktop_settings.autostart_enabled',return_value=False),patch('codex_startup.enabled',return_value=False):
             settings=SettingsDialog(pet,embedded=True)
         self.assertIsInstance(settings.mode,SlidingSegments)
-        self.assertIsInstance(settings.fields['on_top'],SwitchRow)
+        self.assertIsInstance(settings.fields['codex_focus_only'],SwitchRow)
         self.assertIsInstance(settings.shortcut,ChoiceCombo)
         settings.mode.setCurrentIndex(settings.mode.findData('minimal'))
         self.assertEqual(pet.settings['bubble_mode'],'auto')

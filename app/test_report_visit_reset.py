@@ -30,7 +30,7 @@ class ModelVisitTests(unittest.TestCase):
         self.assertIs(r.plot,plot);self.assertEqual(r.period,'all');self.assertIsNone(r.selected_model)
         self.assertEqual(area.verticalScrollBar().value(),0);self.assertEqual(area._smooth_scroll.target,0)
         self.assertEqual(area._smooth_scroll.animation.state(),QAbstractAnimation.State.Stopped)
-        self.assertFalse(r.clear_filter.isVisible());self.assertFalse(any(row.isChecked() for row in r.model_rows))
+        self.assertFalse(any(row.isChecked() for row in r.model_rows))
     def test_direct_model_reopen_resets_too(self):
         self.choose_and_scroll();self.r.dismiss();self.f.complete();self.r.open(page='models');self.f.complete()
         self.assertEqual(self.r.page,'models');self.assertEqual(self.r.period,'all');self.assertIsNone(self.r.selected_model)

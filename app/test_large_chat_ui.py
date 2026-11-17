@@ -10,7 +10,7 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication,QWidget,QVBoxLayout
 from chat_config import CHAT_DEFAULT
-from chat_window import ChatWindow,SessionStore
+from chat_window import ChatNotice,ChatWindow,SessionStore
 from theme_registry import activate,color
 from typography import install_ui_font
 
@@ -93,7 +93,8 @@ class LargeChatUiTests(unittest.TestCase):
             bubble.size_transition.complete();bubble.close();bubble.deleteLater();APP.processEvents()
     def test_provider_visit_resets_scroll_but_preserves_unsaved_draft(self):
         self.chat.input.setPlainText('尚未发送的输入');self.chat.provider();editor=self.chat.provider_dialog
-        editor.advanced_toggle.setChecked(True);editor.fields['model'].setText('unsaved-model');APP.processEvents()
+        editor.advanced_toggle.setChecked(True);editor.connection_disclosure.complete()
+        editor.fields['model'].setText('unsaved-model');APP.processEvents()
         bar=editor.body_scroll.verticalScrollBar();bar.setValue(bar.maximum());self.assertGreater(bar.value(),0)
         editor.reject();self.chat.provider();APP.processEvents()
         self.assertEqual(bar.value(),0);self.assertEqual(editor.fields['model'].text(),'unsaved-model')
@@ -101,6 +102,40 @@ class LargeChatUiTests(unittest.TestCase):
         footer=editor.findChild(QWidget,'provider_footer')
         self.assertEqual(footer.geometry().bottom(),editor.height()-1)
         self.assertLess(editor.body_scroll.geometry().bottom(),footer.y())
+    def test_chat_settings_and_disclosure_stay_in_the_same_host(self):
+        size=self.host.size()
+        self.chat.service_button.click()
+        settings=self.chat.settings_page
+        self.assertIs(self.chat.pages.currentWidget(),settings)
+        with patch('chat_settings_ui.load_chat_config',return_value=CHAT_DEFAULT):
+            settings.preferences.click()
+        preferences=self.chat.preferences_page
+        self.assertIs(self.chat.pages.currentWidget(),preferences)
+        preferences.prompt.setPlainText('尚未保存的提示词')
+        self.chat.open_chat_settings();settings.preferences.click()
+        self.assertEqual(preferences.prompt.toPlainText(),'尚未保存的提示词')
+        self.chat.open_chat_settings();settings.custom.click()
+        editor=self.chat.provider_page
+        self.assertIs(self.chat.pages.currentWidget(),editor)
+        for expanded in (True,False,True):
+            editor.advanced_toggle.setChecked(expanded)
+            editor.connection_disclosure.complete()
+            APP.processEvents()
+            self.assertEqual(editor.advanced.isVisible(),expanded)
+            self.assertIs(editor.window(),self.host)
+            self.assertEqual(self.host.size(),size)
+        editor.reject();self.assertIs(self.chat.pages.currentWidget(),settings)
+        self.chat.return_to_chat();self.chat.session_actions_button.click()
+        self.assertIs(self.chat.session_actions.window(),self.host)
+        self.assertTrue(self.chat.session_actions.isVisible())
+        self.chat.session_actions_button.click()
+        self.assertFalse(self.chat.session_actions.isVisible())
+    def test_chat_notice_never_maps_a_window_while_waiting_to_be_parented(self):
+        notice=ChatNotice('连接状态')
+        self.assertFalse(notice.isVisible())
+        self.host.layout().addWidget(notice);APP.processEvents()
+        self.assertTrue(notice.isVisible())
+        self.assertIs(notice.window(),self.host)
     def test_stream_append_keeps_selection_and_scroll(self):
         self.chat.session['messages']=[dict(role='user',content='长会话\n'*80)];self.chat.busy=True;self.chat.partial='回复';self.chat.render();APP.processEvents()
         cursor=self.chat.transcript.textCursor();cursor.setPosition(6);cursor.setPosition(12,QTextCursor.MoveMode.KeepAnchor);self.chat.transcript.setTextCursor(cursor)

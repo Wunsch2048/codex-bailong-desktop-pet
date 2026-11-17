@@ -72,7 +72,13 @@ class LiveRateTests(unittest.TestCase):
             for key in ('live_rate','live_rate_value','today_tokens','today_tokens_amount','today_tokens_link'):
                 self.assertIn(key,start.shared_bounds);self.assertIn(key,end.shared_bounds)
                 part=SharedPart(start,end,key);self.assertEqual(part.fit,'left' if key in ('live_rate','today_tokens') else 'right')
-            self.assertLess(abs(start.shared_bounds['live_rate'].width()-start.shared_bounds['today_tokens'].width()),2)
+        for surface,widths in ((a,(116,124)),(z,(158,168))):
+            live,today=(surface.shared_bounds[k] for k in ('live_rate','today_tokens'))
+            quota,chart=(surface.shared_bounds[k] for k in ('quota','statistics'))
+            self.assertEqual((live.width(),today.width()),widths)
+            self.assertEqual((live.left(),today.left()),(quota.left(),chart.left()))
+            self.assertEqual(today.left()-live.right(),8)
+            self.assertEqual(live.top()-quota.bottom(),8)
         b.close();b.deleteLater();APP.processEvents()
     def test_visible_sample_expires_without_further_worker_events(self):
         import time

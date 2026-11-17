@@ -3,11 +3,13 @@ import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import unittest,copy,time
 from PySide6.QtCore import Qt,QPoint,QRect,QEvent,QAbstractAnimation
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication,QToolButton,QWidget,QToolTip
 from PySide6.QtTest import QTest
 from compact_bubble import CompactBubble
 from daily_report import DailyReport
 from refresh_indicator import RefreshButton
+from theme_registry import color
 
 APP=QApplication.instance() or QApplication([])
 
@@ -64,13 +66,29 @@ class HeaderRefreshTests(unittest.TestCase):
                 b.refresh_status();settle(b)
                 self.assertEqual(initial,(b._status_title.text(),self.bounds(b._status_title),self.bounds(b._status_title.parentWidget())))
                 self.assert_header_fits()
-    def test_multiple_running_sessions_use_count_badge_and_unread_replaces_codex(self):
+    def test_wordmark_preserves_session_overflow_without_duplicate_badge(self):
         self.event(session='a');self.event(session='b')
+        self.event(session='c')
         b=self.bubble
-        self.assertEqual(b._status_title.text(),'Codex');self.assertEqual(b._status_badge.text(),'2')
-        self.assertTrue(b._status_badge.isVisible());self.assert_header_fits()
+        for expanded in (False,True):
+            b.show_status(expanded);settle(b)
+            name,indicator=b._status_title,b.status_indicator
+            self.assertEqual(name.text(),'Codex')
+            self.assertTrue(name.property('codexWordmark'))
+            image=name.grab().toImage()
+            tint=QColor(color('#8b78a6' if name.underMouse() else '#75618d'))
+            self.assertTrue(any(image.pixelColor(x,y)==tint for y in range(image.height()) for x in range(image.width())))
+            self.assertEqual(name.width(),46)
+            self.assertEqual(name.y()+name.height()/2,indicator.y()+indicator.height()/2)
+            self.assertEqual(name.x()-indicator.geometry().right()-1,4)
+            self.assertIn('3 个会话正在进行',name.toolTip())
+            self.assertIsNone(b.findChild(QWidget,'codex_active_count'))
+            self.assertTrue(b.status_view.overflow.isVisible());self.assertEqual(b.status_view.overflow.text(),'+1')
+            if expanded:self.assertEqual(b._task_count.text(),'3 个进行中')
+            self.assert_header_fits()
         b.status_indicator.unread=[('done-a','t'),('done-b','t')];b.refresh_status();settle(b)
-        self.assertEqual(b._status_title.text(),'2条待查看');self.assertFalse(b._status_badge.isVisible());self.assert_header_fits()
+        self.assertEqual(b._status_title.text(),'2条待查看');self.assert_header_fits()
+        self.assertFalse(b._status_title.property('codexWordmark'))
     def test_each_dashboard_page_has_one_refresh_and_click_does_not_rebuild_chart(self):
         b=self.bubble;calls=[];b.refreshAllRequested.connect(lambda:calls.append('all'))
         for expanded in (False,True):

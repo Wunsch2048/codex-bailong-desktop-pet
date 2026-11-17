@@ -46,7 +46,8 @@ class IncrementalTests(unittest.TestCase):
     def transport(self, url, headers):
         requested = headers.get('Range'); self.requests.append(requested)
         if requested:
-            start,end = map(int,requested[6:].split('-'))
+            first,last = requested[6:].split('-')
+            start,end = int(first),int(last) if last else len(self.archive)-1
             data = self.archive[start:end+1]
             status = 206
             response_headers = {'Content-Range':f'bytes {start}-{end}/{len(self.archive)}','Content-Length':str(len(data))}
@@ -97,6 +98,75 @@ class IncrementalTests(unittest.TestCase):
     def test_fresh_install_downloads_full_zip(self):
         with patch('material_incremental.reuse_files',return_value=set()): root = self.run_download()
         self.assertEqual(self.requests,[None]); self.store.verify(root,'hd')
+
+    def test_full_archive_resumes_from_saved_bytes_and_checks_final_digest(self):
+        def broken(url,headers):
+            response=self.transport(url,headers)
+            read=response.read
+            response.read=lambda size:read(size) if response.tell()==0 else self._timeout()
+            return response
+
+        with patch('material_incremental.reuse_files',return_value=set()):
+            with self.assertRaisesRegex(MaterialError,'重新点击可继续'):
+                self.run_download(opener=broken)
+            part=next(self.store.cache.glob('partial-downloads/*/materials.zip.part'))
+            self.assertEqual(part.stat().st_size,256*1024)
+            self.assertFalse(self.store.tier_root('hd').exists())
+            original=self.archive
+            self.archive=original[:-1]+bytes([original[-1]^1])
+            with self.assertRaisesRegex(MaterialError,'压缩包校验失败'):
+                self.run_download()
+            self.assertEqual(self.requests,[None,'bytes=262144-'])
+            self.assertFalse(part.exists())
+            self.assertFalse(self.store.tier_root('hd').exists())
+            self.archive=original
+            self.store.verify(self.run_download(),'hd')
+            self.assertIsNone(self.requests[-1])
+
+    @staticmethod
+    def _timeout():
+        raise TimeoutError('test connection interrupted')
+
+    def test_full_resume_keeps_prefix_on_wrong_range_and_recovers(self):
+        with patch('material_incremental.reuse_files',return_value=set()):
+            with self.assertRaises(UpdateCancelled):
+                stopped=[]
+                self.run_download(cancel=lambda:bool(stopped),
+                                  progress=lambda n,*_:stopped.append(n) if n else None)
+            part=next(self.store.cache.glob('partial-downloads/*/materials.zip.part'))
+            prefix=part.read_bytes()
+            def wrong_range(url,headers):
+                response=self.transport(url,headers)
+                response.headers['Content-Range']=response.headers['Content-Range'].replace('262144-','262145-')
+                return response
+            with self.assertRaisesRegex(MaterialError,'续传响应范围异常'):
+                self.run_download(opener=wrong_range)
+            self.assertEqual(part.read_bytes(),prefix)
+            self.store.verify(self.run_download(),'hd')
+            self.assertFalse(part.exists())
+            self.assertEqual(self.requests,[None,'bytes=262144-','bytes=262144-'])
+
+    def test_missing_entry_resumes_from_saved_compressed_bytes(self):
+        with zipfile.ZipFile(io.BytesIO(self.archive)) as bundle:
+            start=bundle.getinfo('added.webp').header_offset
+            original_range=f'bytes={start}-{bundle.start_dir-1}'
+        def broken(url,headers):
+            response=self.transport(url,headers)
+            if headers.get('Range')==original_range:
+                read=response.read
+                response.read=lambda size:read(min(size,50-response.tell())) if response.tell()<50 else self._timeout()
+            return response
+
+        with self.assertRaisesRegex(MaterialError,'重新点击可继续'):
+            self.run_download(opener=broken)
+        part=next(self.store.cache.glob(f'partial-downloads/*/entry-{start}.part'))
+        offset=part.stat().st_size
+        self.assertGreater(offset,0)
+        self.requests.clear()
+        self.store.verify(self.run_download(),'hd')
+        self.assertIn(f'bytes={start+offset}-{original_range.split("-")[-1]}',self.requests)
+        self.assertNotIn(original_range,self.requests)
+        self.assertFalse(part.exists())
 
     def test_corrupt_old_file_is_downloaded_not_reused(self):
         (self.old_root/'quality/action.webp').write_bytes(b'x'*len(self.payload['quality/action.webp']))

@@ -33,6 +33,43 @@ class DraftTests(unittest.TestCase):
 
 
 class InteractionTests(unittest.TestCase):
+    def test_theme_swatches_apply_persist_and_keep_unrelated_draft(self):
+        from theme_registry import current,palette
+        s=self.settings();s.fields['move_speed'].setValue(123)
+        choices=s.fields['theme'];choices.setCurrentIndex(choices.findData('starfield'));s.apply();settle(self.pet)
+        self.assertEqual(current(),'starfield');self.assertEqual(self.pet.settings['move_speed'],123)
+        stored=json.loads((self.root/'settings.json').read_text(encoding='utf-8'))
+        self.assertEqual(stored['theme'],'starfield');self.assertFalse(s.theme_custom.isVisible())
+        self.assertIn(palette()['ink'],s.styleSheet());self.assertFalse(s.draft.dirty)
+        choices.setCurrentIndex(choices.findData('custom'))
+        s.fields['theme_surface'].setText('#ffffff');s.fields['theme_ink'].setText('#ffffff');s.apply();settle(self.pet)
+        self.assertIn('对比度不足',s.status.text());self.assertEqual(current(),'custom');self.assertEqual(self.pet.settings['theme'],'starfield');self.assertIn('theme',s.draft.dirty)
+        s.reload();settle(self.pet)
+        self.pet.apply_settings(dict(theme='bailong'),save=False);settle(self.pet)
+
+    def test_preview_is_not_saved_by_position_or_other_settings_and_navigation_restores(self):
+        from theme_registry import current,THEME_KEYS
+        s=self.settings();saved={k:self.pet.settings[k] for k in THEME_KEYS}
+        with patch.object(self.pet.bubble.size_transition,'begin',side_effect=AssertionError('colour preview must not capture a morph')):
+            s.fields['theme'].setCurrentIndex(s.fields['theme'].findData('division'))
+        settle(self.pet)
+        self.assertEqual(current(),'division');self.assertEqual({k:self.pet.settings[k] for k in THEME_KEYS},saved)
+        self.pet.save_settings();disk=json.loads((self.root/'settings.json').read_text(encoding='utf-8'))
+        self.assertEqual({k:disk[k] for k in THEME_KEYS},saved)
+        self.pet.apply_settings(dict(sound=False));settle(self.pet);self.assertEqual(current(),'division')
+        s.fields['move_speed'].setValue(123);self.pet.bubble.return_to_status();settle(self.pet)
+        self.assertEqual(current(),saved['theme']);self.assertIn('move_speed',s.draft.dirty)
+        self.assertFalse(set(THEME_KEYS)&s.draft.dirty);self.assertIsNone(self.pet._theme_preview)
+
+    def test_preview_save_failure_and_discard_keep_committed_theme(self):
+        from theme_registry import current
+        s=self.settings();saved=self.pet.settings['theme']
+        s.fields['theme'].setCurrentIndex(s.fields['theme'].findData('division'));settle(self.pet)
+        with patch.object(self.pet,'save_settings',side_effect=OSError('fixture write failure')):s.apply()
+        settle(self.pet);self.assertEqual(self.pet.settings['theme'],saved);self.assertEqual(current(),'division')
+        self.assertIn('theme',s.draft.dirty);s.discard_button.click();settle(self.pet)
+        self.assertEqual(current(),saved);self.assertIsNone(self.pet._theme_preview)
+
     @patch('settings_controls.motion_enabled',return_value=True)
     def test_quota_alert_opens_prepared_cycle_page_without_toggling_main_card(self,_motion):
         from card_surface_probe import sample
@@ -90,42 +127,42 @@ class InteractionTests(unittest.TestCase):
     def chat(self):
         self.pet.open_chat();settle(self.pet);return self.pet.chat_window
     def test_external_toggle_and_cross_tab_edits_are_not_overwritten(self):
-        s=self.settings();s.fields['scale'].setValue(1.2);s.fields['move_speed'].setValue(123)
+        s=self.settings();s.fields['scale'].setValue(120);s.fields['move_speed'].setValue(123)
         self.pet.apply_settings(dict(random_actions=True,on_top=False))
-        self.assertTrue(s.fields['random_actions'].isChecked());self.assertFalse(s.fields['on_top'].isChecked())
+        self.assertTrue(s.fields['random_actions'].isChecked());self.assertEqual(s.fields['window_layer'].currentData(),'normal')
         with patch.object(self.pet,'apply_settings',wraps=self.pet.apply_settings) as apply:
             s.apply();self.assertEqual(set(apply.call_args.args[0]),{'scale','move_speed'})
         self.assertTrue(self.pet.settings['random_actions']);self.assertFalse(self.pet.settings['on_top'])
         self.assertEqual(self.pet.settings['scale'],1.2);self.assertEqual(self.pet.settings['move_speed'],123)
         self.startup.assert_not_called();self.assertFalse(s.draft.dirty)
     def test_conflict_is_visible_and_discard_uses_current_values(self):
-        s=self.settings();s.fields['scale'].setValue(1.3);self.pet.apply_settings(dict(scale=1.1))
-        self.assertEqual(s.fields['scale'].value(),1.3);self.assertEqual(s.draft.conflicts,{'scale'})
+        s=self.settings();s.fields['scale'].setValue(130);self.pet.apply_settings(dict(scale=1.1))
+        self.assertEqual(s.fields['scale'].value(),130);self.assertEqual(s.draft.conflicts,{'scale'})
         self.assertIn('有冲突',s.draft_status.text());s.apply();self.assertEqual(self.pet.settings['scale'],1.3)
-        s.fields['scale'].setValue(1.4);self.pet.apply_settings(dict(scale=1.0));s.discard_button.click()
-        self.assertEqual(s.fields['scale'].value(),1.0);self.assertFalse(s.draft.dirty)
+        s.fields['scale'].setValue(140);self.pet.apply_settings(dict(scale=1.0));s.discard_button.click()
+        self.assertEqual(s.fields['scale'].value(),100);self.assertFalse(s.draft.dirty)
     def test_startup_failure_does_not_block_other_settings_or_clear_draft(self):
-        s=self.settings();s.startup.setChecked(True);s.fields['scale'].setValue(1.1)
+        s=self.settings();s.startup.setChecked(True);s.fields['scale'].setValue(110)
         self.startup.side_effect=OSError('isolated write failure');s.apply()
         self.assertEqual(self.pet.settings['scale'],1.1);self.assertEqual(s.draft.dirty,{'startup'})
         self.assertIn('开机启动保存失败',s.status.text());self.startup.side_effect=None
         with patch.object(self.pet,'apply_settings') as apply:s.apply();apply.assert_not_called()
         self.assertFalse(s.draft.dirty);self.startup.assert_called_with(True)
     def test_failed_settings_save_restores_runtime_and_preserves_draft(self):
-        s=self.settings();old=self.pet.height();s.fields['scale'].setValue(1.4)
+        s=self.settings();old=self.pet.height();s.fields['scale'].setValue(140)
         with patch.object(self.pet,'save_settings',side_effect=OSError('isolated save failure')):s.apply()
         self.assertEqual(self.pet.settings['scale'],1.0);self.assertEqual(self.pet.height(),old)
         self.assertEqual(s.draft.dirty,{'scale'});self.assertIn('保存失败',s.status.text())
     def test_defaults_are_per_tab_and_movement_dependencies_are_explicit(self):
-        s=self.settings();s.fields['scale'].setValue(1.2);s.mode.setCurrentIndex(s.mode.findData('mini'));s.startup.setChecked(True);s.tabs.setCurrentIndex(1)
+        s=self.settings();s.fields['scale'].setValue(120);s.mode.setCurrentIndex(s.mode.findData('mini'));s.startup.setChecked(True);s.tabs.setCurrentIndex(1)
         s.fields['no_move'].setChecked(True);self.assertFalse(s.fields['wandering'].isEnabled())
         self.assertFalse(s.fields['wander_horizontal_only'].isEnabled());self.assertEqual(s.fields['move_range'].value(),100)
         self.assertEqual(s.fields['status_action_interval'].decimals(),0)
-        s.defaults_button.click();self.assertFalse(s.fields['no_move'].isChecked());self.assertEqual(s.fields['scale'].value(),1.0)
+        s.defaults_button.click();self.assertFalse(s.fields['no_move'].isChecked());self.assertEqual(s.fields['scale'].value(),100)
         self.assertEqual(s.mode.currentData(),'mini');self.assertTrue(s.startup.isChecked());self.startup.assert_not_called()
-    def test_setting_categories_keep_startup_response_and_chat_together(self):
+    def test_setting_categories_keep_startup_response_and_automatic_lines_grouped(self):
         s=self.settings()
-        self.assertEqual([s.tabs.tabText(i) for i in range(s.tabs.count())],['面板','人物','Codex','素材','闲聊','维护'])
+        self.assertEqual([s.tabs.tabText(i) for i in range(s.tabs.count())],['面板','人物','Codex','素材','台词','维护'])
         for key,tab in [('bubble_mode',0),('panel_detached',0),('scale',1),('drag_physics',1),('startup',2),('codex_startup',2),('codex_exit',2),('commentary',2),('status_actions',2),('self_talk',4),('talk_lines',4),('update_checks',5)]:
             self.assertEqual(s.field_tabs[key],tab,key)
         s.fields['self_talk'].setChecked(True);s.lines.setPlainText('保留的台词草稿')
@@ -134,12 +171,11 @@ class InteractionTests(unittest.TestCase):
         self.assertTrue(s.fields['self_talk'].isChecked())
 
     def test_menus_have_separate_roles_and_share_live_settings(self):
-        menu=QMenu();self.pet.build_menu(menu);self.assertEqual(len([a for a in menu.actions() if not a.isSeparator()]),9)
-        panel=next(a for a in menu.actions() if a.objectName()=='command_bubble');self.assertTrue(panel.isCheckable())
-        tray=QMenu();self.pet.build_menu(tray,tray=True);self.assertEqual(len([a for a in tray.actions() if not a.isSeparator()]),6)
-        self.assertIn('找回组件并关闭穿透',[a.text() for a in tray.actions()])
-        pin=next(a for a in menu.findChildren(__import__('PySide6.QtGui',fromlist=['QAction']).QAction) if a.objectName()=='command_pin')
-        pin.trigger();settle(self.pet);self.assertFalse(self.pet.settings['on_top'])
+        menu=QMenu();self.pet.build_menu(menu)
+        tray=QMenu();self.pet.build_menu(tray,tray=True)
+        names=lambda menu:[a.objectName().removeprefix('command_') for a in menu.actions() if a.objectName()]
+        self.assertEqual(names(menu),['status','chat','settings','visible','walk','quit'])
+        self.assertEqual(names(tray),['status','chat','settings','visible','recover','quit'])
         self.pet.apply_settings(dict(no_move=True,mouse_through=True));self.pet.hide();self.pet.bubble.hide()
         self.pet.build_menu(menu);walk=next(a for a in menu.actions() if a.objectName()=='command_walk')
         self.assertFalse(walk.isEnabled());self.assertIn('已锁定',walk.text())
@@ -168,9 +204,9 @@ class InteractionTests(unittest.TestCase):
             b.set_mode(mode);settle(self.pet)
             if expanded:b.show_status(True);settle(self.pet)
             was_island=b.is_island();self.chat().input.setPlainText('draft')
-            s=self.settings();s.fields['scale'].setValue(1.2);s.dismiss();settle(self.pet)
+            s=self.settings();s.fields['scale'].setValue(120);s.dismiss();settle(self.pet)
             self.assertEqual(b.panel_page,'status');self.assertEqual(b.expanded,expanded);self.assertEqual(b.is_island(),was_island)
-            self.assertEqual(self.pet.chat_window.input.toPlainText(),'draft');self.assertEqual(s.fields['scale'].value(),1.2)
+            self.assertEqual(self.pet.chat_window.input.toPlainText(),'draft');self.assertEqual(s.fields['scale'].value(),120)
     def test_collapse_is_normal_and_queued_navigation_keeps_latest_intent(self):
         b=self.pet.bubble;b.set_mode('mini');settle(self.pet);self.pet.open_chat()
         b.size_transition.animation.setCurrentTime(100);native=b.geometry()

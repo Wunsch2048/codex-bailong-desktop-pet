@@ -88,7 +88,10 @@ class ReportUiTests(unittest.TestCase):
         self.assertTrue(more.isVisible());self.assertEqual(more.size().width(),22);self.assertFalse(more.text())
         point=more.mapTo(self.r.nav_panel,QPoint());self.assertLess(point.y(),27);self.assertGreater(point.x(),self.r.page_buttons['projects'].mapTo(self.r.nav_panel,QPoint()).x())
         self.assertIs(self.r.project_view.more_anchor,more);self.assertTrue(self.r.project_view.info_button.isHidden())
-        more.click();APP.processEvents();menu=APP.activePopupWidget();self.assertIsNotNone(menu);self.assertEqual([a.text() for a in menu.actions()],['导出统计','计价设置','估算说明']);menu.close()
+        from PySide6.QtWidgets import QPushButton
+        more.click();APP.processEvents();menu=self.r.project_view._cost_actions
+        self.assertTrue(menu.isVisible());self.assertEqual([a.text() for a in menu.findChildren(QPushButton)],['导出统计','计价设置','估算说明'])
+        more.click();self.assertFalse(menu.isVisible());self.assertFalse(more.isChecked())
 
     def test_daily_cost_scope_and_unknown_do_not_reuse_stale_day(self):
         data=sample();row=dict(id='archived',name='归档项目',path='D:/p',cost=2.,parts=[1.,.2,.8],tokens=1000,pending_tokens=0,models=[],sessions=1,archived=True)
@@ -98,6 +101,12 @@ class ReportUiTests(unittest.TestCase):
         self.assertEqual(self.r.surface.height(),473);self.assertEqual(self.r.scroll.verticalScrollBar().maximum(),0)
         self.r.open_yesterday_cost();self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
         self.assertEqual(self.r.period,'yesterday');self.assertEqual(self.r.project_view.archive,'all');self.assertEqual(self.r.project_view.list.count(),2)
+        day=self.r.range_buttons['yesterday'];all_time=self.r.range_buttons['all']
+        self.assertTrue(day.isVisible());self.assertTrue(day.isChecked());self.assertEqual(day.text(),'日')
+        self.assertGreater(day.x(),self.r.range_buttons['7d'].x())
+        all_time.click();self.assertEqual(self.r.project_view.period,'all');self.assertTrue(all_time.isChecked())
+        day.click();self.assertEqual(self.r.project_view.period,'yesterday');self.assertTrue(day.isChecked())
+        self.r.set_page('models');self.assertTrue(day.isHidden());self.assertTrue(all_time.isChecked())
         self.r.set_page('overview');self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration())
         data['projects']['yesterday']='2026-10-16';self.r.daily_cost.set_data(data['report'],data['projects'])
         self.assertIsNone(self.r.daily_cost.amount)
@@ -114,15 +123,39 @@ class ReportUiTests(unittest.TestCase):
         from theme_registry import color
         image=overlay.grab().toImage()
         self.assertEqual(image.pixelColor(image.width()-2,image.height()-2).name(),color('#fcfafc'))
-        overlay.back.click();APP.processEvents();self.assertEqual(self.r.page,'overview');self.assertFalse(info.isChecked())
+        overlay.back.click();overlay.page_motion.animation.setCurrentTime(overlay.page_motion.animation.duration());APP.processEvents();self.assertEqual(self.r.page,'overview');self.assertFalse(info.isChecked())
         info.click();APP.processEvents();self.assertFalse(info.isChecked())
         overlay=next(w for w in self.r.scroll.viewport().findChildren(ExplanationOverlay) if w.isVisible())
-        overlay.back.click();APP.processEvents();self.assertFalse(info.isChecked())
+        overlay.back.click();overlay.page_motion.animation.setCurrentTime(overlay.page_motion.animation.duration());APP.processEvents();self.assertFalse(info.isChecked())
         self.r.set_page('cycle');self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration());APP.processEvents()
-        self.r.cycle_view.rules_button.click();APP.processEvents()
+        more=self.r.quota_more_button;more.click()
+        from PySide6.QtWidgets import QPushButton
+        menu=self.r.cycle_view.actions
+        actions=menu.findChildren(QPushButton)
+        self.assertEqual([b.text() for b in actions],['估算与对比条件','官方 Credits 价表'])
+        actions[0].click();APP.processEvents()
         overlay=self.r.cycle_view.explanation
-        self.assertEqual(overlay.geometry(),self.r.scroll.viewport().rect());self.assertFalse(self.r.cycle_view.rules_button.isChecked())
-        overlay.back.click();APP.processEvents();self.assertEqual(self.r.page,'cycle')
+        self.assertEqual(overlay.geometry(),self.r.scroll.viewport().rect());self.assertFalse(more.isChecked())
+        overlay.back.click();overlay.page_motion.animation.setCurrentTime(overlay.page_motion.animation.duration());APP.processEvents();self.assertEqual(self.r.page,'cycle')
+
+    def test_quota_explanation_slides_in_and_back_without_resizing_host(self):
+        from PySide6.QtCore import QAbstractAnimation
+        self.r.open();self.complete();self.r.set_page('cycle');self.r.page_fade.animation.setCurrentTime(self.r.page_fade.animation.duration())
+        original=self.r.geometry()
+        with patch('settings_controls._system_motion_enabled',return_value=True):
+            self.r.quota_more_button.click()
+            self.r.cycle_view.actions.layout().itemAt(0).widget().click()
+            APP.processEvents()
+            overlay=self.r.cycle_view.explanation
+            motion=overlay.page_motion
+            self.assertEqual(motion.animation.state(),QAbstractAnimation.State.Running)
+            self.assertEqual(motion.direction,1);self.assertFalse(motion.next_frame.isNull())
+            overlay.back.click()
+            self.assertEqual(motion.animation.state(),QAbstractAnimation.State.Running)
+            self.assertEqual(motion.direction,-1)
+            motion.animation.setCurrentTime(motion.animation.duration())
+            self.assertTrue(overlay.isHidden())
+        self.assertEqual(self.r.geometry(),original)
 
     def test_page_direction_follows_tab_order_without_moving_navigation(self):
         self.r.open();self.complete();nav=self.r.nav_panel;position=nav.pos()
@@ -214,6 +247,7 @@ class ReportUiTests(unittest.TestCase):
         self.assertTrue(total.isVisible());self.assertEqual(total.mapTo(row,total.rect().center()).y(),period.mapTo(row,period.rect().center()).y())
         self.r.set_page('projects');APP.processEvents();search=self.r.scope_project_search
         self.assertTrue(search.isVisible());self.assertEqual(search.mapTo(row,search.rect().center()).y(),period.mapTo(row,period.rect().center()).y())
+        self.assertLess(search.width(),total.width())
         self.assertLessEqual(search.mapTo(row,search.rect().bottomRight()).x(),period.mapTo(row,period.rect().topLeft()).x())
         self.assertIs(self.r.project_view.search,search.edit);self.assertEqual(self.r.project_view.list.verticalScrollBar().width(),3)
         self.assertFalse(search.button.grab().isNull())
@@ -261,9 +295,14 @@ class ReportUiTests(unittest.TestCase):
             observed.append((r.windowOpacity(),r.fraction,r.surface.isHidden(),r._frame is not None));show()
         with patch('daily_report.QApplication.platformName',return_value='windows'),patch('panel_transition.present_barrier'),patch.object(r,'show',side_effect=native_show):
             r.open()
-            self.assertEqual(observed,[(0.,0.,True,True)]);self.assertEqual(r.windowOpacity(),0.)
-            with patch.object(r.windowHandle(),'isExposed',return_value=True):r._open_present_ready()
-        self.assertAlmostEqual(r.windowOpacity(),opacity)
+            self.assertEqual(observed,[(0.,0.,True,True)])
+            # The offscreen backend may never expose this mocked Windows HWND.
+            with patch.object(type(r.windowHandle()),'isExposed',return_value=False):
+                r._open_present_ready()
+                self.assertAlmostEqual(r.windowOpacity(),0.)
+            with patch.object(type(r.windowHandle()),'isExposed',return_value=True):
+                r._open_present_ready()
+            self.assertAlmostEqual(r.windowOpacity(),opacity)
     def test_native_reopen_failure_does_not_leave_report_invisible(self):
         from unittest.mock import patch
         r=self.r;r.setWindowOpacity(.7);opacity=r.windowOpacity()
@@ -282,7 +321,7 @@ class ReportUiTests(unittest.TestCase):
             self.assertTrue(host.rect().contains(QRect(widget.mapTo(host,widget.rect().topLeft()),widget.size())),widget.objectName())
         self.assertEqual(len([b for b in self.r.findChildren(QToolButton) if b.objectName().startswith('report_range_') and not b.isHidden()]),3)
         model=self.r.findChildren(ModelRow)[-1];model.click();self.assertEqual(self.r.selected_model,model.item['model'])
-        self.r.set_period('7d');self.assertEqual(len(self.r.plot.series['bins']),7);self.r.set_period('30d');self.assertEqual(len(self.r.plot.series['bins']),30)
+        self.r.set_period('7d');self.assertEqual(len(self.r.plot.series['bins']),7);self.r.set_period('30d');self.assertEqual(len(self.r.plot.series['bins']),31)
     def test_cycle_page_shows_local_usage_and_gated_estimate(self):
         self.r.open();self.complete()
         self.r.set_page('cycle');APP.processEvents()
@@ -298,21 +337,21 @@ class ReportUiTests(unittest.TestCase):
         self.r.set_snapshot(data)
         self.assertEqual(self.r.cycle_view.used.text(),'150.0K')
         self.assertEqual(self.r.cycle_view.estimate.text(),'600.0K')
-        self.assertIn('75%',self.r.cycle_view.detail.text())
+        self.assertEqual(self.r.cycle_view.metrics.captions,('已用 Token','估算容量'))
+        self.assertFalse(any('剩余 75%' in label.text() for label in self.r.cycle_view.metrics.findChildren(QLabel)))
         APP.processEvents()
         area=self.r.scroll;plot=self.r.cycle_view.plot
         self.assertFalse(area.verticalScrollBar().isVisible())
         self.assertEqual(area.horizontalScrollBar().maximum(),0)
         self.assertTrue(area.viewport().rect().contains(plot.mapTo(area.viewport(),plot.rect().bottomRight())))
         area.verticalScrollBar().setValue(area.verticalScrollBar().maximum());APP.processEvents()
-        button=self.r.cycle_view.rules_button
-        self.assertTrue(area.viewport().rect().contains(button.mapTo(area.viewport(),button.rect().center())))
-        self.assertTrue(self.r.cycle_view.note.isHidden() or self.r.cycle_view.rules.isHidden())
-        self.assertTrue(self.r.cycle_view.rules_button.isVisible())
+        button=self.r.quota_more_button
+        self.assertTrue(button.isVisible())
+        self.assertTrue(self.r.nav_panel.rect().contains(button.mapTo(self.r.nav_panel,button.rect().center())))
         data=dict(data,quota_history=dict(cycles=[dict(item,estimated_total=None,complete=False)]))
         self.r.set_snapshot(data)
         self.assertEqual(self.r.cycle_view.estimate.text(),'—')
-        self.assertIn('受限',self.r.cycle_view.quality.text())
+        self.assertIn('受限',self.r.cycle_view.quality)
     def test_overview_fits_and_model_overflow_remains_scrollable_without_bar(self):
         self.r.open();self.complete();APP.processEvents()
         area=self.r.scroll
@@ -365,17 +404,34 @@ class ReportUiTests(unittest.TestCase):
         self.r.open();self.complete();self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
         self.assertEqual(self.r.content_geometry().width(),self.b.width());self.assertEqual(self.r.content_geometry().x(),self.b.x())
         self.b.hide();self.assertFalse(self.r.isVisible());self.assertFalse(self.r.requested)
-    def test_large_y_axis_values_have_full_font_height_and_width(self):
-        data=sample();data['report']['hours'][15]=17270000
-        self.r.set_snapshot(data);self.r.open();self.complete();plot=self.r.plot
-        plot.grab();chart=plot.chart_rect();fm=plot._axis_metrics
-        self.assertIn('17.27M',plot._axis_labels)
-        self.assertEqual(chart.left(),3)  # Daily line plot intentionally has no Y labels.
-        plot.mode='bars';plot.series={'bins':[{'total':17270000,'values':{}}]};plot._measure_axes();chart=plot.chart_rect();fm=plot._axis_metrics
-        for text in plot._axis_labels:
-            self.assertGreaterEqual(chart.left()-6-fm.horizontalAdvance(text),1)
-        self.assertGreaterEqual(chart.top()-fm.height()/2,1)
-        self.assertLess(chart.bottom()+fm.height()/2,plot.height())
+    def test_model_chart_daily_metrics_follow_period_model_and_data_refresh(self):
+        data=sample()
+        data['report']['day']='2026-11-11'
+        data['report']['daily_models']=[
+            dict(day=day,model=model,total=amount*10**6,input=amount*10**6,output=0,known=True)
+            for day,model,amount in [('2026-10-01','a',800),('2026-10-02','a',700),
+                                      ('2026-11-10','a',300),('2026-11-10','b',200),('2026-11-11','a',100)]
+        ]
+        self.r.set_snapshot(data);self.r.open();self.complete();self.r.set_page('models');APP.processEvents()
+        summary=self.r.model_usage;plot=self.r.plot
+        self.assertTrue(summary.isVisible())
+        self.assertEqual(plot.chart_rect().width(),plot.width()-9)
+        self.assertEqual(summary.values,('800.00M','50.00M'))  # 1.5B in the first grouped bar spans two days.
+        self.r.range_buttons['7d'].click()
+        self.assertEqual(summary.values,('500.00M','200.00M'))
+        self.r.model_rows[0].click()
+        self.assertEqual(summary.values,('300.00M','133.33M'))
+        self.r.range_buttons['30d'].click()
+        self.assertEqual(self.r.selected_model,'a')
+        self.assertEqual(summary.values,('300.00M','36.36M'))
+        rows=data['report']['daily_models']
+        changed=dict(data['report'],daily_models=[*rows,dict(rows[-1],total=400*10**6)])
+        self.r.set_snapshot(dict(report=changed))
+        self.assertEqual(summary.values,('500.00M','72.73M'))
+        self.r.set_page('projects');self.r.set_page('models')
+        self.assertIs(self.r.model_usage,summary);self.assertEqual(summary.values,('500.00M','72.73M'))
+        self.r.set_snapshot(dict(report=dict(changed,daily_models=[])))
+        self.assertEqual(summary.values,('—','—'))
 
 class BackgroundTests(unittest.TestCase):
     def test_index_rebuild_does_not_block_status_monitor_and_cancels_on_exit(self):

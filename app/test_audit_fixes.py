@@ -180,9 +180,9 @@ class DesktopAuditTests(unittest.TestCase):
  def test_lazy_pages_preserve_draft_while_visiting_every_category(self):
   self.pet.open_settings();s=self.pet.settings_dialog
   self.assertEqual(s._built_pages,{0});self.assertNotIn('self_talk',s.fields)
-  s.fields['on_top'].setChecked(not self.pet.settings['on_top'])
+  layer=s.fields['window_layer'];layer.setCurrentIndex(layer.findData('bottom'))
   for index in (2,1,4,3,5,0):s.tabs.setCurrentIndex(index);APP.processEvents()
-  self.assertEqual(s._built_pages,set(range(6)));self.assertIn('on_top',s.draft.dirty)
+  self.assertEqual(s._built_pages,set(range(6)));self.assertIn('window_layer',s.draft.dirty)
   self.assertEqual(s.field_tabs['status_actions'],2);self.assertEqual(s.field_tabs['self_talk'],4)
  def test_detached_details_do_not_change_height_when_pet_moves(self):
   from test_interaction_batch import settle

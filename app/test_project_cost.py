@@ -6,6 +6,28 @@ os.environ['QT_QPA_PLATFORM']='offscreen'
 from project_cost import migrate,update,snapshot,search_rows
 
 class CostTests(unittest.TestCase):
+    def test_calendar_date_cost_summary_matches_detail_and_export(self):
+        from datetime import date
+        from cost_details import detail_snapshot,export_rows
+        from report_dates import range_key
+        now=datetime(2026,11,17,10).timestamp()
+        bounds=(date(2026,11,1),date(2026,11,30));key=range_key(bounds)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'index.sqlite'
+            with closing(sqlite3.connect(path)) as db:
+                migrate(db)
+                for ident,stamp in [('earlier',datetime(2026,10,31,23,59)),('first',datetime(2026,11,1)),('last',datetime(2026,11,16,23,59)),('today',datetime(2026,11,17))]:
+                    db.execute('INSERT INTO cost_events VALUES (?,?,?,?,?,?,?,?,?,?)',(ident,stamp.timestamp(),'a','d:/project','gpt-6.1-sol',1000,800,600,200,1))
+                db.commit()
+                data=snapshot(db,now,dict(pending=False,errors=0))
+            week=range_key((date(2026,11,16),date(2026,11,22)))
+            self.assertEqual(data['ranges'][week][0]['tokens'],1000)
+            selected=data['ranges'][key][0]
+            self.assertEqual(selected['tokens'],2000)
+            self.assertEqual(data['calendar_days'],['2026-10-31','2026-11-01','2026-11-16','2026-11-17'])
+            self.assertEqual(detail_snapshot(path,selected,key,now=now)[0]['tokens'],2000)
+            exported=list(export_rows(data,key,'','all'))[0]
+            self.assertEqual((exported['range_start'],exported['range_end'],exported['tokens']),('2026-11-01','2026-11-30',2000))
     def test_legacy_models_are_priced_without_inventing_unknown_or_incomplete_costs(self):
         from project_cost import rate
         self.assertEqual(rate('gpt-6-sol-2026-09-22'),(2,.2,10))

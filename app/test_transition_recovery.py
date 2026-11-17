@@ -87,7 +87,7 @@ class HiddenPanelTests(unittest.TestCase):
                 window=Mock();window.enabled=False;window.windowHandle.return_value=None
                 panel=Mock();panel.isWindow.return_value=False
                 pet=SimpleNamespace(bubble=window,settings_dialog=panel if page=='settings' else None,chat_window=panel if page=='chat' else None,
-                    stop_walk=Mock(),set_option=Mock(),apply_surface_visibility=Mock(),throwing=True,_desktop_hidden=True)
+                    stop_walk=Mock(),set_option=Mock(),apply_surface_visibility=Mock(),throwing=True,_desktop_hidden=True,_focus_hidden=True)
                 with patch('desktop.QApplication.setActiveWindow'):DesktopPet.show_panel(pet,panel)
                 pet.set_option.assert_called_once_with('bubble',True);window.show_page.assert_called_once_with(page,panel)
 

@@ -34,6 +34,18 @@ class ColdHoverTests(unittest.TestCase):
         with patch('hover_hints.QApplication.platformName',return_value='windows'),patch('native_landing.publish') as publish:
             popup.present('额度 79%','等待刷新',QRect(100,200,24,24),self.owner.screen(),owner=self.owner,topmost=False)
             self.assertEqual(popup.level,1.);publish.assert_not_called();self.assertTrue(popup.isVisible())
+    def test_opaque_chart_first_frame_has_complete_amount_column(self):
+        from rate_chart import ChartBubble
+        popup=ChartBubble();self.widgets.append(popup)
+        record=dict(label='00:00–01:00',rows=[('Token 用量','13.70M Token',None),('gpt-6.1-sol','11.08M','#ffcc00')],model_count=1)
+        with patch('hover_hints.QApplication.platformName',return_value='windows'),patch('native_landing.publish',return_value=True) as publish:
+            popup.inspect(record,QRect(120,250,8,20),self.owner)
+            frame=publish.call_args.args[1].toImage()
+        self.assertEqual(frame.size(),popup.grab().toImage().size())
+        expected=popup.grab().toImage()
+        self.assertEqual(frame,expected)
+        # A clipped or blank value column has a flat background.
+        self.assertGreater(len({frame.pixel(x,y) for x in range(frame.width()//2,frame.width()-15) for y in range(30,51)}),12)
     def test_guard_submits_target_bitmap_before_cold_show_and_again_after(self):
         guard=NativeLanding(self.owner);self.widgets.append(guard);image=QPixmap(60,40);image.fill(QColor('red'));events=[]
         def publish(w,pixels):events.append((w.isVisible(),pixels is image));return True

@@ -222,6 +222,24 @@ class PanelTests(unittest.TestCase):
         try:
             self.b.message('新状态');APP.processEvents();self.assertIs(APP.activeWindow(),other)
         finally:other.close();other.deleteLater()
+    def test_status_indicator_stays_under_bubble_during_rebuilds(self):
+        class Parents(QObject):
+            def __init__(self):
+                super().__init__()
+                self.windows=[]
+            def eventFilter(self,obj,event):
+                if event.type()==QEvent.Type.ParentChange:self.windows.append(obj.window())
+                return False
+
+        b=self.b;parents=Parents();b.status_indicator.installEventFilter(parents)
+        b.last_task_update=0
+        b._manual_grace_until=0
+        for change in (lambda:b.evaluate_mode(now=100),lambda:b.show_status(False),
+                       b.toggle_details,lambda:b.show_page('chat',QWidget()),
+                       lambda:b.show_page('settings',QWidget())):
+            change();b.size_transition.complete();APP.processEvents()
+        self.assertTrue(parents.windows)
+        self.assertTrue(all(window is b for window in parents.windows),parents.windows)
     def test_native_canvas_handoffs_are_not_paintable_intermediate_states(self):
         class Recorder(QObject):
             def __init__(self):super().__init__();self.events=[]

@@ -97,7 +97,7 @@ class OperationSummaryTests(unittest.TestCase):
         self.assertEqual(self.r.apply('s',response('function_call_output',call_id='unknown',output='done')),[])
     def test_failed_item_does_not_claim_success_and_sessions_are_separate(self):
         event=self.r.apply('s',{'type':'event_msg','payload':{'type':'item_completed','item':{'type':'FileChange','status':'failed'}}})[-1]
-        self.assertEqual(event['display'],'编辑了文件 · 未成功')
+        self.assertEqual(event['display'],'文件修改未成功')
         self.r.apply('other',response('function_call',name='web.search_query',call_id='2'))
         self.assertEqual(self.r.sessions['s'].display,event['display'])
 

@@ -1,11 +1,74 @@
 import hashlib,io,json,tempfile,threading,unittest,zipfile
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
-from material_store import MaterialStore,MaterialError,checked
+from material_store import MaterialStore,MaterialError,checked,material_workspace,retry_material_io,write_material_entry
 from app_updates import UpdateCancelled
+
+class MaterialSharingTests(unittest.TestCase):
+    @staticmethod
+    def sharing_error():
+        error=PermissionError('sharing violation')
+        error.winerror=32
+        return error
+
+    def test_entry_retries_the_locked_open_without_consuming_input(self):
+        archive=Mock()
+        archive.open.return_value=io.BytesIO(b'image')
+        target=Mock()
+        target.lstat.side_effect=FileNotFoundError
+        target.open.side_effect=[self.sharing_error(),io.BytesIO()]
+        info=Mock(file_size=5)
+        with patch('material_store.time.sleep') as sleep:
+            write_material_entry(archive,info,target,lambda:False)
+        self.assertEqual(target.open.call_count,2)
+        archive.open.assert_called_once_with(info)
+        sleep.assert_called_once_with(.1)
+
+    def test_persistent_lock_reports_write_phase_and_keeps_earlier_error(self):
+        workspace=Mock(name='temporary workspace')
+        workspace.name='download-test'
+        workspace.cleanup.side_effect=self.sharing_error()
+        archive=Mock()
+        target=Mock()
+        target.lstat.side_effect=FileNotFoundError
+        target.open.side_effect=self.sharing_error()
+        with patch('material_store.tempfile.TemporaryDirectory',return_value=workspace),patch('material_store.time.sleep'):
+            with self.assertLogs('material_store',level='WARNING'):
+                with self.assertRaisesRegex(MaterialError,'写入动画文件失败.*文件正被占用'):
+                    with material_workspace(Mock(),'download-'):
+                        write_material_entry(archive,Mock(),target,lambda:False)
+        self.assertEqual(target.open.call_count,4)
+        self.assertEqual(workspace.cleanup.call_count,4)
+        archive.open.assert_not_called()
+
+    def test_cleanup_failure_does_not_invalidate_success_or_cancellation(self):
+        workspace=Mock()
+        workspace.name='download-test'
+        workspace.cleanup.side_effect=self.sharing_error()
+        with patch('material_store.tempfile.TemporaryDirectory',return_value=workspace),patch('material_store.time.sleep'):
+            with self.assertLogs('material_store',level='WARNING'):
+                with material_workspace(Mock(),'download-') as folder:
+                    self.assertEqual(folder,Path('download-test'))
+                with self.assertRaises(UpdateCancelled):
+                    with material_workspace(Mock(),'download-'):
+                        raise UpdateCancelled('已取消')
+
+    def test_retry_stops_on_cancellation_and_ignores_other_errors(self):
+        locked=Mock(side_effect=self.sharing_error())
+        denied=Mock(side_effect=PermissionError('access denied'))
+        with patch('material_store.time.sleep') as sleep:
+            with self.assertRaises(UpdateCancelled):
+                retry_material_io(locked,Mock(side_effect=[False,True]))
+            locked.assert_called_once()
+            sleep.assert_called_once()
+            sleep.reset_mock()
+            with self.assertRaises(PermissionError):
+                retry_material_io(denied)
+            denied.assert_called_once()
+            sleep.assert_not_called()
 
 class MaterialStoreTests(unittest.TestCase):
     def test_non_object_preferences_do_not_break_restart_or_overwrite_source(self):

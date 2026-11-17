@@ -20,6 +20,18 @@ class RecoveryTests(unittest.TestCase):
         (self.install/'installations.json').write_text(json.dumps(dict(current='current',versions=['current','old'])),encoding='utf-8')
         self.store=MaterialStore(self.app,self.state)
     def tearDown(self):self.tmp.cleanup()
+    @unittest.skipUnless(os.name=='nt','Windows path limit')
+    def test_material_receipt_supports_long_atomic_temp_name(self):
+        from desktop_core import atomic_json
+        name='.verified.json'
+        directory=self.root/('a'*(242-len(str(self.root))-len(name)-2))
+        receipt=directory/name
+        self.assertLess(len(str(receipt)),260)
+        self.assertGreaterEqual(len(str(receipt))+37,260)
+        atomic_json(receipt,{'id':'first'})
+        atomic_json(receipt,{'id':'second'})
+        self.assertEqual(json.loads(receipt.read_text(encoding='utf-8')),{'id':'second'})
+        self.assertEqual(list(directory.iterdir()),[receipt])
     def pack(self):
         buf=io.BytesIO()
         with zipfile.ZipFile(buf,'w') as archive:

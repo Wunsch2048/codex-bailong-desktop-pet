@@ -2,7 +2,7 @@
 import os,json,tempfile,unittest,copy
 os.environ['QT_QPA_PLATFORM']='offscreen'
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QRect,QPoint,QSize,QEvent,QEventLoop
 from desktop import DesktopPet
@@ -119,5 +119,32 @@ class DockTests(unittest.TestCase):
      if all(im.pixelColor(x+dx,y+dy).alpha()>200 for dx,dy in ((0,0),(-2,0),(2,0),(0,-2),(0,2))):opaque+=1;self.assertTrue(p.alpha_hit(x,y))
    self.assertGreater(opaque,20)
    self.assertFalse(p.status_animation_allowed());p.start_walk();self.assertFalse(p.walking)
+ def test_display_change_unfolds_pet_and_preserves_card_preference(self):
+  p=self.p;b=p.bubble;mode=p.settings['bubble_mode']
+  for side in ('left','right'):
+   self.dock(side)
+   folded=p.grab().toImage()
+   original=p.screen().geometry().getRect()
+   changed=(original[0],original[1],original[2]+160,original[3])
+   screen=p.screen()
+   remote=Mock(wraps=screen)
+   remote.geometry.return_value=QRect(*changed)
+   with patch('desktop.QApplication.screens',return_value=[remote]):
+    p.reflow_display();settle(p)
+   self.assertFalse(p.edge_dock.active)
+   self.assertFalse(b._edge_compact)
+   self.assertEqual(p.settings['bubble_mode'],mode)
+   unfolded=p.grab().toImage()
+   def opaque_samples(image):
+    return sum(image.pixelColor(x,y).alpha()>200
+               for y in range(0,image.height(),4) for x in range(0,image.width(),4))
+   self.assertGreater(opaque_samples(unfolded),opaque_samples(folded)*1.5)
+   p.reflow_display();settle(p)
+   self.assertFalse(p.edge_dock.active)
+ def test_same_display_reflow_does_not_discard_manual_dock(self):
+  p=self.p;self.dock()
+  p.reflow_display();settle(p)
+  self.assertTrue(p.edge_dock.active)
+  self.assertTrue(p.bubble._edge_compact)
 
 if __name__=='__main__':unittest.main()

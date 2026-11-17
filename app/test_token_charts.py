@@ -32,6 +32,35 @@ class SeriesTests(unittest.TestCase):
         self.assertFalse(stale['available']);self.assertEqual(stale['total'],0)
 
 class ChartTests(unittest.TestCase):
+    def test_seven_day_usage_tracks_model_breakdown_and_rate(self):
+        now=datetime(2026,10,18,13,40).timestamp()
+        snapshot=dict(history_days={'2026-10-17':100},report={'daily_models':[
+            dict(day='2026-10-17',model='model A',total=60),
+            dict(day='2026-10-17',model='model B',total=40)]},rates={'days':{'2026-10-17':{'rate':12.}}})
+        card=TokenChartCard(snapshot,period='7d',now=now);card.resize(120,80);card.show();APP.processEvents()
+        try:
+            card.plot.grab()
+            record=card.plot._combo_records[-2]
+            self.assertEqual(record['model_count'],2)
+            self.assertEqual({name for name,_,_ in record['rows']},{'Token 用量','model A','model B','回合均速'})
+        finally:card.close()
+    def test_time_filter_pill_animates_without_layout_change(self):
+        from unittest.mock import patch
+        from PySide6.QtCore import QRectF
+        card=TokenChartCard();card.resize(120,80);card.show();APP.processEvents()
+        try:
+            tabs=card.range_tabs;layout=[button.geometry() for button in tabs.buttons.values()]
+            with patch('settings_controls.motion_enabled',return_value=True):
+                card.set_period('7d')
+                tabs.animation.setCurrentTime(65)
+                self.assertGreater(tabs.pill.x(),layout[0].x())
+                self.assertLess(tabs.pill.x(),layout[-1].x())
+                tabs.animation.setCurrentTime(tabs.animation.duration())
+                self.assertEqual(tabs.pill,QRectF(layout[-1]))
+                card.set_period('day');tabs.animation.setCurrentTime(tabs.animation.duration())
+                self.assertTrue(tabs.pill.isEmpty())
+            self.assertEqual(layout,[button.geometry() for button in tabs.buttons.values()])
+        finally:card.close()
     def test_small_card_buttons_plot_and_tooltips_fit_all_ranges(self):
         now=datetime(2026,10,18,13,40).timestamp()
         snap=dict(history_days={'2026-10-18':123456},today='2026-10-18',hours=[i*100 for i in range(24)])

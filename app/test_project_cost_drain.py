@@ -50,8 +50,11 @@ class DrainTests(unittest.TestCase):
             project_step=Mock(return_value={'pending':False}),project_snapshot=Mock(return_value={'pending':False,'ranges':{}}))
         worker=SimpleNamespace(token_runs=RefreshRuns(),event=SimpleNamespace(emit=events.append),wsl=False,
             context_lock=threading.Lock(),week_cycle=None,stop=threading.Event(),token_wake=threading.Event(),
+            project_range=None,project_wake=threading.Event(),
             last_token_scan=time.monotonic(),token_index=index,
             today_total=SimpleNamespace(reconcile=Mock(),snapshot=Mock(return_value=None)))
+        worker._project_progress=ActivityThread._project_progress.__get__(worker)
+        worker._publish_project_progress=ActivityThread._publish_project_progress.__get__(worker)
         ActivityThread.read_tokens(worker)
         index.poll.assert_called_once();index.project_step.assert_called_once()
         kinds=[e['kind'] for e in events]

@@ -43,6 +43,15 @@ class ChatConfigTests(unittest.TestCase):
         self.assertEqual(SecretStore(self.secret_path).read(),{})
         self.assertFalse(self.config_path.exists());self.assertFalse(self.secret_path.exists())
 
+    def test_provider_draft_cannot_restore_old_conversation_preferences(self):
+        draft=self.seed()
+        cfg.select_chat_service(self.root,'chatgpt','known-model')
+        cfg.save_chat_preferences(self.root,'新的提示词',26,18000)
+        saved=cfg.save_chat_config(self.root,draft,'provider-a',provider_only=True)
+        self.assertEqual((saved['service'],saved['chatgpt_model']),('chatgpt','known-model'))
+        self.assertEqual((saved['system_prompt'],saved['history_messages'],saved['history_chars']),('新的提示词',26,18000))
+        self.assertEqual(cfg.load_provider_key(self.root,saved['providers'][0]),'old-synthetic-key')
+
     def test_success_uses_new_slot_and_keeps_input_immutable(self):
         self.seed();candidate=self.replacement();original=copy.deepcopy(candidate)
         saved=cfg.save_chat_config(self.root,candidate,'provider-a','new-synthetic-key')

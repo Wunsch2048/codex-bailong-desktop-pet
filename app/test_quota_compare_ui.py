@@ -46,8 +46,8 @@ class QuotaComparePresentationTests(unittest.TestCase):
  def test_mixed_workload_shows_reference_without_claiming_same_conditions(self):
   v=QuotaCompareView()
   v.set_snapshot({'quota_history':{'cycles':[
-   row(drop=35,comparison_block='模型使用结构不同，暂不判断涨跌'),
-   row(id='old',closed=True,estimated_total=120000000,start=1791695200),
+   row(drop=35,recent_reference_totals=[100000000,99000000,101000000],comparison_block='模型使用结构不同，暂不判断涨跌'),
+   row(id='old',closed=True,drop=30,estimated_total=120000000,start=1791695200),
    row(id='older',closed=True,estimated_total=140000000,start=1791090400),
   ]}})
   self.assertEqual(v.current_capacity.text(),'100.00M')
@@ -75,6 +75,7 @@ class QuotaComparePresentationTests(unittest.TestCase):
    cycles=[row(drop=69),row(id='old',closed=True,estimated_total=120000000)]
    v.set_snapshot(dict(quota_history=dict(cycles=cycles)))
    self.assertFalse(v.reference.isHidden())
+   self.assertEqual(v.reference.text(),'参考差异观察中')
    v.set_snapshot(dict(quota_history=dict(cycles=cycles,pending=True)))
    self.assertTrue(v.reference.isHidden())
    cycles[0]=row(drop=69,change=-16.7)
@@ -87,9 +88,11 @@ class QuotaComparePresentationTests(unittest.TestCase):
  def test_disclosure_selection_and_hover_preserve_view_geometry(self):
   v=QuotaCompareView();v.setFixedWidth(246);v.set_snapshot({'quota_history':{'cycles':[row(),row(id='old',closed=True,start=1791695200)]}});v.show();APP.processEvents()
   try:
-   self.assertEqual(v.coverage.value(),150);self.assertTrue(v.rules.isHidden());self.assertTrue(v.estimate_hint.isHidden())
-   v.rules_button.click();APP.processEvents();self.assertTrue(v.explanation.isVisible());self.assertEqual(v.explanation.geometry(),v.rect());self.assertIn('5 个百分点',v.note.text())
-   v.explanation.back.click();APP.processEvents();self.assertTrue(v.rules.isHidden());self.assertFalse(v.rules_button.isChecked())
+   self.assertEqual(v.coverage.value(),150);self.assertTrue(v.estimate_hint.isHidden())
+   v.show_rules();APP.processEvents();self.assertTrue(v.explanation.isVisible());self.assertEqual(v.explanation.geometry(),v.rect())
+   from PySide6.QtWidgets import QLabel
+   self.assertTrue(any('5 个百分点' in label.text() for label in v.explanation.findChildren(QLabel)))
+   v.explanation.back.click();motion=v.explanation.page_motion;motion.animation.setCurrentTime(motion.animation.duration());self.assertTrue(v.explanation.isHidden())
    before=v.sizeHint();v.show_plot_readout('10/18 已用 15M / 推测 100M');APP.processEvents();self.assertEqual(v.sizeHint(),before)
    v.show_plot_readout('');self.assertEqual(v.readout.text(),'历史周期')
    v.previous.click();self.assertEqual(v.selected_id,'old');self.assertIn('不能用于历史对比',v.comparison_reason.text())

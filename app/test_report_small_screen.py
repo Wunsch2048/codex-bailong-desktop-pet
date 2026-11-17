@@ -73,6 +73,29 @@ class SmallReportTests(unittest.TestCase):
 class HostReturnTests(unittest.TestCase):
     setUp=native_tests.InteractionTests.setUp
     tearDown=native_tests.InteractionTests.tearDown
+    def test_open_report_keeps_top_edge_when_expanding_attached_card_near_top(self):
+        p=self.pet;b=p.bubble;p._materials_missing=False
+        area=QRect(0,0,1200,1080)
+        screen=SimpleNamespace(availableGeometry=lambda:area,geometry=lambda:area,name=lambda:'test-screen')
+        with patch.object(QApplication,'screenAt',return_value=screen),patch.object(b,'screen',return_value=screen),patch('settings_controls.motion_enabled',return_value=True):
+            p.setFixedSize(180,180);p.move(400,380)
+            b.set_mode('auto');b.auto_compact=False;b.redraw();b.show();b.size_transition.complete();b.size_transition.release_landing();p.position_bubble()
+            r=DailyReport(b);b.report=r;r.set_snapshot(report_tests.sample());r.open()
+            t=b.size_transition;t.complete();t.release_landing();APP.processEvents()
+            r.animation.setCurrentTime(r.animation.duration());APP.processEvents()
+            top=b.y();report_top=r.content_geometry().top()
+            self.assertEqual(r.content_geometry().height(),r.natural_height)
+            self.assertGreater(p.y()-b.placement_height()-8,area.top())
+            for expanded in (True,False,True):
+                b.toggle_details();self.assertEqual(b.expanded,expanded)
+                if expanded:self.assertLess(p.y()-b.content.height()-8,area.top())
+                self.assertEqual(t.target_rect.top(),top)
+                t.animation.setCurrentTime(t.animation.duration()//2)
+                self.assertAlmostEqual(r.follow.geometry().top(),report_top,delta=1)
+                t.complete();t.release_landing();r.follow.release();APP.processEvents();p.position_bubble()
+                self.assertEqual(b.y(),top)
+                self.assertEqual(r.content_geometry().top(),report_top)
+
     def test_report_close_holds_host_then_animates_back_without_replaying_chart(self):
         p=self.pet;b=p.bubble;b.set_mode('auto');b.auto_compact=False;b.redraw();b.show();b.size_transition.complete();b.size_transition.release_landing();APP.processEvents()
         r=DailyReport(b);b.report=r;r.set_snapshot(report_tests.sample());original=QRect(b.geometry());displaced=QRect(original);displaced.translate(0,180)

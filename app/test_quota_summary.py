@@ -153,10 +153,10 @@ class QuotaBubbleTests(unittest.TestCase):
         for windows in ([dict(name='一周',remaining=73)],
                         [dict(name='一周',remaining=73),dict(name='5小时',remaining=29)]):
             self.b.windows=windows;self.b.redraw();drain()
-            self.assertEqual((self.b.width(),self.b.height()),(268,186))
+            self.assertEqual((self.b.width(),self.b.height()),(268,204))
             self.assertEqual(len(self.visible(QuotaSummary).items),len(windows))
-            self.assertEqual((self.visible(QuotaSummary).width(),self.visible(QuotaSummary).height()),(121,102))
-            self.assertEqual(self.visible(TodayTokens).height(),20)
+            self.assertEqual((self.visible(QuotaSummary).width(),self.visible(QuotaSummary).height()),(116,102))
+            self.assertEqual(self.visible(TodayTokens).size().toTuple(),(124,22))
     def test_today_tokens_click_opens_daily_chart_without_opening_details(self):
         self.b.select_dashboard('reset');drain();size=self.b.size();events=[]
         self.b.tokenRangeChanged.connect(events.append)

@@ -18,6 +18,34 @@ def settle():
     app.processEvents()
 
 class BubbleTests(unittest.TestCase):
+    def test_short_operation_survives_same_batch_background_updates(self):
+        from enhanced_core import ActivityReducer
+        from unittest.mock import patch
+        b=self.bubble;b.show();settle()
+        reducer=ActivityReducer()
+        def emit(phase,**fields):
+            for status in reducer.apply('a',dict(type='event_msg',payload=dict(type=phase,turn_id='turn',**fields))):
+                b.roster.observe(status,now=10)
+        cases=[
+            (dict(type='ImageView',id='one'),'已查看 1 张图像'),
+            (dict(type='Extension',kind='web.search',action={'type':'openPage'}),'已打开网页'),
+            (dict(type='CollabToolCall',tool='wait',status='completed'),'已等待聊天'),
+        ]
+        for item,expected in cases:
+            emit('task_started')
+            emit('item_completed',item=item)
+            emit('item_completed',item=dict(type='CommandExecution',status='completed'))
+            with patch('compact_bubble.time.monotonic',return_value=10.1):
+                b._refresh_conversation_rows()
+                self.assertIn(expected,b.status_view.rows['a'].text())
+                self.assertTrue(b._short_status_timer.isActive())
+            with patch('compact_bubble.time.monotonic',return_value=12.1):
+                b._refresh_conversation_rows()
+                self.assertIn('运行了命令',b.status_view.rows['a'].text())
+        waiting=reducer.set_waiting('a','approval','turn')[-1]
+        b.roster.observe(waiting,now=10.2)
+        self.assertEqual(b.roster.selection([],now=10.3)[0][0]['text'],'等待你的批准')
+
     def test_overflow_switch_keeps_both_card_sizes_in_fixed_slots(self):
         b=self.bubble
         b.show();settle()
@@ -92,12 +120,12 @@ class BubbleTests(unittest.TestCase):
         self.bubble.reset_snapshot={'scheduled':None};self.bubble.redraw();settle()
         self.assertEqual(len([d for d in self.bubble.findChildren(QuotaSummary) if d.isVisible()]),1)
         self.assertEqual(len([d for d in self.bubble.findChildren(TokenChartCard) if d.isVisible()]),1)
-        self.assertEqual((self.bubble.width(),self.bubble.height()),(268,186))
+        self.assertEqual((self.bubble.width(),self.bubble.height()),(268,204))
     def test_two_quotas_keep_exact_values_and_distinct_reset_times(self):
         now=time.time();self.bubble.windows=[dict(name='5小时',remaining=0,resetsAt=now+3600),dict(name='一周',remaining=100,resetsAt=None)]
         self.bubble.redraw();settle();cards=[d for d in self.bubble.findChildren(QuotaSummary) if d.isVisible()]
         self.assertEqual(len(cards),1);self.assertEqual([w['remaining'] for w in cards[0].items],[0,100]);self.assertIn('重置时间未知',cards[0].accessibleDescription())
-        self.assertIn('北京时间',cards[0].accessibleDescription());self.assertEqual(self.bubble.height(),186)
+        self.assertIn('北京时间',cards[0].accessibleDescription());self.assertEqual(self.bubble.height(),204)
     def test_expanded_view_preserves_full_message_and_stale_explanation(self):
         text='长状态消息，包含完整工作进度和执行结果。'*10
         self.bubble.status=text;self.bubble.quota_caption='接口暂不可用 · 下方为上次记录';self.bubble.reset_feed_error=True
@@ -170,13 +198,13 @@ class BubbleTests(unittest.TestCase):
         self.bubble.select_token_range('day');self.bubble.message('状态更新');self.bubble.redraw()
         self.visible_button('card_reset').click();self.visible_button('card_tokens').click()
         chart=next(d for d in self.bubble.findChildren(TokenChartCard) if d.isVisible())
-        self.assertEqual(chart.period,'day');self.assertEqual(self.bubble.height(),186)
+        self.assertEqual(chart.period,'day');self.assertEqual(self.bubble.height(),204)
     def test_dense_reset_preserves_full_announcement_in_tooltip_and_expanded_details(self):
         text='这是完整公告，预计会陆续完成，不应在缩小卡片时丢失。'*4
         item=dict(id='dense',announced=time.time(),scheduled=None,reset_type='regular',text=text)
         self.bubble.reset_snapshot={'pending':item};self.bubble.redraw();settle()
         announcement=next(w for w in self.bubble.findChildren(Announcement) if w.isVisible())
-        self.assertIn(text,announcement.toolTip());self.assertEqual(self.bubble.height(),186)
+        self.assertIn(text,announcement.toolTip());self.assertEqual(self.bubble.height(),204)
         self.bubble.toggle_details();settle();self.bubble.details_tabs.setCurrentIndex(2);settle()
         self.assertIn(text,[w.text() for w in self.bubble.findChildren(QLabel) if w.isVisible()])
     def test_all_shortcut_buttons_fit_inside_compact_bubble_on_both_cards(self):
@@ -187,6 +215,6 @@ class BubbleTests(unittest.TestCase):
                 point=button.mapTo(self.bubble,QPoint(0,0))
                 self.assertGreaterEqual(point.x(),0);self.assertGreaterEqual(point.y(),0)
                 self.assertLessEqual(point.x()+button.width(),self.bubble.width());self.assertLessEqual(point.y()+button.height(),self.bubble.height())
-            self.assertEqual(self.bubble.height(),186)
+            self.assertEqual(self.bubble.height(),204)
 
 if __name__=='__main__':unittest.main()

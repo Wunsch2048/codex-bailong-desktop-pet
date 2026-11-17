@@ -12,23 +12,27 @@ APP=QApplication.instance() or QApplication([])
 class RateFloorTests(unittest.TestCase):
     def test_hourly_plots_match_model_swatches_and_keep_hover_compact(self):
         from daily_report import ReportPlot
-        from rate_chart import model_swatch
+        from rate_chart import colors,model_swatch
         from token_charts import TokenPlot
         now=datetime(2026,10,30,13).timestamp()
         hours=[0]*24;hours[10]=6000;hours[11]=1800
         models=[{} for _ in hours];models[10]={'sol':4000,'astra':2000}
         models[11]={'luna':700,'astra':900,'sol':200}
         rates=[None]*24;rates[10]=dict(rate=22.,median_rate=20.,first_token_ms=900)
-        report=dict(day='2026-10-29',hours=hours,hour_models=models,rates=dict(yesterday=rates))
-        snapshot=dict(today='2026-10-30',hours=hours,hour_models=models,report=report,rates=dict(today=rates))
+        output=[None]*24;output[11]=dict(rate=9.)
+        line_color=colors()[2]
+        report=dict(day='2026-10-29',hours=hours,hour_models=models,rates=dict(yesterday=rates,yesterday_output=output))
+        snapshot=dict(today='2026-10-30',hours=hours,hour_models=models,report=report,rates=dict(today=rates,today_output=output))
         for plot in (ReportPlot(report),TokenPlot(snapshot,'day',now=now)):
             plot.resize(250,94);plot.ensure_layers()
             rows=plot._combo_records[10]['rows']
             self.assertEqual(rows,[('Token 用量','6.0K Token',None),('sol','4.0K',model_swatch(0)),
-                                   ('astra','2.0K',model_swatch(1)),('回合均速','22.0 tok/s',None),
+                                   ('astra','2.0K',model_swatch(1)),('小时输出速率','无有效采样',line_color),('回合均速','22.0 tok/s',None),
                                    ('回合中位速率','20.0 tok/s',None)])
-            self.assertEqual([(name,color) for name,_,color in plot._combo_records[11]['rows'][1:]],
+            self.assertEqual([(name,color) for name,_,color in plot._combo_records[11]['rows'][1:4]],
                              [('sol',model_swatch(0)),('astra',model_swatch(1)),('luna',model_swatch(2))])
+            self.assertEqual(plot._combo_records[11]['rows'][-1][:2],('小时输出速率','9.0 tok/s'))
+            self.assertEqual([index for index,_ in plot._rate_points],[11])
             image=QImage(250,94,QImage.Format.Format_ARGB32);image.fill(Qt.GlobalColor.transparent)
             painter=QPainter(image);painter.drawPicture(0,0,plot._combo_bars);painter.end()
             chart=plot.chart_rect();x=round(plot._combo_records[10]['rect'].center().x())
@@ -37,7 +41,7 @@ class RateFloorTests(unittest.TestCase):
             plot.close()
     def test_unknown_runs_have_floor_geometry_but_keep_unknown_readout_and_real_zero(self):
         now=datetime(2026,10,30,13).timestamp();items=[None]*24;items[2]=dict(rate=20);items[3]=dict(rate=0);items[7]=dict(rate=30)
-        card=TokenChartCard(dict(today='2026-10-30',hours=[10]*24,rates=dict(today=items)),period='day',now=now);card.resize(121,78);card.show();APP.processEvents();p=card.plot;p.grab()
+        card=TokenChartCard(dict(today='2026-10-30',hours=[10]*24,rates=dict(today=items,today_output=items)),period='day',now=now);card.resize(121,78);card.show();APP.processEvents();p=card.plot;p.grab()
         self.assertIsNone(p._combo_records[5]['rate_item']);self.assertEqual(p._combo_records[3]['rate_item']['rate'],0)
         self.assertFalse(p._missing_path.isEmpty());self.assertFalse(p._solid_rate_path.isEmpty())
         self.assertLessEqual(p._missing_path.boundingRect().right(),p._combo_records[13]['rect'].right())
@@ -78,10 +82,10 @@ class RateFloorTests(unittest.TestCase):
         record=dict(label='12:00–13:00',amount='1.00M Token',rate_item=dict(rate=12,median_rate=40,valid_samples=5))
         b.inspect(record,anchor,host);b.animation.stop();b.level=1;APP.processEvents();first=b.grab().toImage()
         self.assertEqual(b.median_value(),'40.0 tok/s');self.assertIn('回合中位速率 40.0 tok/s',b.accessibleDescription())
-        self.assertEqual(b.hint_size(),(230,143))
+        self.assertEqual(b.hint_size(),(254,161))
         changed=dict(record,rate_item=dict(rate=12,median_rate=0,valid_samples=5,first_token_ms=1200))
         b.inspect(changed,anchor,host);b.animation.stop();b.level=1;APP.processEvents()
-        self.assertEqual(b.median_value(),'0.0 tok/s');self.assertEqual(b.hint_size(),(230,161));self.assertNotEqual(first,b.grab().toImage())
+        self.assertEqual(b.median_value(),'0.0 tok/s');self.assertEqual(b.hint_size(),(254,178));self.assertNotEqual(first,b.grab().toImage())
         errors=[]
         with patch.object(sys,'excepthook',side_effect=lambda *args:errors.append(args)):
             for value in (dict(record,future=True),dict(record,available=False),dict(record,rate_item=None)):

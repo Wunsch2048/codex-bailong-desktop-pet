@@ -28,9 +28,7 @@ class MaterialsStub(QObject):
 class UpdatesStub(QObject):
     changed=Signal(object)
     job=None
-    def snapshot(self):
-        """提供更新控件要求的平台能力，布局夹具模拟支持程序更新的 Windows"""
-        return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None,program_supported=True)
+    def snapshot(self):return dict(phase='idle',current='1.13.5',message='尚未检查',latest=None)
     def check(self):pass
     def download_install(self):pass
     def cancel(self):pass
@@ -155,8 +153,10 @@ class SettingsPresentationTests(unittest.TestCase):
     def test_display_options_and_custom_colors_are_directly_available(self):
         area=self.page(0)
         self.assertFalse(any(b.text()=='更多显示选项' for b in area.findChildren(SettingsDisclosureButton)))
-        self.assertTrue(self.editor.fields['on_top'].isVisible())
-        next(b for b in area.findChildren(QPushButton) if b.text()=='自定义颜色').click();APP.processEvents()
+        self.assertTrue(self.editor.fields['window_layer'].isVisible())
+        custom=next(b for b in area.findChildren(QPushButton) if b.text()=='自定义颜色')
+        self.assertIs(custom.parentWidget(),self.editor.fields['theme'].parentWidget())
+        custom.click();APP.processEvents()
         self.assertTrue(self.editor.theme_custom.isVisible())
         self.assertEqual(self.editor.draft.changes()['theme'],'custom')
         self.assertEqual(self.pet.settings['theme'],'bailong')
@@ -172,11 +172,8 @@ class SettingsPresentationTests(unittest.TestCase):
                     self.assertNotIsInstance(parent,AnimatedDisclosure);parent=parent.parentWidget()
     def test_category_reentry_resets_scroll_without_losing_draft(self):
         area=self.page(2)
-        fold=next(b for b in area.findChildren(SettingsDisclosureButton) if b.text()=='连接与更多选项')
-        fold.click()
-        from card_motion import AnimatedDisclosure
-        for disclosure in area.findChildren(AnimatedDisclosure):
-            if disclosure.expanded:disclosure.complete()
+        self.assertFalse(any('更多' in b.text() for b in area.findChildren(SettingsDisclosureButton)))
+        self.assertTrue(self.editor.health_panel.isVisible())
         APP.processEvents();area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
         self.assertGreater(area.verticalScrollBar().value(),0)
         self.editor.fields['quota_decline_threshold'].setValue(23)
@@ -217,14 +214,12 @@ class SettingsPresentationTests(unittest.TestCase):
         self.page(0);self.assertFalse(self.editor.roaming_editor.isVisible())
     def test_real_card_reentry_resets_scroll_but_refresh_and_subpage_return_preserve_it(self):
         from compact_bubble import CompactBubble
-        from card_motion import AnimatedDisclosure
         self.pet.resize(150,150);bubble=CompactBubble(self.pet);self.pet.bubble=bubble;self.pet.settings_dialog=self.editor
         def settle():
             for _ in range(4):bubble.size_transition.complete();APP.processEvents()
         bubble.show();bubble.show_page('settings',self.editor);settle()
-        area=self.page(1);self.editor.advanced_button.setChecked(True)
-        for disclosure in area.findChildren(AnimatedDisclosure):
-            if disclosure.expanded:disclosure.complete()
+        area=self.page(1)
+        self.assertTrue(self.editor.fields['playback_speed'].isVisible())
         settle();area.verticalScrollBar().setValue(min(40,area.verticalScrollBar().maximum()));before=area.verticalScrollBar().value()
         self.assertGreater(before,0)
         self.editor.sync_from_pet();settle();self.assertEqual(area.verticalScrollBar().value(),before)

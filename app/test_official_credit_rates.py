@@ -137,9 +137,9 @@ class OfficialRatesTests(unittest.TestCase):
         area=QScrollArea();area.resize(268,420);view=QuotaCompareView();area.setWidget(view);area.setWidgetResizable(True);area.show();APP.processEvents()
         try:
             with patch.object(official_rates_ui,'shared',return_value=self.controller):
-                view.rates_button.click();APP.processEvents()
+                view.show_rates();APP.processEvents()
                 page=view.rates_page;self.assertIs(page.parentWidget(),area.viewport());self.assertEqual(page.geometry(),area.viewport().rect())
-                view.rates_button.click();self.assertIs(view.rates_page,page)
+                view.show_rates();self.assertIs(view.rates_page,page)
                 page.back.click();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)
         finally:area.close();area.deleteLater();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)
     def test_background_new_price_preserves_reading_position(self):
@@ -151,6 +151,32 @@ class OfficialRatesTests(unittest.TestCase):
             self.controller.changed.emit();APP.processEvents()
             self.assertEqual(page.area.verticalScrollBar().value(),before)
             page.history.setCurrentIndex(1);APP.processEvents();self.assertEqual(page.area.verticalScrollBar().value(),0)
+        finally:host.close();host.deleteLater();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+    def test_history_chevrons_appear_only_when_a_real_revision_can_be_selected(self):
+        from official_rates_ui import OfficialRatesPage
+        from PySide6.QtCore import QPoint
+        from PySide6.QtTest import QTest
+        self.accept();host=QWidget();host.resize(246,300);host.show()
+        page=OfficialRatesPage(host,self.controller);APP.processEvents()
+        try:
+            self.assertTrue(page.latest_label.isVisible())
+            self.assertTrue(page.history.isHidden())
+            self.assertIs(page.status.parentWidget(),page.area.widget())
+            self.assertIs(page.check_time.parentWidget(),page.area.widget())
+            self.assertGreater(page.area.verticalScrollBar().maximum(),0)
+            first_y=page.status.mapTo(page.area.viewport(),QPoint()).y()
+            page.area.verticalScrollBar().setValue(20)
+            self.assertEqual(page.status.mapTo(page.area.viewport(),QPoint()).y(),first_y-20)
+            page.area.verticalScrollBar().setValue(0)
+            self.controller.cache.accept(parse_document(DOC.replace(b'50 credits',b'60 credits')),self.now+1)
+            self.controller.changed.emit();APP.processEvents()
+            self.assertTrue(page.history.isVisible());self.assertTrue(page.latest_label.isHidden())
+            click=QPoint(page.history.width()-15,page.history.height()//2)
+            QTest.mouseClick(page.history,Qt.MouseButton.LeftButton,pos=click)
+            sheet=page.history._panel;self.assertIsNotNone(sheet)
+            row=sheet.list.visualItemRect(sheet.list.item(1)).center()
+            QTest.mouseClick(sheet.list.viewport(),Qt.MouseButton.LeftButton,pos=row)
+            self.assertEqual(page.selected,0)
         finally:host.close();host.deleteLater();APP.sendPostedEvents(None,QEvent.Type.DeferredDelete)
 
 from PySide6.QtCore import Qt

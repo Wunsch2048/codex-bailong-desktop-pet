@@ -41,6 +41,17 @@ class LiveRateHoverTests(unittest.TestCase):
         observer=FirstShow();card.popup.installEventFilter(observer);self.show_hint(card)
         self.assertEqual(levels,[1.]);self.assertEqual(card.popup.level,1.)
         card.set_data(dict(rate=15,details=[dict(name='updated',rate=15)]));self.assertEqual(card.popup.level,1.)
+    def test_both_realtime_windows_use_normal_width_when_card_is_expanded(self):
+        bubble=CompactBubble();self.widgets.append(bubble);bubble.move(100,400)
+        with patch.object(bubble,'card_pixels',side_effect=lambda pixels:round(pixels*1.2)):
+            bubble.expanded=True;bubble.redraw();bubble.show();APP.processEvents()
+            card=bubble.live_rate_card
+            card.popup.inspect(card.value,card)
+            self.assertEqual(card.popup.width(),322)
+            card.popup.dismiss(True)
+            card.service_panel.inspect(card.value,card,'service')
+            self.assertEqual(card.service_panel.width(),322)
+            self.assertEqual(bubble.normal_card_width(),322)
     def test_trace_is_bounded_and_omits_session_content(self):
         card=self.card();card.set_data(dict(rate=30,details=[dict(session='private-id',name='private-title',rate=30)]));self.show_hint(card)
         for i in range(300):card._trace_hover('sample')

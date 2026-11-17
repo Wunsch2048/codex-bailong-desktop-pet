@@ -8,6 +8,61 @@ def event(typ, **fields):
     return {'type':'event_msg','timestamp':'2026-10-18T10:00:00Z','payload':{'type':typ,**fields}}
 
 class CoreTests(unittest.TestCase):
+    def test_short_statuses_use_structured_events_and_current_turn(self):
+        r=ActivityReducer()
+        r.apply('a',event('task_started',turn_id='one'))
+        def item(typ,**fields):
+            return r.apply('a',event('item_completed',turn_id='one',item=dict(type=typ,**fields)))[-1]
+        self.assertEqual(item('ImageView',id='1')['display'],'已查看 1 张图像')
+        self.assertEqual(item('ImageView',id='1')['display'],'已查看 1 张图像')
+        self.assertEqual(item('ImageView',id='2')['display'],'已查看 2 张图像')
+        self.assertEqual(item('Extension',kind='web.search',action={'type':'openPage'})['display'],'已打开网页')
+        self.assertEqual(item('McpToolCall',tool='codex_app.send_message_to_thread',status='completed')['display'],'已向聊天发送消息')
+        self.assertEqual(item('McpToolCall',tool='codex_app.send_message_to_thread',status='failed')['display'],'聊天消息发送失败')
+        self.assertEqual(item('Plan')['display'],'已更新计划')
+        self.assertEqual(item('EnteredReviewMode')['display'],'正在审查代码')
+        self.assertEqual(item('ExitedReviewMode')['display'],'已结束代码审查')
+        wait=dict(type='CollabToolCall',tool='wait')
+        waiting=r.apply('a',event('item_started',turn_id='one',item=wait))[-1]
+        self.assertEqual((waiting['display'],waiting['waiting']),('正在等待其他聊天',0))
+        self.assertEqual(item('CollabToolCall',tool='wait',status='completed')['display'],'已等待聊天')
+        def call(typ,**fields):
+            return r.apply('a',{'type':'response_item','payload':dict(type=typ,**fields)})[-1]
+        call('function_call',name='wait',call_id='generic')
+        self.assertEqual(call('function_call_output',call_id='generic',success=True)['display'],'使用了工具')
+        call('function_call',name='codex_app.send_message_to_thread',call_id='unconfirmed')
+        self.assertEqual(call('function_call_output',call_id='unconfirmed',output='任意文本')['display'],'使用了工具')
+        call('function_call',name='exec',call_id='wrapped',arguments='tools.mcp__codex_app__send_message_to_thread({})')
+        self.assertEqual(call('function_call_output',call_id='wrapped',success=True)['display'],'使用了工具')
+        r.apply('a',event('task_started',turn_id='two'))
+        self.assertEqual(r.apply('a',event('item_completed',turn_id='one',item=wait)),[])
+        self.assertEqual(r.apply('a',event('item_completed',turn_id='two',item={'type':'ImageView','id':'3'}))[-1]['display'],'已查看 1 张图像')
+
+    def test_retry_and_terminal_failure_do_not_signal_completion(self):
+        r=ActivityReducer()
+        r.apply('a',event('task_started',turn_id='one'))
+        self.assertEqual(r.apply('a',event('error',turn_id='one',willRetry=False)),[])
+        self.assertEqual(r.apply('a',event('error',turn_id='one',willRetry=True))[-1]['display'],'Codex 正在重试')
+        result=r.apply('a',event('task_complete',turn_id='one',status='failed'))
+        self.assertEqual([(e['kind'],e['display'],e['active']) for e in result],[('status','任务执行失败',0)])
+
+    def test_chat_wait_does_not_appear_as_an_action_request_in_roster(self):
+        from conversation_roster import ConversationRoster
+        reducer=ActivityReducer()
+        roster=ConversationRoster()
+        for session,turn in (('sender','one'),('other','two')):
+            roster.observe(reducer.apply(session,event('task_started',turn_id=turn))[-1])
+        for phase,display in (('item_started','正在等待其他聊天'),('item_completed','已等待聊天')):
+            wait=event(phase,turn_id='one',item=dict(type='McpToolCall',tool='codex_app.wait_threads',status='completed'))
+            status=reducer.apply('sender',wait)[-1]
+            roster.observe(status)
+            self.assertEqual((status['waiting'],status['waiting_reason']),(0,''))
+            self.assertEqual((roster.items['sender']['state'],roster.items['sender']['text']),('working',display))
+        status=reducer.set_waiting('other','approval','two')[-1]
+        roster.observe(status)
+        self.assertEqual(status['waiting'],1)
+        self.assertEqual(roster.selection([])[0][0]['session'],'other')
+
     def test_late_log_terminal_cannot_end_new_turn(self):
         r=ActivityReducer()
         r.apply('a',event('task_started',turn_id='old'))

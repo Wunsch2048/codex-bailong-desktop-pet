@@ -128,15 +128,16 @@ class ReportChartResponseTests(unittest.TestCase):
                 self.assertEqual(self.r.model_rows,rows)
             self.assertEqual(aggregate.call_count,3)
             for model in ('gpt-6.1-sol','gpt-6-sol','gpt-6-sol'):
-                self.r.select_model(model);self.assert_revealing();self.assertIs(self.r.plot,p)
+                self.r.select_model(model);APP.processEvents()
+                self.assertEqual(p.reveal.progress,1.);self.assertFalse(p.reveal.pending);self.assertIs(self.r.plot,p)
             self.assertEqual(aggregate.call_count,3)
             self.assertIsNone(self.r.selected_model)
     def test_latest_rapid_interaction_wins_and_discarded_plot_stays_stopped(self):
         old=self.r.plot
         self.r.set_page('models');self.r.set_period('7d');self.r.select_model('gpt-6-sol')
         self.r.set_period('30d');self.r.select_model('gpt-6.1-sol')
-        self.assert_revealing()
-        self.assertEqual(len(self.r.plot.series['bins']),30)
+        APP.processEvents();self.assertEqual(self.r.plot.reveal.progress,1.)
+        self.assertEqual(len(self.r.plot.series['bins']),31)
         self.assertEqual(self.r.plot.selected,'gpt-6.1-sol')
         self.assertEqual(old.reveal.animation.state(),QAbstractAnimation.State.Stopped)
     def test_updates_while_opening_preserve_window_frame_then_start_new_chart(self):

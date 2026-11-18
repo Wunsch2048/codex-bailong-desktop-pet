@@ -26,7 +26,7 @@ class LiveRateTests(unittest.TestCase):
         self.assertIsNone(r.snapshot(0)['rate'])
         r.ingest('s',dict(type='task_started'),999,now=1);r.ingest('s',count(140),1001,now=3)
         self.assertEqual(r.snapshot(3)['rate'],20);self.assertIsNone(r.snapshot(16)['rate'])
-        r.ingest('s',dict(type='task_complete'),1002,now=4);self.assertIsNone(r.snapshot(4)['rate'])
+        r.ingest('s',dict(type='task_complete'),1003,now=4);self.assertIsNone(r.snapshot(4)['rate'])
     @patch('live_rate.time.time',return_value=1000)
     def test_no_counter_reset_spike_backlog_or_duplicate_timestamp(self,_):
         r=LiveOutputRate();r.ingest('s',count(100),999,historical=True,now=0);r.ingest('s',dict(type='task_started'),999,now=1)
@@ -50,8 +50,71 @@ class LiveRateTests(unittest.TestCase):
                 r=LiveOutputRate();r.ingest('s',count(100),999,historical=True,now=0)
                 r.ingest('s',dict(type='task_started'),999,now=1);r.ingest('s',count(140),1001,now=3)
                 self.assertEqual(r.snapshot(3)['rate'],20)
-                r.ingest('s',dict(type=kind),1002,now=4)
+                r.ingest('s',dict(type=kind),1003,now=4)
                 self.assertIsNone(r.snapshot(4)['rate']);self.assertEqual(r.snapshot(4)['details'],[])
+    @patch('live_rate.time.time',return_value=1000)
+    def test_final_count_and_completion_in_same_poll_stay_visible_as_recent(self,_):
+        r=LiveOutputRate()
+        for sid in ('short','live'):
+            r.ingest(sid,count(100),995,historical=True,now=0)
+            r.ingest(sid,dict(type='task_started'),996,now=1)
+            r.ingest(sid,count(180),1000,now=5)
+        r.ingest('short',dict(type='task_complete'),1000.005,now=5)
+        mixed=r.snapshot(5)
+        self.assertEqual(mixed['rate'],20)
+        self.assertEqual(mixed['sessions'],1)
+        self.assertFalse(mixed['recent'])
+        self.assertTrue(next(row for row in mixed['details'] if row['session']=='short')['recent'])
+        r.ingest('live',dict(type='task_aborted'),1001,now=6)
+        recent=r.snapshot(6)
+        self.assertEqual(recent['rate'],20)
+        self.assertEqual(recent['sessions'],0)
+        self.assertTrue(recent['recent'])
+        r.ingest('short',dict(type='task_completed'),1000.006,now=8)
+        self.assertEqual(r.snapshot(8)['expires'],10)
+        r.ingest('short',dict(type='task_started'),1000.009,now=8)
+        self.assertTrue(r.snapshot(8)['recent'])
+        self.assertIsNone(r.snapshot(10)['rate'])
+        self.assertIsNone(r.snapshot(10)['details'][0]['rate'])
+        r.ingest('short',count(190),1001,now=11)
+        self.assertFalse(r.snapshot(11)['recent'])
+        self.assertGreater(r.snapshot(11)['rate'],0)
+
+
+    @patch('live_rate.time.time',return_value=1000)
+    def test_old_duplicate_or_historical_output_cannot_leave_completed_value(self,_):
+        for kind,completion,historical,repeat in (
+                ('task_complete',1002,False,False),
+                ('task_complete',1000.5,True,False),
+                ('task_complete',1000.5,False,True),
+                ('turn_cancelled',1000.5,False,False)):
+            with self.subTest(kind=kind,completion=completion,historical=historical,repeat=repeat):
+                r=LiveOutputRate()
+                r.ingest('s',count(100),995,historical=True,now=0)
+                r.ingest('s',dict(type='task_started'),996,now=1)
+                r.ingest('s',count(180),1000,now=5)
+                if repeat:r.ingest('s',count(180),1000.25,now=5)
+                r.ingest('s',dict(type=kind),completion,now=5,historical=historical)
+                self.assertIsNone(r.snapshot(5)['rate'])
+                self.assertEqual(r.snapshot(5)['details'],[])
+
+    def test_ui_expiry_relabels_recent_fallback_then_clears_it(self):
+        import time
+        card=LiveRateCard()
+        now=time.monotonic()
+        active=dict(session='active',rate=40,expires=now-1)
+        recent=dict(session='short',rate=20,expires=now+4,recent=True)
+        card.set_data(dict(rate=40,details=[active,recent]))
+        card._expire()
+        self.assertEqual(card.value['rate'],20)
+        self.assertIn('刚刚',card.accessibleName())
+        card.value['details'][1]['expires']=now-1
+        card._expire()
+        self.assertIsNone(card.value['rate'])
+        self.assertIn('实时',card.accessibleName())
+        self.assertEqual(len(card.value['details']),1)
+        card.deleteLater();APP.processEvents()
+
     def test_display_missing_and_large_numbers_are_bounded(self):
         self.assertEqual(display(None),'—');self.assertEqual(display(float('nan')),'—')
         self.assertEqual(display(1024.6),'1,024.6');self.assertEqual(display(10000),'10.0k')

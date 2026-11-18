@@ -2,7 +2,7 @@
 import os,unittest
 os.environ['QT_QPA_PLATFORM']='offscreen'
 from unittest.mock import patch
-from PySide6.QtCore import QPoint,Qt
+from PySide6.QtCore import QPoint,QRect,Qt
 from PySide6.QtGui import QPainter,QPixmap
 from PySide6.QtWidgets import QWidget
 from compact_bubble import CompactBubble
@@ -62,6 +62,44 @@ class HandoffTests(unittest.TestCase):
         with patch.object(b,'redraw',wraps=b.redraw) as rebuild:
             b.message('详情中的最新状态');t.complete()
             self.assertEqual(rebuild.call_count,0);self.assertEqual(b.status_view.text(),'详情中的最新状态')
+    def test_capsule_quota_refresh_keeps_mounted_widgets_and_reveal(self):
+        b=self.b;b.set_mode('mini');b.size_transition.complete();APP.processEvents()
+        island,shortcut,quota=b.island,b.shortcut_button,b._island_quota
+        icon_parent=b.status_indicator.parentWidget()
+        window=b.geometry()
+        quota.reveal.progress=.65
+        for remaining in (95,92,91):
+            b.quota([dict(name='一周',remaining=remaining)])
+            APP.processEvents()
+            self.assertIs(b.island,island)
+            self.assertIs(b.shortcut_button,shortcut)
+            self.assertIs(b._island_quota,quota)
+            self.assertIs(b.status_indicator.parentWidget(),icon_parent)
+            self.assertEqual(quota.value_text(),f'{remaining}%')
+            self.assertEqual(quota.reveal.progress,.65)
+            self.assertEqual(b.geometry(),window)
+        b.show_quota=False;b.redraw()
+        self.assertIsNone(b._island_quota)
+
+    def test_same_size_card_move_draws_one_unscaled_frame_at_every_position(self):
+        b=self.b;b.move(140,20)
+        before=b.grab()
+        t=b.size_transition;t.begin()
+        target=QRect(b.geometry());target.translate(0,217)
+        with patch.object(b,'content_geometry',return_value=target):t.commit()
+        t.animation.pause()
+        self.assertTrue(t.morph.translation_only)
+        canvas=t.canvas_rect
+        for at in (.14,.36,.62,.93):
+            pos=t.morph.geometry(at).topLeft()
+            ratio=before.devicePixelRatioF()
+            pix=QPixmap(pixel_size(canvas.width(),ratio),pixel_size(canvas.height(),ratio))
+            pix.setDevicePixelRatio(ratio);pix.fill(Qt.GlobalColor.transparent)
+            painter=QPainter(pix);t.morph.paint(painter,at,canvas);painter.end()
+            self.assertEqual(pix.toImage(),frame(canvas,before,pos),at)
+        t.animation.resume();t.complete()
+        self.assertEqual(b.geometry(),target)
+
     def test_endpoint_pixels_match_live_widgets(self):
         b=self.b
         for mode,target in [('mini',None),('auto',None),('mini',None),('settings',QWidget()),('mini',None),('chat',QWidget()),('mini',None),('details',None),('details',None)]:

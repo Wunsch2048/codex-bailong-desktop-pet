@@ -35,6 +35,11 @@ def raster_offset(point,canvas,ratio,origin=QPointF()):
                    (native((point.y()-origin.y())*ratio)-native((canvas.y()-origin.y())*ratio))/ratio)
 
 
+def align_raster(p,point):
+    ratio=p.device().devicePixelRatioF()
+    return QPointF(pixel_size(point.x(),ratio)/ratio,pixel_size(point.y(),ratio)/ratio)
+
+
 def complete_frame(bubble):
     size=bubble.content.size();ratio=bubble.devicePixelRatioF()
     image=QPixmap(pixel_size(size.width(),ratio),pixel_size(size.height(),ratio));image.setDevicePixelRatio(ratio);image.fill(Qt.GlobalColor.transparent)
@@ -356,7 +361,7 @@ class SharedPart:
         if self.fit=='stretch':p.drawPixmap(rect,image,QRectF(image.rect()));return
         width=image.deviceIndependentSize().width()
         x=rect.x() if self.fit=='left' else rect.right()-width if self.fit=='right' else rect.center().x()-width/2
-        p.drawPixmap(QPointF(x,rect.y()),image)
+        p.drawPixmap(align_raster(p,QPointF(x,rect.y())),image)
     def paint(self,p,f,canvas):
         target=self.geometry(f).translated(-canvas.x(),-canvas.y())
         p.save();p.setOpacity(1.);p.setClipRect(target,Qt.ClipOperation.IntersectClip)
@@ -401,7 +406,7 @@ class SharedPart:
         mixed.fill(Qt.GlobalColor.transparent);q=QPainter(mixed);q.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         q.setOpacity((256-weight)/256);self._draw(q,self.frames[0],local)
         q.setOpacity(1.);q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus);q.drawPixmap(0,0,weighted);q.end()
-        p.drawPixmap(target.topLeft(),mixed);p.restore()
+        p.drawPixmap(align_raster(p,target.topLeft()),mixed);p.restore()
 
 
 class ExclusivePart:
@@ -441,7 +446,7 @@ class ExclusivePart:
         p.save();p.setOpacity(opacity);p.setClipRect(target,Qt.ClipOperation.IntersectClip)
         clip=self.clip.translated(rect.center().x()-self.state_rect.width()/2,rect.y())
         p.setClipRect(clip.translated(-canvas.x(),-canvas.y()),Qt.ClipOperation.IntersectClip)
-        p.drawPixmap(target.topLeft(),self.image);p.restore()
+        p.drawPixmap(align_raster(p,target.topLeft()),self.image);p.restore()
 
 
 class SurfaceMorph:
@@ -457,8 +462,9 @@ class SurfaceMorph:
         for part in self.exclusive_parts:part.state_rect.translate(delta)
         if self._landing:
             key,*rest=self._landing;self._landing=((key[0]+delta.x(),key[1]+delta.y(),*key[2:]),*rest)
-    def __init__(self,start,end):
+    def __init__(self,start,end,translation_only=False):
         self.start=start;self.end=end;self._landing=None
+        self.translation_only=translation_only
         self.shrinking=end.rect.width()*end.rect.height()<start.rect.width()*start.rect.height()
         self.page_switch=bool(start.expanded and end.expanded and start.page!=end.page and not start.island and not end.island)
         self.shared_parts={};self.exclusive_parts=[];self.body_frames=(start.content,end.content)
@@ -515,6 +521,7 @@ class SurfaceMorph:
             for satellite,image in state.satellites:rect=rect.united(satellite)
         return rect.adjusted(-1,-1,1,1).toAlignedRect()
     def prepare_landing(self,canvas,ratio):
+        if self.translation_only:return
         for part in self.shared_parts.values():part.prepare(ratio)
         if self.end.frame is None:return
         key=(canvas.x(),canvas.y(),canvas.width(),canvas.height(),ratio)
@@ -529,6 +536,11 @@ class SurfaceMorph:
             q.end();frames.append(image)
         self._landing=(key,frames,frames[0].copy(),frames[0].copy())
     def paint(self,p,time,canvas):
+        if self.translation_only:
+            state=self.end if time>=1 else self.start
+            position=state.frame_origin if time<=0 or time>=1 else self.geometry(time).topLeft()
+            p.drawPixmap(raster_offset(position,canvas.topLeft(),p.device().devicePixelRatioF(),state.screen_origin),state.frame)
+            return
         if time<=0 and self.start.frame is not None:
             a=self.start;p.drawPixmap(raster_offset(a.frame_origin,canvas.topLeft(),p.device().devicePixelRatioF(),a.screen_origin),a.frame);return
         if time>=.9 and self.end.frame is not None:

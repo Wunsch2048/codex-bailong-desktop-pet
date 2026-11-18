@@ -2,6 +2,20 @@
 import math,time
 from collections import deque
 
+COMPLETED_SAMPLE_SECONDS = 5.
+FINAL_SAMPLE_WINDOW = 1.
+
+
+def summarize_rates(details):
+    measured = [row for row in details if row['rate'] is not None]
+    active = [row for row in measured if not row.get('recent')]
+    shown = active or measured
+    return dict(rate=sum(row['rate'] for row in shown) if shown else None,
+                sessions=len(active), details=details, metric='observed_output',
+                recent=bool(shown and not active),
+                expires=min((row['expires'] for row in measured if row.get('expires') is not None), default=None))
+
+
 class LiveOutputRate:
     def __init__(self):self.sessions={}
     def ingest(self,sid,payload,stamp,*,historical=False,now=None):
@@ -18,6 +32,13 @@ class LiveOutputRate:
             s.update(active=not historical,rate=None,seen=now,points=deque(maxlen=32))
             if s['water'] is not None and not historical:s['points'].append((stamp,s['water']))
         elif kind in ('task_complete','task_completed','task_aborted','turn_aborted','turn_completed','turn_cancelled'):
+            # A final count and completion can arrive in one tail read, before any snapshot.
+            if (not historical and kind in ('task_complete','task_completed','turn_completed')
+                    and s['active'] and s['rate'] is not None and s['rate']>0 and s.get('increased')
+                    and 0<=stamp-s['sampled_at']<=FINAL_SAMPLE_WINDOW
+                    and 0<=now-s['seen']<=FINAL_SAMPLE_WINDOW and wall-stamp<=15):
+                s['recent']=dict(session=sid,rate=s['rate'],sampled_at=s['sampled_at'],
+                                 interval=s['interval'],expires=now+COMPLETED_SAMPLE_SECONDS,recent=True)
             s.update(active=False,rate=None);s['points'].clear()
         elif kind=='token_count':
             info=payload.get('info');usage=info.get('total_token_usage') if isinstance(info,dict) else None
@@ -40,11 +61,21 @@ class LiveOutputRate:
                 elapsed=stamp-points[0][0];delta=out-points[0][1]
                 s['rate']=delta/elapsed if .1<=elapsed<=300 and delta>=0 else None;s['seen']=now
                 s['interval']=elapsed;s['sampled_at']=stamp;s['ttl']=max(12.,min(180.,elapsed*2.5))
+                s['increased']=previous is not None and out>previous
+                if s['rate'] is not None and s['increased']:s['recent']=None
     def snapshot(self,now=None):
         now=time.monotonic() if now is None else now
-        valid={sid:s for sid,s in self.sessions.items() if s['active'] and s['rate'] is not None and 0<=now-s['seen']<s['ttl']}
-        details=[dict(session=sid,rate=s['rate'] if sid in valid else None,expires=s['seen']+s['ttl'] if sid in valid else None,sampled_at=s['sampled_at'],interval=s['interval'],waiting=now-s['seen']>12) for sid,s in self.sessions.items() if s['active']]
-        return dict(rate=sum(s['rate'] for s in valid.values()) if valid else None,sessions=len(valid),details=details,metric='observed_output',expires=min((s['seen']+s['ttl'] for s in valid.values()),default=None))
+        details=[]
+        for sid,s in self.sessions.items():
+            valid=s['active'] and s['rate'] is not None and 0<=now-s['seen']<s['ttl']
+            recent=s.get('recent')
+            if not valid and recent and now<recent['expires']:
+                details.append(dict(recent))
+            elif s['active']:
+                details.append(dict(session=sid,rate=s['rate'] if valid else None,
+                                    expires=s['seen']+s['ttl'] if valid else None,
+                                    sampled_at=s['sampled_at'],interval=s['interval'],waiting=now-s['seen']>12))
+        return summarize_rates(details)
 
 def display(value):
     if value is None or not isinstance(value,(int,float)) or not math.isfinite(value) or value<0:return '—'

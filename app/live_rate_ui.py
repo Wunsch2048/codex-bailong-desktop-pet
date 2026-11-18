@@ -5,7 +5,7 @@ from PySide6.QtGui import QPainter,QColor,QFontMetrics,QCursor
 from PySide6.QtWidgets import QWidget,QToolTip
 from compact_bubble import font,INK,MUTED
 from theme_registry import color as theme_color
-from live_rate import display
+from live_rate import display,summarize_rates
 from settings_controls import motion_enabled,play_animation
 from hover_hints import DetailHint
 from theme_registry import palette
@@ -39,7 +39,8 @@ class BaseSessionRateBubble(DetailHint):
     def row_height(self):return 38 if getattr(self,'focusable',False) else 25
     def scroll_limit(self):return max(0,64+len(self.rows)*self.row_height()-self.height())
     def paintEvent(self,event):
-        p=QPainter(self);theme=self.paint_detail(p,'合计 '+display(self.total)+' tok/s')
+        p=QPainter(self);recent=self.total is not None and summarize_rates(self.rows)['recent']
+        theme=self.paint_detail(p,('刚刚输出 ' if recent else '合计 ')+display(self.total)+' tok/s')
         body=QRectF(1,1,self.width()-2,self.height()-2)
         p.save();p.setClipRect(body.adjusted(9,32,-9,-28))
         if not self.rows:
@@ -48,12 +49,13 @@ class BaseSessionRateBubble(DetailHint):
             y=body.top()+33+i*self.row_height()-self.scroll
             if y+self.row_height()<33 or y>body.bottom():continue
             name=str(row.get('name') or '会话 '+str(row.get('session',''))[-8:])
+            if row.get('recent'):name='刚刚  '+name
             width=max(10,self.width()-124)
             p.setFont(font(12));p.setPen(QColor(theme['ink']));name=QFontMetrics(p.font()).elidedText(name,Qt.TextElideMode.ElideRight,width)
             p.drawText(QRectF(11,y,width,18),Qt.AlignmentFlag.AlignVCenter,name)
             p.setFont(font(13,True));p.drawText(QRectF(width+14,y,self.width()-width-25,18),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,display(row.get('rate'))+' tok/s')
             if not getattr(self,'focusable',False):continue
-            stamp=row.get('sampled_at');interval=row.get('interval');status='等待新采样' if row.get('waiting') or row.get('rate') is None else '最近观测'
+            stamp=row.get('sampled_at');interval=row.get('interval');status='刚刚输出' if row.get('recent') else '等待新采样' if row.get('waiting') or row.get('rate') is None else '最近观测'
             detail=(datetime.fromtimestamp(stamp).strftime('%H:%M:%S')+'  ' if stamp else '')+status
             if interval is not None:detail+=f'  /  {interval:.0f}秒区间'
             p.setFont(font(11));p.setPen(QColor(theme['muted']));p.drawText(QRectF(11,y+17,self.width()-22,17),Qt.AlignmentFlag.AlignVCenter,detail)
@@ -95,7 +97,7 @@ class LiveRateCard(QWidget):
         return super().eventFilter(obj,event)
     def set_data(self,value):
         previous=display(self.value.get('rate'));self.value=dict(value or {});current=display(self.value.get('rate'))
-        self.setAccessibleName('实时输出速率 '+current+' tok/s');self.alpha=1.
+        self.setAccessibleName(self._rate_label()+'输出速率 '+current+' tok/s');self.alpha=1.
         self.roll.set(current,self.value.get('rate'),animate=self.isVisible())
         self.update()
         if hasattr(self,'expiry'):self._schedule()
@@ -106,13 +108,17 @@ class LiveRateCard(QWidget):
         if self.isVisible() and expires is not None:
             if expires<=time.monotonic():self._expire()
             else:self.expiry.start(max(1,round((expires-time.monotonic())*1000)+1))
+    def _rate_label(self):
+        return '刚刚' if self.value.get('recent') else '实时'
     def _expire(self):
-        details=[dict(r,rate=None if r.get('expires') is not None and r['expires']<=time.monotonic() else r.get('rate'),waiting=True) for r in self.value.get('details',[])]
-        valid=[r for r in details if r.get('rate') is not None]
-        self.value=dict(self.value,rate=sum(r['rate'] for r in valid) if valid else None,expires=min((r['expires'] for r in valid),default=None),details=details)
-        self.roll.set(display(self.value.get('rate')),self.value.get('rate'),animate=self.isVisible());self.alpha=1.;self.setAccessibleName('实时输出速率 '+display(self.value.get('rate'))+' tok/s');self.update();self._schedule()
-        if hasattr(self,'popup') and self.popup.isVisible() and not self._rebuilding:self.popup.inspect(self.value,self)
-        if hasattr(self,'service_panel') and self.service_panel.isVisible() and not self._rebuilding:self.service_panel.inspect(self.value,self)
+        now=time.monotonic();details=[]
+        for row in self.value.get('details',[]):
+            expires=row.get('expires')
+            if expires is None or expires>now:
+                details.append(row)
+            elif not row.get('recent'):
+                details.append(dict(row,rate=None,expires=None,waiting=True))
+        self.set_data(dict(self.value,**summarize_rates(details)))
     def _inside_card(self):return self.isVisible() and QRect(self.mapToGlobal(QPoint()),self.size()).contains(QCursor.pos())
     def _inside_hint(self):return self._inside_card() or (self.popup.isVisible() and self.popup.geometry().contains(QCursor.pos()))
     def _show_hint(self):
@@ -234,7 +240,7 @@ class LiveRateCard(QWidget):
             p.setFont(ui_font(10))
         unit='tok/s';unit_width=QFontMetrics(p.font()).horizontalAdvance(unit);unit_x=self.width()-margin-unit_width
         p.drawText(QRectF(unit_x,.5,unit_width,height),Qt.AlignmentFlag.AlignVCenter,unit)
-        p.setOpacity(self.alpha);p.setFont(font(11 if expanded else 12,not expanded));p.setPen(theme_color(INK));value=display(self.value.get('rate'))
+        p.setOpacity(self.alpha);p.setFont(font(11 if expanded else 12,not expanded));p.setPen(theme_color(MUTED if self.value.get('recent') else INK));value=display(self.value.get('rate'))
         rect=QRectF(31,1,max(0,unit_x-35),height);self.number_rect=rect;self.unit_x=unit_x
         if QFontMetrics(p.font()).horizontalAdvance(value)>rect.width():p.setFont(font(10,True))
         self.roll.paint(p,rect)

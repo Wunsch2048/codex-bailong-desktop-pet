@@ -1,6 +1,6 @@
 """Small status island and quota satellite; no per-frame window movement."""
 from settings_controls import play_animation
-from theme_registry import color as theme_color
+from theme_registry import color as theme_color,revision as theme_revision
 from theme_runtime import set_theme_style,theme_style_source
 import math,time,re
 from PySide6.QtCore import Qt,QRectF,QSize,QTimer,Signal,QPointF,QVariantAnimation,QEasingCurve,QAbstractAnimation
@@ -136,25 +136,35 @@ class StatusIsland(QWidget):
 class QuotaSatellite(QToolButton):
     resetDue=Signal(float)
     def __init__(self,windows,caption,parent=None):
-        super().__init__(parent);self.setObjectName('island_quota');self.windows=windows;self.caption=caption
+        super().__init__(parent);self.setObjectName('island_quota')
         self.setFixedSize(38,38);self.setCursor(Qt.CursorShape.PointingHandCursor);self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.window=selected_quota(windows)
         self.reveal=ChartReveal(self)
         self._reveal_resume_ms=None
-        value=self.window.get('remaining')
-        exact=f'{value:g}%' if valid_percent(value) else '等待更新' if self.window.get('pending') else '未知'
-        self.setAccessibleName(self.window.get('name','额度')+'剩余 '+exact+'；点击展开详情')
-        self._prepare_dial()
+        self.window=None;self.reset=None;self._dial_theme=None
         self.timer=QTimer(self);self.timer.setSingleShot(True);self.timer.timeout.connect(self._due)
+        self.set_data(windows,caption)
+    def set_data(self,windows,caption):
+        self.windows=windows;self.caption=caption
+        selected=selected_quota(windows);theme=theme_revision()
+        if selected!=self.window or theme!=self._dial_theme:
+            self.window=selected;self._dial_theme=theme
+            value=selected.get('remaining')
+            exact=f'{value:g}%' if valid_percent(value) else '等待更新' if selected.get('pending') else '未知'
+            self.setAccessibleName(selected.get('name','额度')+'剩余 '+exact+'；点击展开详情')
+            self._prepare_dial();self.update()
         five=next((w for w in windows if w.get('name')=='5小时'),None)
-        self.reset=epoch((five or self.window).get('resetsAt'))
+        reset=epoch((five or self.window).get('resetsAt'))
+        if reset!=self.reset:
+            self.reset=reset;self._schedule_reset()
+    def _schedule_reset(self):
+        self.timer.stop()
+        if self.reset and self.isVisible():
+            self.timer.start(max(1,min(2147483647,math.ceil((self.reset-time.time())*1000))))
     def showEvent(self,event):
         super().showEvent(event)
-        # Showing a hidden compact surface is a new entry. The bubble owns
-        # preparation; never spend the reveal clock under its morph/landing.
+        # The bubble owns reveal preparation while the native canvas lands.
         if self.reveal.pending or self._reveal_resume_ms is not None:QTimer.singleShot(0,self,self.start_reveal)
-        if self.reset:
-            self.timer.start(max(1,min(2147483647,math.ceil((self.reset-time.time())*1000))))
+        self._schedule_reset()
     def begin_reveal(self):self._reveal_resume_ms=None;self.reveal.prepare()
     def start_reveal(self):
         transition=getattr(QWidget.window(self),'size_transition',None)

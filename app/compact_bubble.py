@@ -531,7 +531,7 @@ class CompactBubble(Bubble):
                 self._plot_resume=widget.reveal.animation.currentTime()
         for deck in self._deck_cache.values():
             deck.setParent(self.content);deck.hide()
-        self.island=None;self.minimal_quota=None;self._status_title=None;self._header=None;self.status_indicator.set_island(False)
+        self.island=None;self._island_quota=None;self._island_layout_key=None;self.minimal_quota=None;self._status_title=None;self._header=None;self.status_indicator.set_island(False)
         self.status_indicator.hide();self.status_indicator.setParent(self.content)
         self.refresh_button.hide();self.refresh_button.setParent(self.content)
         while self.layout.count():
@@ -1190,13 +1190,21 @@ class CompactBubble(Bubble):
         self.quotaRefreshRequested.emit();self.redraw()
     def _redraw_island(self):
         from island_widgets import StatusIsland,QuotaSatellite
+        circle=self.card_pixels(38);gap=self.card_pixels(5);island_width=self.card_pixels(124)
+        layout_key=(circle,gap,island_width,self.show_quota,self.capsule_action)
+        if self.island is not None and self._island_layout_key==layout_key and not self.size_transition.preparing:
+            self.refresh_status()
+            if self._island_quota is not None:self._island_quota.set_data(self.windows,self.quota_caption)
+            self._show_compact_surface()
+            self._position_now()
+            return
         self._redrawing=True
         entering=self._last_compact_surface!='mini'
         if self.details_tabs:self.detail_scroll={key:area.verticalScrollBar().value() for key,area in self.details_tabs.areas.items()}
         self.clear();self._last_compact_surface='mini';self.details_tabs=None;self.status_view.animation.stop();self.status_view.hide()
         self.quota_refresh_button=None;self.reset_refresh_buttons=[];self.token_refresh_buttons=[]
         self.layout.setContentsMargins(0,0,0,0);self.layout.setSpacing(0)
-        circle=self.card_pixels(38);gap=self.card_pixels(5);island_width=self.card_pixels(124)
+        self._island_layout_key=layout_key
         self.content.setFixedWidth(circle+gap+island_width+(circle+gap if self.show_quota else 0))
         # A native status icon must stay under the bubble while being moved.
         cluster=QWidget(self.content);cluster.setFixedHeight(circle);row=QHBoxLayout(cluster);row.setContentsMargins(0,0,0,0);row.setSpacing(gap)
@@ -1217,19 +1225,21 @@ class CompactBubble(Bubble):
         self.island.refresh()
         self.island.expand.connect(lambda:self.set_mode('auto'));row.addWidget(self.island)
         if self.show_quota:
-            quota=QuotaSatellite(self.windows,self.quota_caption);quota.clicked.connect(self.toggle_details)
+            quota=QuotaSatellite(self.windows,self.quota_caption,cluster);quota.clicked.connect(self.toggle_details)
+            self._island_quota=quota
             quota.setFixedSize(circle,circle)
             if entering:quota.begin_reveal()
             else:self._restore_quota_reveal(quota,'mini')
             quota.resetDue.connect(self._quota_reset_due);row.addWidget(quota)
         self.add(cluster);self._redrawing=False;self._fit_height()
-        owner=self.owner_pet()
-        if self.enabled and self.host_visible():self.show()
-        elif self.host_visible():self.size_transition.dismiss()
-        else:self.hide()
+        self._show_compact_surface()
         if self.show_quota and entering and not self.size_transition.preparing and not self.size_transition.running:
             QTimer.singleShot(0,quota,quota.start_reveal)
         self._position_now()
+    def _show_compact_surface(self):
+        if self.enabled and self.host_visible():self.show()
+        elif self.host_visible():self.size_transition.dismiss()
+        else:self.hide()
     def _restore_quota_reveal(self,widget,kind):
         from settings_controls import motion_enabled
         if not motion_enabled():widget.reveal.prepare();return

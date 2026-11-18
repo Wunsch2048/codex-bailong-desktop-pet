@@ -271,7 +271,10 @@ class PanelTransition(QObject):
         image=complete_frame(b)
         self.cover.image=image
         self.cover.next_image=None;self.cover.blend=0.
-        self.morph=SurfaceMorph(self.old_surface,SurfaceState.capture(b,target.topLeft(),frame=image,content=image))
+        translation_only=(target.size()==self.start_rect.size() and self._page_state()==self.start_page_state
+                          and b.panel_page=='status' and not b.expanded and not b.is_compact())
+        self.morph=SurfaceMorph(self.old_surface,SurfaceState.capture(b,target.topLeft(),frame=image,content=image),
+                                translation_only=translation_only)
         b.layout.setEnabled(False)
         self.frozen=[(b.layout.itemAt(i).widget(),b.layout.itemAt(i).widget().updatesEnabled()) for i in range(b.layout.count()) if b.layout.itemAt(i).widget()]
         for widget,enabled in self.frozen:widget.setUpdatesEnabled(False)

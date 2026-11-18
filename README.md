@@ -2,13 +2,23 @@
 
 在桌面查看 Codex 任务状态、完成提醒、账户额度和 Token 用量，也可以让白龙陪你一起工作。支持仅卡片使用，人物动画按需下载。
 
-**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.8.0/bailong-desktop-pet-1.8.0-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
+**[Windows 首次安装](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/download/v1.8.1/bailong-desktop-pet-1.8.1-setup.exe)** | **[程序更新](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/latest)** | [Linux 预览版](#linux--niri--kde) | [macOS 社区版](#macos)
 
-Windows 当前公开版 **v1.8.0**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
+Windows 当前公开版 **v1.8.1**。在线安装器直接获取最新累计程序；已有用户可在“设置 → 维护 → 软件更新”升级，无需逐个安装旧补丁。升级保留设置、统计和已下载素材。
 
 ![白龙桌宠封面](docs/media/cover.png)
 
 ## 最近更新
+
+### v1.8.1
+
+- **实时速率**　修复短回合结束太快、速率还没显示就被清掉的问题。最后一次有效速率最多保留 5 秒，悬停可看到「刚刚输出」。
+- **胶囊**　刷新状态和额度时原位更新，减少胶囊闪烁。
+- **顶部避让**　屏幕上方空间不够时，正常卡片按原尺寸移动，避免移位时文字和数字短暂变模糊。
+
+[查看 v1.8.1 完整更新与下载](https://github.com/Wunsch2048/codex-bailong-desktop-pet/releases/tag/v1.8.1)
+
+### v1.8.0
 
 - **卡片**　正常卡片和大卡片采用右侧略宽的双栏排版，统一间距、对齐与圆角。Codex 字标换成清晰的矢量字形，会话切换仍在任务区。数据面板各页随主卡片展开、收起，文字和图表一起移动。时间筛选加入切换动画，修复靠近屏幕顶部时展开大卡片导致整组下移的问题。
 - **个性化**　桌宠、卡片和数据面板可一起置顶、正常显示或置底。新增仅在 Codex 位于前台时显示的开关。人物和卡片可分别调整大小，也可按原有比例联动；拖动滑块即时预览，也可输入精确数值。整理设置分区与右键、托盘菜单，主题预览更快。

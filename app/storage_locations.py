@@ -81,7 +81,10 @@ def system_alias(p):
     if sys.platform=='darwin':
         for alias in ('/var','/tmp','/etc'):
             base=Path(alias)
-            if p==base or base in p.parents:return base.resolve()/p.relative_to(base)
+            if p==base or base in p.parents:
+                # Rewrite only when the alias really is Apple's link to /private; otherwise keep the path as given.
+                target=Path('/private')/base.name
+                return target/p.relative_to(base) if base.resolve()==target else p
     return p
 
 def plain(path):

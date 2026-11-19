@@ -16,7 +16,7 @@ from token_calendar import compact_tokens
 from token_analytics import model_series,token_analogy
 from book_reference import analogy as book_analogy,catalog as book_catalog
 from chart_reveal import ChartReveal,RasterChart
-from rate_chart import ComboChart,colors as rate_colors,rate_text,model_swatch,daily_rates,combined_rate
+from rate_chart import chart_cost_buckets,ComboChart,colors as rate_colors,rate_text,model_swatch,daily_rates,combined_rate
 from report_metrics import ReportMetricPair
 from report_calendar import DateButton,ReportCalendar
 from report_dates import CALENDAR_PERIODS,DAY,date_bounds,period_text,range_key
@@ -148,7 +148,8 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
         items=daily_rates(bins,{day:value for day,value in rates.items() if day<=series['through']})
         order={entry['model']:index for index,entry in enumerate(series['models'])}
         rate_label='全模型回合均速' if selected else '回合均速'
-        self.combo_layers(p,dynamic,bins,items,chart,by_model=True,model_order=order,rate_label=rate_label)
+        self.combo_layers(p,dynamic,bins,items,chart,by_model=True,model_order=order,rate_label=rate_label,
+                          cost_buckets=chart_cost_buckets(bins,self.report.get('_projects'),selected=selected,through=series['through']))
         self.hits=[(record['rect'],record['label']+'  '+record['amount']) for record in self._combo_records]
         self.points=[QPointF(record['rect'].center().x(),chart.bottom()) for record in self._combo_records]
         p.setFont(self._axis_font);p.setPen(theme_color(MUTED))
@@ -179,7 +180,7 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
     def keyPressEvent(self,event):
         if not self.combo_key(event):super().keyPressEvent(event)
     def focusOutEvent(self,event):
-        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.dismiss_inspection()
+        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.leave_inspection()
         super().focusOutEvent(event)
     def mouseMoveEvent(self,event):
         self.inspect_at(event.position())
@@ -190,7 +191,7 @@ class ReportPlot(QWidget,RasterChart,ComboChart):
         super().mouseMoveEvent(event)
     def _set_hover(self,text):
         if text!=self._hover:self._hover=text;self.hoverText.emit(text)
-    def leaveEvent(self,event):self.dismiss_inspection();self._set_hover('');super().leaveEvent(event)
+    def leaveEvent(self,event):self.leave_inspection();self._set_hover('');super().leaveEvent(event)
 
 class ModelRow(QToolButton):
     def __init__(self,item,total,index,selected,slot):
@@ -563,7 +564,7 @@ class DailyReport(QWidget):
         series=self._series()
         shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),0) if self.selected_model else series['total']
         self.model_total.setText(compact_tokens(shown))
-        self.plot.set_data(self.report,series,self.selected_model)
+        self.plot.set_data(dict(self.report,_projects=self.snapshot.get('projects')),series,self.selected_model)
         self.model_usage.set_usage(series,self.selected_model,shown)
         for period,button in self.range_buttons.items():button.setChecked(period==self.period)
         if self.period_control:
@@ -770,7 +771,7 @@ class DailyReport(QWidget):
             series=self._series()
             shown=next((m['total'] for m in series['models'] if m['model']==self.selected_model),0) if self.selected_model else series['total']
             self.model_total=self.scope_model_total;self.model_total.setText(compact_tokens(shown))
-            self.plot=ReportPlot(r,'bars',self.period,self.selected_model,series=series);content.addWidget(self.plot)
+            self.plot=ReportPlot(dict(r,_projects=self.snapshot.get('projects')),'bars',self.period,self.selected_model,series=series);content.addWidget(self.plot)
             self.model_usage=ModelUsageSummary();self.model_usage.set_usage(series,self.selected_model,shown);content.addWidget(self.model_usage)
             self._update_model_rate()
             model_group=QWidget();self.model_layout=QVBoxLayout(model_group);self.model_layout.setContentsMargins(0,0,0,0);self.model_layout.setSpacing(4)

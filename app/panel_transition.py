@@ -123,7 +123,7 @@ class PanelTransition(QObject):
         self.landing=NativeLanding(bubble);self.landing_timer=QTimer(self);self.landing_timer.setSingleShot(True)
         self.landing_timer.setInterval(0);self.landing_timer.timeout.connect(self.release_landing)
         self._preparation_updates=None;self.status_deferred=False;self.post_handoff=None;self.start_page_state=None
-        self._native_preparation_opacity=None
+        self._native_preparation_opacity=None;self.status_hovers=()
         self.page_direction=1
         self.animation=QVariantAnimation(self);self.animation.setDuration(280)
         self.animation.setStartValue(0.);self.animation.setEndValue(1.)
@@ -140,16 +140,20 @@ class PanelTransition(QObject):
     def _page_state(self):
         b=self.bubble
         return (b.panel_page,b.expanded,b.bubble_mode,b.auto_compact,b._minimal_normal_open,b.detail_tab)
-    def begin(self):
-        try:self._prepare()
+    def begin(self,*,status_layout=False):
+        try:self._prepare(status_layout)
         except Exception:
             # A failed capture/polish must never strand a transparent/frozen
             # window. Preserve the original error after restoring live input.
             self.cancel()
             raise
-    def _prepare(self):
+    def _prepare(self,status_layout=False):
         b=self.bubble
         self.release_landing()
+        self._settle_status_hover()
+        if status_layout:
+            candidates=(b.status_hover_plot(),b.inline_explanations,getattr(b,'live_rate_card',None))
+            self.status_hovers=tuple(control for control in candidates if valid_widget(control) and control.keep_hover_during_layout())
         self._hold_icon(True)
         self.start_island=b.is_island();self.canvas_morph=False;self.same_size_fade=False;self.closing=False;self.canvas_rect=None
         self.start_page_state=self._page_state()
@@ -164,7 +168,7 @@ class PanelTransition(QObject):
             # Guard BEFORE hiding children or rendering a replacement layout.
             # QWidget.render can flush a translucent HWND's backing store even
             # while updates are disabled; guarding only SetWindowPos is late.
-            self.landing.present(self.before,self.start_rect);present_barrier()
+            self.landing.present(self.before,self.start_rect);self._raise_status_hovers();present_barrier()
             self._native_preparation_opacity=b.windowOpacity();b.setWindowOpacity(0.);present_barrier()
         self.animation.stop();self.active=False;self.preparing=True;self.target_rect=None
         self.thaw()
@@ -243,7 +247,7 @@ class PanelTransition(QObject):
             self.cover.image=None;self.cover.next_image=None;self.cover.blend=0.
             if b.report:b.report.follow.finish(target)
             self.before=None;self.start_rect=None;self.old_surface=None;self.start_page_state=None;self.deferred=False;self.preparing=False;self._end_preparation();self._hold_icon(False)
-            b._refresh_today();return
+            self._settle_status_hover();b._refresh_today();return
         self.target_rect=target;b.layout.activate()
         # Let hidden target children run their normal Show/layout preparation
         # under the frozen native canvas. QTabWidget defers its internal pane
@@ -357,7 +361,7 @@ class PanelTransition(QObject):
             # bubble's native geometry; disabling QWidget updates alone does
             # not cover the Windows compositor during a layered-window resize.
             self.landing.present(self.morph.end.frame,self.target_rect)
-            present_barrier()
+            self._raise_status_hovers();present_barrier()
         native_opacity=b.windowOpacity() if guarded and QApplication.platformName()=='windows' else None
         if native_opacity is not None:b.setWindowOpacity(0.)
         enabled=b.updatesEnabled();b.setUpdatesEnabled(False)
@@ -391,6 +395,7 @@ class PanelTransition(QObject):
         else:b.repaint()
         if b.report:b.report.follow.finish(self.target_rect)
         self.active=False;self.before=None;self.old_surface=None;self.morph=None;self.same_size_fade=False;self.start_page_state=None;self.cover.image=None;self.cover.next_image=None;self.cover.blend=0.;self.start_rect=self.target_rect=None;self.canvas_rect=None
+        self._settle_status_hover()
         if guarded:self.landing_timer.start()
         else:self._hold_icon(False);self.start_reveals()
         deferred=self.deferred;self.deferred=False
@@ -399,6 +404,15 @@ class PanelTransition(QObject):
             refresh=self.bubble.redraw if deferred else self.bubble.refresh_status
             if guarded:self.post_handoff=refresh
             else:refresh()
+    def _raise_status_hovers(self):
+        for control in self.status_hovers:
+            if valid_widget(control):
+                popup=getattr(control,'popup',None) or getattr(control,'_popup',None)
+                if valid_widget(popup) and popup.isVisible():popup.raise_()
+    def _settle_status_hover(self):
+        controls=self.status_hovers;self.status_hovers=()
+        for control in controls:
+            if valid_widget(control):control.settle_hover_layout()
     def start_reveals(self):
         self.bubble._refresh_today()
         for widget in self.bubble.content.findChildren(QWidget):
@@ -456,5 +470,6 @@ class PanelTransition(QObject):
             self.canvas_morph=False;self.same_size_fade=False;self.closing=False
             if self.bubble.isVisible():self.bubble.content.show()
         self._end_preparation()
+        self._settle_status_hover()
         if self.landing.image is None:self._hold_icon(False)
         if self.bubble.isVisible():self.bubble._refresh_today()

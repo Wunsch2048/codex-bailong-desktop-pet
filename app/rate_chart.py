@@ -3,7 +3,7 @@ from datetime import datetime,timedelta
 from functools import lru_cache
 from bisect import bisect_left,bisect_right
 from PySide6.QtCore import Qt,QRectF,QPointF,QPoint,QRect,QTimer,QEvent
-from PySide6.QtGui import QPainter,QColor,QPen,QPainterPath,QFontMetrics,QPicture
+from PySide6.QtGui import QPainter,QColor,QCursor,QPen,QPainterPath,QFontMetrics,QPicture
 from PySide6.QtWidgets import QWidget,QToolTip
 from chart_curve import SmoothTrace
 from chart_reveal import bar_shape
@@ -76,13 +76,48 @@ def daily_rates(bins,days):
     keys=sorted(days)
     return [combined_rate(days[key] for key in keys[bisect_left(keys,b['start']):bisect_right(keys,b['end'])]) for b in bins]
 
+def chart_cost_buckets(bins,projects,*,day=None,selected=None,through=None):
+    costs=(projects or {}).get('chart_cost') or {}
+    if day is not None:
+        hours=costs.get('hours',{}) if day==costs.get('day') else None
+        return [hours.get(str(b['start']),{}) if hours is not None else None for b in bins]
+    days=costs.get('days')
+    if days is None:return [None]*len(bins)
+    keys=sorted(days);result=[]
+    for bucket in bins:
+        values={}
+        end=min(bucket['end'],through) if through else bucket['end']
+        for key in keys[bisect_left(keys,bucket['start']):bisect_right(keys,end)]:
+            for model,(usd,tokens) in days[key].items():
+                if selected is not None and model!=selected:continue
+                total=values.setdefault(model,[0.,0]);total[0]+=usd;total[1]+=tokens
+        result.append(values)
+    return result
+
+def inspection_costs(known,total,segments):
+    from cost_preferences import money
+    def caption(costs,expected):
+        if known is None:return '—'
+        usd=0.;covered=0
+        for value,tokens in costs:usd+=value;covered+=tokens
+        if not covered:return '待计价' if expected else '—'
+        return money(usd)+(' 部分' if covered<expected else '')
+    known_values=known or {}
+    result={'Token 用量':caption(known_values.values(),total)}
+    shown={label for label,_,_ in segments}
+    for label,value,_ in segments:
+        entries=([pair for model,pair in known_values.items() if model not in shown]
+                 if label=='其他模型' else [known_values.get(label,(0.,0))])
+        result[label]=caption(entries,value)
+    return result
+
 def inspection_notes(record):
     if record.get('future'):return '尚未到来','当前时段之后暂无记录'
     if record.get('available') is False:return '暂不可用','等待用量数据更新'
     item=record.get('rate_item') or {}
     if item.get('rate') is None:return '没有可计算的已完成回合','虚线连接，不表示零速率'
     count=item.get('valid_samples',item.get('samples'))
-    return (f'{count} 个已完成回合' if count is not None else '已完成回合均速'),'含思考、工具和等待'
+    return (f'{count} 个已完成回合' if count is not None else '已完成回合均速',)
 
 def missing_rate_pen(line):
     weak=QColor(line);weak.setAlphaF(.60)
@@ -102,11 +137,13 @@ def rate_paths(points,known):
 class ChartBubble(HintBubble):
     def __init__(self):super().__init__();self.record=None
     def hint_size(self):
+        cost_height=23 if (self.record or {}).get('costs') else 0
         if self.record and 'rows' in self.record:
             groups=self.groups()
-            return 254,69+sum(23*len(rows)+8 for rows in groups)
-        first=((self.record or {}).get('rate_item') or {}).get('first_token_ms')
-        return 254,178 if first is not None else 161
+            return 254,69+cost_height+sum(23*len(rows)+8 for rows in groups)
+        record=self.record or {}
+        extra=((record.get('rate_item') or {}).get('first_token_ms') is not None)
+        return 254,127+17*(len(inspection_notes(record))+extra)+cost_height
     def groups(self):
         rows=self.record['rows'][1:]
         count=self.record.get('model_count',0)
@@ -116,16 +153,19 @@ class ChartBubble(HintBubble):
         placement=(anchor,host.screen().availableGeometry(),self.hint_size(),owner,bool(owner.windowFlags()&Qt.WindowType.WindowStaysOnTopHint))
         if not self.isVisible() or placement!=getattr(self,'_placement',None):
             self.present(record['label'],record.get('subtitle','用量与回合均速'),anchor,host.screen(),owner=owner,
-                         topmost=placement[-1],initial_level=1.)
+                         topmost=placement[-1])
             self._placement=placement
         else:
-            self.title=record['label'];self.subtitle=record.get('subtitle','用量与回合均速')
+            self.title=record['label'];self.subtitle=record.get('subtitle','用量与回合均速');self._animate(1.)
         self.update()
         if 'rows' in record:
-            self.setAccessibleDescription('；'.join(f'{name} {value}' for name,value,_ in record['rows']))
+            costs=record.get('costs',{})
+            self.setAccessibleDescription('；'.join(f'{name} {value}'+(f'，成本 {costs[name]}' if name in costs else '')
+                                                   for name,value,_ in record['rows']))
             return
         notes=inspection_notes(record)
-        self.setAccessibleName(record['label']);self.setAccessibleDescription(f"用量 {record['amount']}；回合均速 {self.rate_value()}；回合中位速率 {self.median_value()}；{notes[0]}；{notes[1]}")
+        cost=record.get('costs',{}).get('Token 用量')
+        self.setAccessibleName(record['label']);self.setAccessibleDescription((f"成本 {cost}；" if cost else '')+f"用量 {record['amount']}；回合均速 {self.rate_value()}；回合中位速率 {self.median_value()}；"+ "；".join(notes))
     def rate_value(self):
         record=self.record or {}
         return '—' if record.get('future') or record.get('available') is False else rate_text(record.get('rate_item'))
@@ -138,12 +178,12 @@ class ChartBubble(HintBubble):
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         p.fillRect(self.rect(),Qt.GlobalColor.transparent)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing);p.setOpacity(self.level)
+        if not self.apply_motion(p):return
         theme,bar,line=colors()
         body=QRectF(1,1,self.width()-2,self.height()-2)
-        p.setPen(QPen(QColor(theme['border']),1));p.setBrush(QColor(theme['surface']))
-        p.drawRoundedRect(body,9,9)
+        self.paint_panel_shell(p,body)
         p.setFont(ui_font(12,True));p.setPen(QColor(theme['ink']))
+        costs=self.record.get('costs',{})
         p.drawText(QRectF(11,5,self.width()-22,19),Qt.AlignmentFlag.AlignVCenter,self.record['label'])
         def paint_row(label,value,swatch,y,primary=False):
             if primary:
@@ -153,12 +193,13 @@ class ChartBubble(HintBubble):
             if swatch and not primary:
                 p.setPen(Qt.PenStyle.NoPen);p.setBrush(QColor(swatch))
                 p.drawRoundedRect(QRectF(13,y+8,6,7),2,2)
+            right=self.width()-13
+            if not primary and label in costs:value=costs[label]+' / '+value
             p.setFont(ui_font(17 if primary else 12,True))
             p.setPen(QColor(theme['accentText'] if primary else theme['ink']))
             metrics=p.fontMetrics()
-            value=metrics.elidedText(value,Qt.TextElideMode.ElideMiddle,max(0,self.width()-85))
+            value=metrics.elidedText(value,Qt.TextElideMode.ElideMiddle,max(0,right-72))
             value_width=metrics.horizontalAdvance(value)
-            right=self.width()-13
             p.drawText(QPointF(right-value_width,y+(height+metrics.ascent()-metrics.descent())/2),value)
             p.setFont(ui_font(12 if primary else 11,primary));p.setPen(QColor(theme['ink'] if primary else theme['muted']))
             left=23 if swatch and not primary else 13
@@ -166,11 +207,15 @@ class ChartBubble(HintBubble):
             width=max(0,right-value_width-left-8)
             p.drawText(QPointF(left,y+(height+metrics.ascent()-metrics.descent())/2),
                        metrics.elidedText(label,Qt.TextElideMode.ElideRight,width))
+        total_end=65
+        if costs:
+            paint_row('总成本',costs['Token 用量'],None,61)
+            total_end+=23
         if 'rows' in self.record:
             paint_row(*self.record['rows'][0],28,True)
-            y=65
+            y=total_end
             for rows in self.groups():
-                if y>65:
+                if y>total_end:
                     p.setPen(QColor(theme['border']));p.drawLine(QPointF(12,y-4),QPointF(self.width()-12,y-4))
                 for label,value,swatch in rows:
                     paint_row(label,value,swatch,y);y+=23
@@ -178,22 +223,26 @@ class ChartBubble(HintBubble):
             return
 
         paint_row('Token 用量',self.record['amount'],bar,28,True)
-        paint_row('回合均速',self.rate_value(),line,62)
-        paint_row('回合中位速率',self.median_value(),None,85)
-        p.setPen(QColor(theme['border']));p.drawLine(QPointF(12,111),QPointF(self.width()-12,111))
+        offset=total_end-65
+        paint_row('回合均速',self.rate_value(),line,62+offset)
+        paint_row('回合中位速率',self.median_value(),None,85+offset)
+        p.setPen(QColor(theme['border']));p.drawLine(QPointF(12,111+offset),QPointF(self.width()-12,111+offset))
         p.setFont(ui_font(11));p.setPen(QColor(theme['muted']))
         notes=list(inspection_notes(self.record))
         first=(self.record.get('rate_item') or {}).get('first_token_ms')
         if first is not None:notes.append(f'首 Token 等待 {first/1000:.1f} 秒')
         for i,note in enumerate(notes):
-            p.drawText(QRectF(12,116+i*17,self.width()-24,17),Qt.AlignmentFlag.AlignVCenter,note)
+            p.drawText(QRectF(12,116+offset+i*17,self.width()-24,17),Qt.AlignmentFlag.AlignVCenter,note)
 
 class ComboChart:
     def init_combo(self):
         self._inspection=-1;self._combo_records=[];self._rate_points=[];self._popup=ChartBubble();self.destroyed.connect(self._popup.deleteLater)
         self._inspect_delay=QTimer(self);self._inspect_delay.setSingleShot(True);self._inspect_delay.setInterval(350);self._inspect_delay.timeout.connect(self.show_inspection)
+        self._inspect_leave=QTimer(self);self._inspect_leave.setSingleShot(True);self._inspect_leave.setInterval(65)
+        self._inspect_leave.timeout.connect(self.check_inspection_pointer);self._pointer_inspection=False;self._hold_hover_layout=False
+        self.reveal.animation.finished.connect(self.show_inspection_after_reveal)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-    def combo_layers(self,p,dynamic,bins,rate_items,plot,available=True,by_model=False,output_rates=None,model_order=None,rate_label='回合均速'):
+    def combo_layers(self,p,dynamic,bins,rate_items,plot,available=True,by_model=False,output_rates=None,model_order=None,rate_label='回合均速',cost_buckets=None):
         theme,bar,line=colors();bottom=plot.bottom();n=max(1,len(bins));slot=plot.width()/n
         trace_items=rate_items if output_rates is None else output_rates
         totals={}
@@ -216,6 +265,8 @@ class ComboChart:
             record=dict(label=b['label'],amount=amount,rate_item=item,rect=rect,future=bool(b.get('future')),available=available)
             segments=model_segments(b.get('models',{}),order) if by_model and available and not b.get('future') else []
             if segments and sum(value for _,value,_ in segments)!=b['value']:segments=[]
+            if cost_buckets is not None:
+                record['costs']=inspection_costs(cost_buckets[i],b['value'],segments) if available and not b.get('future') else {'Token 用量':'—'}
             if by_model:
                 rows=[('Token 用量',amount,None)]
                 if available and not b.get('future'):
@@ -287,36 +338,78 @@ class ComboChart:
             for i,point in self._rate_points:
                 if i==self._inspection:
                     p.setPen(QPen(QColor(line),1.2));p.setBrush(QColor(theme['panel']));p.drawEllipse(point,2.1,2.1)
+    def inspection_index(self,position):
+        return next((i for i,r in enumerate(self._combo_records) if r['rect'].contains(position)),-1)
     def inspect_at(self,position):
-        index=next((i for i,r in enumerate(self._combo_records) if r['rect'].contains(position)),-1)
+        if self._hold_hover_layout:return
+        index=self.inspection_index(position)
+        if index>=0:
+            self._pointer_inspection=True;self._inspect_leave.stop()
         if index==self._inspection:return
         self._inspection=index;self.update()
-        if index<0:self.dismiss_inspection();return
+        if index<0:self.dismiss_inspection(animated=True);return
         if self._popup.isVisible():self.show_inspection()
         else:self._inspect_delay.start()
+    def keep_hover_during_layout(self):
+        if self._hold_hover_layout:return True
+        if not self._pointer_inspection or not self._popup.isVisible() or not self.isVisible():return False
+        point=QPointF(self.mapFromGlobal(QCursor.pos()))
+        if self.inspection_index(point)<0:return False
+        self._hold_hover_layout=True
+        self._inspect_leave.stop()
+        return True
+    def settle_hover_layout(self):
+        if not self._hold_hover_layout:return
+        self._hold_hover_layout=False
+        if self.isVisible():self.check_inspection_pointer()
+        else:self.dismiss_inspection()
+    def leave_inspection(self):
+        if self._inspection<0 or self._hold_hover_layout:return
+        if self._pointer_inspection:
+            if not self._inspect_leave.isActive():self._inspect_leave.start()
+        else:self.dismiss_inspection(animated=True)
+    def check_inspection_pointer(self):
+        if self._hold_hover_layout or not self.isVisible() or self._inspection<0:return
+        self.ensure_layers()
+        point=QPointF(self.mapFromGlobal(QCursor.pos()))
+        index=self.inspection_index(point)
+        if not self.rect().contains(point.toPoint()) or index<0:
+            self.dismiss_inspection(animated=True)
+        elif self._popup.isVisible() and index==self._inspection:
+            self.show_inspection()
+        else:self.inspect_at(point)
     def hold_inspection(self):
         if not 0<=self._inspection<len(self._combo_records):return None
         return (self._combo_records[self._inspection]['label'],self._popup.isVisible(),self._inspect_delay.isActive())
     def resume_inspection(self,state):
         if state is None:return
         self.ensure_layers()
-        self._inspection=next((i for i,r in enumerate(self._combo_records) if r['label']==state[0]),-1)
+        index=next((i for i,r in enumerate(self._combo_records) if r['label']==state[0]),-1)
+        if index<0 and self._hold_hover_layout:return
+        if index<0 and self._pointer_inspection and self.isVisible():
+            index=self.inspection_index(QPointF(self.mapFromGlobal(QCursor.pos())))
+        self._inspection=index
         if self._inspection<0:self.dismiss_inspection();return
         if state[1]:self.show_inspection()
         elif state[2] and not self._inspect_delay.isActive() and self.isVisible():self._inspect_delay.start(1)
         self.update()
+    def show_inspection_after_reveal(self):
+        if not self._inspect_delay.isActive():self.show_inspection()
     def show_inspection(self):
-        if not self.isVisible() or self.reveal.progress<.99 or not 0<=self._inspection<len(self._combo_records):return
+        if self._hold_hover_layout or not self.isVisible() or self.reveal.progress<.99 or not 0<=self._inspection<len(self._combo_records):return
         rect=self._combo_records[self._inspection]['rect'].toAlignedRect();anchor=QRect(self.mapToGlobal(rect.topLeft()),rect.size())
         self._popup.inspect(self._combo_records[self._inspection],anchor,self)
-    def dismiss_inspection(self):
+    def dismiss_inspection(self,animated=False):
         from shiboken6 import isValid
         if isValid(self._inspect_delay):self._inspect_delay.stop()
+        if isValid(self._inspect_leave):self._inspect_leave.stop()
+        self._pointer_inspection=False;self._hold_hover_layout=False
         self._inspection=-1
-        if isValid(self._popup) and isValid(self._popup.animation):self._popup.dismiss(True)
+        if isValid(self._popup) and isValid(self._popup.animation):self._popup.dismiss(not animated)
         self.update()
     def combo_key(self,event):
         if event.key() in (Qt.Key.Key_Left,Qt.Key.Key_Right) and self._combo_records:
+            self._pointer_inspection=False;self._inspect_leave.stop()
             self._inspection=max(0,min(len(self._combo_records)-1,self._inspection+(1 if event.key()==Qt.Key.Key_Right else -1)));self.show_inspection();self.update();return True
         if event.key()==Qt.Key.Key_Escape:self.dismiss_inspection();return True
         return False

@@ -32,25 +32,28 @@ class LiveRateHoverTests(unittest.TestCase):
         self.position=card.mapToGlobal(card.rect().center());card._show_hint();APP.processEvents()
         self.assertTrue(card.popup.isVisible())
 
-    def test_hover_first_visible_frame_is_opaque(self):
+    def test_hover_animates_and_holds_opaque_frame_on_refresh(self):
         card=self.card();levels=[]
         class FirstShow(QObject):
             def eventFilter(self,obj,event):
                 if event.type()==QEvent.Type.Show:levels.append(obj.level)
                 return False
-        observer=FirstShow();card.popup.installEventFilter(observer);self.show_hint(card)
-        self.assertEqual(levels,[1.]);self.assertEqual(card.popup.level,1.)
+        observer=FirstShow();card.popup.installEventFilter(observer)
+        with patch('hover_hints.motion_enabled',return_value=True),patch('hover_hints.play_animation',side_effect=lambda animation:animation.start()):
+            self.show_hint(card)
+            self.assertEqual(levels,[0.])
+            card.popup.animation.setCurrentTime(100)
+            self.assertGreater(card.popup.level,0.);self.assertLess(card.popup.level,1.)
+            card.popup.animation.setCurrentTime(card.popup.animation.duration())
+        self.assertEqual(card.popup.level,1.)
         card.set_data(dict(rate=15,details=[dict(name='updated',rate=15)]));self.assertEqual(card.popup.level,1.)
-    def test_both_realtime_windows_use_normal_width_when_card_is_expanded(self):
+    def test_realtime_hover_uses_normal_width_when_card_is_expanded(self):
         bubble=CompactBubble();self.widgets.append(bubble);bubble.move(100,400)
         with patch.object(bubble,'card_pixels',side_effect=lambda pixels:round(pixels*1.2)):
             bubble.expanded=True;bubble.redraw();bubble.show();APP.processEvents()
             card=bubble.live_rate_card
             card.popup.inspect(card.value,card)
             self.assertEqual(card.popup.width(),322)
-            card.popup.dismiss(True)
-            card.service_panel.inspect(card.value,card,'service')
-            self.assertEqual(card.service_panel.width(),322)
             self.assertEqual(bubble.normal_card_width(),322)
     def test_trace_is_bounded_and_omits_session_content(self):
         card=self.card();card.set_data(dict(rate=30,details=[dict(session='private-id',name='private-title',rate=30)]));self.show_hint(card)
@@ -86,10 +89,11 @@ class LiveRateHoverTests(unittest.TestCase):
         card._watch_hint();QTest.qWait(110)
         for _ in range(4):
             card.begin_rebuild(True);APP.processEvents();QTest.qWait(35)
+        QTest.qWait(160)
         self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive())
 
     def test_data_refresh_updates_rows_without_restarting_popup_fade(self):
-        card=self.card();self.show_hint(card);card.popup.animation.setCurrentTime(160)
+        card=self.card();self.show_hint(card);card.popup.animation.setCurrentTime(card.popup.animation.duration())
         with patch.object(card.popup,'present',wraps=card.popup.present) as present:
             card.set_data(dict(rate=15,details=[dict(session='a',name='会话',rate=15)]))
             self.assertEqual(card.popup.rows[0]['rate'],15)
@@ -101,7 +105,7 @@ class LiveRateHoverTests(unittest.TestCase):
         card._watch_hint();QTest.qWait(40)
         self.position=card.mapToGlobal(card.rect().center());card._watch_hint();QTest.qWait(200)
         self.assertTrue(card.popup.isVisible())
-        self.position=QPoint(700,500);card._watch_hint();QTest.qWait(250)
+        self.position=QPoint(700,500);card._watch_hint();QTest.qWait(365)
         self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive())
 
     def test_popup_pointer_and_scroll_survive_same_surface_rebuild(self):
@@ -133,7 +137,7 @@ class LiveRateHoverTests(unittest.TestCase):
 
     def test_repeated_refresh_has_no_popup_hide_and_paints_new_rate(self):
         bubble=CompactBubble();self.widgets.append(bubble);bubble.move(100,400);bubble.show();APP.processEvents()
-        card=bubble.live_rate_card;self.show_hint(card);card.popup.animation.setCurrentTime(160)
+        card=bubble.live_rate_card;self.show_hint(card);card.popup.animation.setCurrentTime(card.popup.animation.duration())
         class Events(QObject):
             def __init__(self):super().__init__();self.hides=0
             def eventFilter(self,obj,event):
@@ -146,6 +150,20 @@ class LiveRateHoverTests(unittest.TestCase):
             self.assertTrue(card.popup.isVisible())
         self.assertEqual(events.hides,0);self.assertEqual(card.popup.total,111)
         self.assertNotEqual(before,card.popup.grab().toImage())
+
+    def test_same_card_height_change_retains_open_realtime_hint(self):
+        bubble=CompactBubble();self.widgets.append(bubble);bubble.move(100,300);bubble.show();APP.processEvents()
+        card=bubble.live_rate_card;self.show_hint(card);popup=card.popup
+        self.position=popup.geometry().center()
+        original=popup.hide
+        with patch.object(popup,'hide',wraps=original) as hide:
+            for sid in ('first','second'):
+                bubble.roster.observe(dict(session=sid,state='working'));bubble.refresh_status()
+            transition=bubble.size_transition;self.assertTrue(transition.running)
+            APP.processEvents();self.assertTrue(popup.isVisible())
+            transition.complete();APP.processEvents()
+            self.assertTrue(popup.isVisible());hide.assert_not_called()
+        self.assertIs(bubble.live_rate_card,card)
 
     def test_expansion_hides_hint_and_blocks_show_during_handoff(self):
         bubble=CompactBubble();self.widgets.append(bubble);bubble.show();APP.processEvents()
@@ -174,7 +192,7 @@ class LiveRateHoverTests(unittest.TestCase):
 
     def test_visible_hover_keeps_native_owner_when_topmost_changes(self):
         card=self.card();self.show_hint(card);popup=card.popup
-        popup.animation.setCurrentTime(160);owner=popup._placement[1:]
+        popup.animation.setCurrentTime(card.popup.animation.duration());owner=popup._placement[1:]
         with patch.object(popup,'present',wraps=popup.present) as present:
             card.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint,not bool(card.windowFlags()&Qt.WindowType.WindowStaysOnTopHint));card.show()
             popup.inspect(card.value,card)
@@ -182,53 +200,13 @@ class LiveRateHoverTests(unittest.TestCase):
             self.assertEqual(popup._placement[1:],owner)
             self.assertEqual(popup.level,1.)
 
-    def test_click_opens_service_directly_and_pointer_leave_does_not_close_it(self):
-        card=self.card();self.show_hint(card)
+    def test_click_does_not_open_a_second_window_or_dismiss_hover(self):
+        card=self.card()
         QTest.mouseClick(card,Qt.MouseButton.LeftButton)
-        panel=card.service_panel
-        self.assertTrue(panel.isVisible());self.assertEqual(panel.page,'service');self.assertFalse(card.popup.isVisible());self.assertEqual(panel.level,1.)
-        self.position=QPoint(900,800);card._watch_hint();QTest.qWait(250)
-        self.assertTrue(panel.isVisible())
-
-    def test_service_panel_deactivate_closes_only_service_panel(self):
-        card=self.card();QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel
-        APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate));self.assertFalse(panel.isVisible())
-    def test_second_click_stays_closed_when_deactivate_arrives_before_or_after_press(self):
-        from public_status import shared
-        card=self.card()
-        with patch.object(shared(),'request'):
-            for before_press in (True,False):
-                QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel;self.assertTrue(panel.isVisible())
-                if before_press:APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
-                QTest.mousePress(card,Qt.MouseButton.LeftButton)
-                if not before_press:APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
-                QTest.mouseRelease(card,Qt.MouseButton.LeftButton);APP.processEvents()
-                self.assertFalse(panel.isVisible());self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_delay.isActive())
-    def test_outside_deactivate_and_expired_focus_loss_do_not_consume_a_new_open(self):
-        from public_status import shared
-        import time
-        card=self.card()
-        with patch.object(shared(),'request'):
-            QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel
-            self.position=QPoint(-1000,-1000);APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
-            self.assertFalse(panel.isVisible());QTest.mouseClick(card,Qt.MouseButton.LeftButton);self.assertTrue(panel.isVisible())
-            self.position=card.mapToGlobal(card.rect().center());APP.sendEvent(panel,QEvent(QEvent.Type.WindowDeactivate))
-            card._service_deactivated_at=time.monotonic()-2
-            QTest.mouseClick(card,Qt.MouseButton.LeftButton);self.assertTrue(panel.isVisible())
-    def test_service_has_no_close_symbol_or_right_header_close_hit_target(self):
-        from public_status import shared
-        from PySide6.QtGui import QPainter
-        card=self.card()
-        with patch.object(shared(),'request'):
-            QTest.mouseClick(card,Qt.MouseButton.LeftButton);panel=card.service_panel;labels=[]
-            class Recorder(QPainter):
-                def drawText(self,*args):
-                    if args and isinstance(args[-1],str):labels.append(args[-1])
-                    return super().drawText(*args)
-            with patch('service_rate_ui.QPainter',Recorder):panel.grab()
-            self.assertIn('‹ 会话速率',labels);self.assertNotIn('×',labels)
-            QTest.mouseClick(panel,Qt.MouseButton.LeftButton,pos=QPoint(panel.width()-12,16))
-            self.assertTrue(panel.isVisible());self.assertEqual(panel.page,'service')
-
+        self.assertFalse(hasattr(card,'service_panel'));self.assertFalse(card.popup.isVisible())
+        self.show_hint(card)
+        QTest.mouseClick(card,Qt.MouseButton.LeftButton)
+        self.assertTrue(card.popup.isVisible())
+        self.assertTrue(card.popup.windowFlags()&Qt.WindowType.WindowDoesNotAcceptFocus)
 
 if __name__=='__main__':unittest.main()

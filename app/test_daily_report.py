@@ -91,7 +91,24 @@ class ReportUiTests(unittest.TestCase):
         from PySide6.QtWidgets import QPushButton
         more.click();APP.processEvents();menu=self.r.project_view._cost_actions
         self.assertTrue(menu.isVisible());self.assertEqual([a.text() for a in menu.findChildren(QPushButton)],['导出统计','计价设置','估算说明'])
-        more.click();self.assertFalse(menu.isVisible());self.assertFalse(more.isChecked())
+        more.click();self.assertFalse(more.isChecked())
+        menu.animation.setCurrentTime(menu.animation.duration());self.assertFalse(menu.isVisible())
+
+    def test_partial_daily_cost_exposes_pricing_coverage(self):
+        from project_cost_ui import DailyCostButton
+        button=DailyCostButton()
+        try:
+            day='2026-11-19';report=dict(day=day,yesterday_total=1000)
+            projects=dict(yesterday=day,ranges={'yesterday':[dict(tokens=1000,pending_tokens=990,cost=.12)]})
+            button.set_data(report,projects)
+            self.assertEqual(button.amount,.12)
+            self.assertTrue(button.partial)
+            self.assertIn('1.0%',button.toolTip())
+            projects['ranges']['yesterday'][0]['pending_tokens']=1000
+            button.set_data(report,projects)
+            self.assertIsNone(button.amount)
+            self.assertTrue(button.partial)
+        finally:button.deleteLater();APP.processEvents()
 
     def test_daily_cost_scope_and_unknown_do_not_reuse_stale_day(self):
         data=sample();row=dict(id='archived',name='归档项目',path='D:/p',cost=2.,parts=[1.,.2,.8],tokens=1000,pending_tokens=0,models=[],sessions=1,archived=True)

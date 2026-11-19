@@ -161,14 +161,16 @@ class SurfaceUiTests(unittest.TestCase):
         pop=r.project_view._cost_actions
         self.assertTrue(pop.isVisible());self.assertTrue(button.isChecked())
         QTest.mouseClick(button,Qt.MouseButton.LeftButton)
-        self.assertFalse(pop.isVisible());self.assertFalse(button.isChecked())
+        self.assertFalse(button.isChecked())
+        pop.animation.setCurrentTime(pop.animation.duration());self.assertFalse(pop.isVisible())
         QTest.mouseClick(button,Qt.MouseButton.LeftButton)
         pop.native=SimpleNamespace(foreground=lambda:2,mouse_button_down=lambda:False)
         pop.foreground=1;pop.check_outside()
         self.assertFalse(pop.isVisible());self.assertFalse(button.isChecked())
         QTest.mouseClick(button,Qt.MouseButton.LeftButton)
         QTest.mouseClick(r.page_buttons['overview'],Qt.MouseButton.LeftButton)
-        self.assertFalse(pop.isVisible());self.assertFalse(button.isChecked());self.assertEqual(r.page,'overview')
+        self.assertFalse(button.isChecked());self.assertEqual(r.page,'overview')
+        pop.animation.setCurrentTime(pop.animation.duration());self.assertFalse(pop.isVisible())
 
 
 if __name__=='__main__':unittest.main()

@@ -465,6 +465,14 @@ class SurfaceMorph:
     def __init__(self,start,end,translation_only=False):
         self.start=start;self.end=end;self._landing=None
         self.translation_only=translation_only
+        self.status_height_only=bool(
+            start.page==end.page=='status' and not (start.expanded or end.expanded or start.island or end.island)
+            and start.radius==end.radius==PANEL_RADIUS and start.rect.width()==end.rect.width()
+            and start.rect.height()!=end.rect.height() and start.frame is not None and end.frame is not None
+            and 'conversations' in start.shared_bounds and 'conversations' in end.shared_bounds
+            and start.shared_bounds['conversations'].top()==end.shared_bounds['conversations'].top()
+            and start.rect.height()-start.shared_bounds['conversations'].bottom()==end.rect.height()-end.shared_bounds['conversations'].bottom()
+        )
         self.shrinking=end.rect.width()*end.rect.height()<start.rect.width()*start.rect.height()
         self.page_switch=bool(start.expanded and end.expanded and start.page!=end.page and not start.island and not end.island)
         self.shared_parts={};self.exclusive_parts=[];self.body_frames=(start.content,end.content)
@@ -521,7 +529,7 @@ class SurfaceMorph:
             for satellite,image in state.satellites:rect=rect.united(satellite)
         return rect.adjusted(-1,-1,1,1).toAlignedRect()
     def prepare_landing(self,canvas,ratio):
-        if self.translation_only:return
+        if self.translation_only or self.status_height_only:return
         for part in self.shared_parts.values():part.prepare(ratio)
         if self.end.frame is None:return
         key=(canvas.x(),canvas.y(),canvas.width(),canvas.height(),ratio)
@@ -543,6 +551,11 @@ class SurfaceMorph:
             return
         if time<=0 and self.start.frame is not None:
             a=self.start;p.drawPixmap(raster_offset(a.frame_origin,canvas.topLeft(),p.device().devicePixelRatioF(),a.screen_origin),a.frame);return
+        if self.status_height_only:
+            if time>=1.:
+                z=self.end;p.drawPixmap(raster_offset(z.frame_origin,canvas.topLeft(),p.device().devicePixelRatioF(),z.screen_origin),z.frame)
+            else:self._paint_status_height(p,time,canvas)
+            return
         if time>=.9 and self.end.frame is not None:
             self.prepare_landing(canvas,p.device().devicePixelRatioF())
             f=stage(time,.9,1.);a,z=self._landing[1]
@@ -559,6 +572,28 @@ class SurfaceMorph:
             q.setOpacity(1.);q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus);q.drawPixmap(0,0,weighted);q.end()
             p.drawPixmap(0,0,mixed);return
         self._paint_body(p,time,canvas)
+    def _paint_status_height(self,p,time,canvas):
+        a,z=self.start,self.end
+        rect=self.geometry(time);ratio=p.device().devicePixelRatioF()
+        origin=raster_offset(rect.topLeft(),canvas.topLeft(),ratio,z.screen_origin)
+        end_row=z.shared_bounds['conversations']
+        row_bottom=pixel_size(rect.height()-(z.rect.height()-end_row.bottom()),ratio)/ratio
+        new_bottom=pixel_size(end_row.bottom(),ratio)/ratio
+        height=pixel_size(rect.height(),ratio)/ratio
+        # The upper header and lower module block each stay at their original
+        # device-pixel size. Only the strip between them changes height.
+        def strip(frame,top,bottom,shift=0.):
+            if bottom<=top:return
+            p.save()
+            p.setClipRect(QRectF(origin.x(),origin.y()+top,rect.width()+1/ratio,bottom-top),
+                          Qt.ClipOperation.IntersectClip)
+            p.drawPixmap(origin+QPointF(0,shift),frame)
+            p.restore()
+
+        strip(z.frame,0.,min(row_bottom,new_bottom))
+        strip(a.frame,new_bottom,row_bottom)
+        strip(z.frame,row_bottom,height,row_bottom-new_bottom)
+
     def _paint_body(self,p,time,canvas):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         a,z=self.start,self.end;rect=self.geometry(time).translated(-canvas.x(),-canvas.y())

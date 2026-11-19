@@ -77,12 +77,15 @@ class CostExtensionTests(unittest.TestCase):
         for card in (QRect(400,400,268,180),QRect(0,0,268,180),QRect(730,0,268,180),QRect(200,0,600,180)):
             r=bubble_position(card,card,(294,140),area);self.assertTrue(area.contains(r));self.assertFalse(r.intersects(card))
         area=QRect(0,0,300,200);card=QRect(0,0,268,180);self.assertTrue(area.contains(bubble_position(card,card,(294,140),area)))
-    def test_service_detail_keeps_rate_and_back_returns_same_popup(self):
+    def test_realtime_hover_keeps_summary_and_click_leaves_it_in_place(self):
         from live_rate_ui import LiveRateCard
         host=LiveRateCard(dict(rate=20,details=[dict(name='a',rate=20)]));self.widgets.append(host);host.setGeometry(350,400,121,20);host.show()
         with patch.object(shared(),'request'):
-            QTest.mouseClick(host,__import__('PySide6.QtCore',fromlist=['Qt']).Qt.MouseButton.LeftButton);popup=host.service_panel;popup.geometry_motion.setCurrentTime(200);APP.processEvents();self.assertEqual(popup.page,'service');self.assertEqual(popup.total,20)
-            QTest.mouseClick(popup,__import__('PySide6.QtCore',fromlist=['Qt']).Qt.MouseButton.LeftButton,pos=QPoint(40,16));self.assertEqual(popup.page,'sessions')
+            host.popup.inspect(host.value,host);popup=host.popup
+            popup.animation.setCurrentTime(popup.animation.duration());APP.processEvents()
+            QTest.mouseClick(host,__import__('PySide6.QtCore',fromlist=['Qt']).Qt.MouseButton.LeftButton)
+            self.assertTrue(popup.isVisible());self.assertEqual(popup.total,20);self.assertIs(popup.service,shared())
+            self.assertFalse(hasattr(host,'service_panel'))
     def test_native_session_route_shows_token_parts_without_expansion_and_returns(self):
         dbpath,data=fixture(self.home);view=ProjectCosts();self.widgets.append(view);view.resize(260,360);view.set_data(data,'all');view.show();view.select(data['ranges']['all'][0]);session=detail_snapshot(dbpath,data['ranges']['all'][0])[0];view.open_session(session);QTest.qWait(280)
         from project_cost_ui import TurnRow

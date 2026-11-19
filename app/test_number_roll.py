@@ -21,28 +21,17 @@ class RollTests(unittest.TestCase):
     def test_unchanged_rounded_number_has_no_animation(self):
         r=self.roll;r.snap('90.52M',90520000);r.set('90.52M',90520001)
         self.assertEqual(r.animation.state(),QAbstractAnimation.State.Stopped)
-    def test_today_roll_counts_display_steps_and_carries(self):
+    def test_digit_roll_duration_is_bounded_and_carries_land(self):
         roll=self.roll;roll.digits=True
-        roll.snap('90.32M',90320000);roll.set('90.52M',90520000)
-        self.assertEqual(roll.animation.duration(),420)
-        self.assertEqual(roll.digit_tracks[1][:2],(9032,20))
-        self.assertEqual(roll.digit_tracks[2][:2],(903,2))
-        self.assertEqual(len(roll.digit_tracks),2)
-        roll.animation.setCurrentTime(210)
-        self.assertAlmostEqual(roll.progress,.5,places=4)
-        roll.advance(.16)
-        start_progress=roll.progress
-        self.assertLess(start_progress,.08)
-        roll.advance(.84)
-        self.assertAlmostEqual(1-roll.progress,start_progress,places=4)
-        roll.animation.setCurrentTime(420)
-        self.assertEqual(roll.current,'90.52M')
-        roll.snap('99.98M',99980000);roll.set('100.02M',100020000)
-        self.assertEqual(roll.animation.duration(),260)
-        self.assertEqual(len(roll.digit_tracks),5)
-        self.assertTrue(roll.digit_tracks[6][3])
-        roll.animation.setCurrentTime(260)
-        self.assertEqual(roll.current,'100.02M')
+        for old,new in (('90.52M','90.53M'),('90.32M','90.52M'),('99.98M','100.02M')):
+            roll.snap(old,float(old[:-1]));roll.set(new,float(new[:-1]))
+            self.assertTrue(320<=roll.animation.duration()<=420)
+            for clock,lower,upper in ((.25,.12,.22),(.50,.45,.55),(.75,.78,.88)):
+                roll.advance(clock)
+                self.assertTrue(lower<=roll.progress<=upper)
+            roll.animation.setCurrentTime(roll.animation.duration())
+            self.assertEqual(roll.current,new)
+
     def test_performance_hidden_unknown_and_unit_switch_snap(self):
         r=self.roll;r.digits=True;r.snap('99.99K',99999);r.set('100.00K',100000,animate=False)
         self.assertEqual(r.current,'100.00K')
@@ -56,13 +45,42 @@ class RollTests(unittest.TestCase):
             def font(self):return QFont()
             def save(self):pass
             def restore(self):pass
-            def setClipRect(self,rect):self.clips.append(QRectF(rect))
+            def setClipRect(self,rect,*args):self.clips.append(QRectF(rect))
+            def opacity(self):return .8
+            def setOpacity(self,value):pass
             def drawText(self,rect,flags,text):self.calls.append((text,rect.y(),rect.x()))
         p=Recorder();r.paint(p,QRectF(0,0,100,20))
-        moving=[text for text,y,x in p.calls if y!=0];self.assertEqual(moving,['2','3'])
+        moving=[text for text,y,x in p.calls if y!=0];self.assertEqual(set(moving),{'2','3'})
         self.assertGreater(p.clips[-1].top(),p.clips[0].top())
         self.assertLess(p.clips[-1].bottom(),p.clips[0].bottom())
         self.assertTrue(all(y==0 for text,y,x in p.calls if text in '90.5M'))
+    def test_roll_draws_intermediate_digits_in_both_directions(self):
+        from PySide6.QtGui import QImage,QPainter
+        from unittest.mock import Mock
+        roll=self.roll;roll.digits=True;roll.allow_decrease=True
+        for start,end,direction in ((1,6,1),(6,1,-1)):
+            roll.snap(str(start),start);roll.set(str(end),end)
+            self.assertEqual(roll.direction,direction)
+            self.assertEqual(roll.digit_tracks,{0:5})
+            painter=Mock(spec=QPainter)
+            painter.device.return_value=QImage(120,20,QImage.Format.Format_ARGB32)
+            painter.font.return_value=QFont()
+            painter.opacity.return_value=1.
+            rect=QRectF(0,0,100,20)
+            for step in range(1,5):
+                roll.progress=step/5
+                painter.reset_mock()
+                roll.paint(painter,rect)
+                centered=[call.args[2] for call in painter.drawText.call_args_list if abs(call.args[0].y())<.001]
+                self.assertEqual(centered,[str(start+step*direction)])
+            roll.animation.setCurrentTime(roll.animation.duration())
+            self.assertEqual(roll.current,str(end))
+
+    def test_rate_grouping_keeps_digit_places_and_limits_whole_turns(self):
+        self.assertEqual(NumberRoll.tracks('1.0','6.0'),{2:5})
+        self.assertEqual(NumberRoll.tracks('1,001.1','1,006.6'),{0:5,2:5})
+        self.assertLessEqual(max(NumberRoll.tracks('1.1','9,876.2').values()),13)
+
     def test_hide_lands_latest_value_and_stops_clock(self):
         card=LiveRateCard();card.show();APP.processEvents();card.set_data(dict(rate=10));card.set_data(dict(rate=20));card.set_data(dict(rate=30));card.hide()
         self.assertEqual(card.roll.current,'30.0');self.assertEqual(card.animation.state(),QAbstractAnimation.State.Stopped);card.deleteLater()
@@ -121,8 +139,7 @@ class RollTests(unittest.TestCase):
         live.set_data(dict(rate=15))
         self.assertEqual(live.roll.direction,-1)
         self.assertEqual(live.animation.state(),QAbstractAnimation.State.Running)
-        self.assertEqual(live.roll.digit_tracks[0][:2],(200,50))
-        self.assertEqual(live.roll.digit_tracks[2][:2],(20,5))
+        self.assertEqual((live.roll.current,live.roll.target),('20.0','15.0'))
         b.hide();APP.processEvents()
         for card in (today,live):self.assertEqual(card.roll.animation.state(),QAbstractAnimation.State.Stopped)
         b.close();b.deleteLater();APP.processEvents()

@@ -596,14 +596,12 @@ class ChatWindow(QWidget):
         except OSError:self.store.sessions=previous;self.status.setText('删除失败，原会话已保留。');return
         self.session=remaining[0];self.reload();self.status.setText('会话已删除。')
     def toggle_session_actions(self):
-        if self.session_actions and self.session_actions.isVisible():
-            self.session_actions.close();return
         if self.session_actions is None:
             from project_cost_ui import CostActions
             self.session_actions=CostActions(self.session_actions_button,(
                 ('清空当前会话…',self.clear),('删除当前会话…',self.delete)))
             self.destroyed.connect(self.session_actions.deleteLater)
-        self.session_actions.open()
+        self.session_actions.toggle()
 
     def switch_chat_page(self,target,direction):
         previous=self.pages.currentWidget()

@@ -82,13 +82,24 @@ def service_colors(theme,tone):
     dark=__import__('PySide6.QtGui',fromlist=['QColor']).QColor(theme['surface']).lightness()<128
     return ({'ok':('#77cba3','#77cba3'),'warn':('#f2d05b','#edce4d'),'unknown':('#ff949d','#ff7e8c')} if dark else {'ok':('#28785a','#339470'),'warn':('#8a6500','#d4a000'),'unknown':('#b82d3d','#ce3d4e')})[tone]
 
-def bubble_position(card,anchor,size,area):
-    """Prefer a non-overlapping edge of the whole card, then bounded fallback."""
+def bubble_position(card,anchor,size,area,*,near_anchor=False):
+    """Place a popup near its trigger or outside the card, inside the work area."""
     from PySide6.QtCore import QRect
     w,h=size;gap=8
-    candidates=[QRect(anchor.center().x()-w//2,card.top()-gap-h,w,h),QRect(card.right()+gap+1,anchor.center().y()-h//2,w,h),QRect(card.left()-gap-w,anchor.center().y()-h//2,w,h),QRect(anchor.center().x()-w//2,card.bottom()+gap+1,w,h)]
-    for i,r in enumerate(candidates):
-        if i in (0,3):r.moveLeft(max(area.left()+2,min(r.left(),area.right()-w-1)))
-        else:r.moveTop(max(area.top()+2,min(r.top(),area.bottom()-h-1)))
-        if area.contains(r) and not r.intersects(card):return r
+    def adjacent(edge):
+        x=max(area.left()+2,min(anchor.center().x()-w//2,area.right()-w-1))
+        y=max(area.top()+2,min(anchor.center().y()-h//2,area.bottom()-h-1))
+        return [QRect(x,edge.top()-gap-h,w,h),QRect(x,edge.bottom()+gap+1,w,h),
+                QRect(edge.right()+gap+1,y,w,h),QRect(edge.left()-gap-w,y,w,h)]
+    if near_anchor:
+        nearby=[rect for rect in adjacent(anchor) if area.contains(rect)]
+        if nearby:return next((rect for rect in nearby if not rect.intersects(card)),nearby[0])
+    candidates=adjacent(card)
+    for i in (0,2,3,1):
+        if area.contains(candidates[i]):return candidates[i]
+    # If the card fills the work area, prefer exposing the hovered control.
+    for top in (anchor.top()-gap-h,anchor.bottom()+gap+1):
+        r=QRect(anchor.center().x()-w//2,top,w,h)
+        r.moveLeft(max(area.left()+2,min(r.left(),area.right()-w-1)))
+        if area.contains(r) and not r.intersects(anchor):return r
     r=candidates[0];r.moveLeft(max(area.left()+2,min(r.left(),area.right()-w-1)));r.moveTop(max(area.top()+2,min(r.top(),area.bottom()-h-1)));return r

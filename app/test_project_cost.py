@@ -37,9 +37,15 @@ class CostTests(unittest.TestCase):
             migrate(db);now=time.time()
             for ident,model,known in [('sol','gpt-6-sol',1),('luna','gpt-5.6-luna',1),('unknown','new-unknown',1),('incomplete','gpt-6-sol',0)]:
                 db.execute('INSERT INTO cost_events VALUES (?,?,?,?,?,?,?,?,?,?)',(ident,now-1,ident,'d:/project',model,1000,800,600,200,known))
-            result=snapshot(db,now,dict(pending=False,errors=0))['ranges']['all'][0]
+            report=snapshot(db,now,dict(pending=False,errors=0));result=report['ranges']['all'][0]
             self.assertEqual(result['pending_tokens'],2000)
             self.assertAlmostEqual(result['cost'],.002812)
+            day=datetime.fromtimestamp(now-1);values=report['chart_cost']['days'][day.date().isoformat()]
+            self.assertEqual(set(values),{'gpt-6-sol','gpt-5.6-luna'})
+            self.assertEqual(values['gpt-6-sol'][1],1000)
+            self.assertAlmostEqual(sum(value[0] for value in values.values()),result['cost'])
+            if day.date().isoformat()==report['chart_cost']['day']:
+                self.assertEqual(report['chart_cost']['hours'][str(day.hour)],values)
     def test_yesterday_excludes_today_and_older_records_and_keeps_unknown(self):
         now=datetime(2026,10,29,12).timestamp()
         with sqlite3.connect(':memory:') as db:

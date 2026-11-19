@@ -174,8 +174,8 @@ class StatusScroller(QLabel):
     def sizeHint(self):return QSize(self.width(),self.height())
     def minimumSizeHint(self):return self.sizeHint()
     def hasHeightForWidth(self):return False
-    def lines_for(self,text):
-        width=self.width()-(30 if self.extra else 0)-2
+    def lines_for(self,text,extra=None):
+        width=self.width()-(30 if (self.extra if extra is None else extra) else 0)-2
         if self.single_line:return [QFontMetrics(self.font()).elidedText(text,Qt.TextElideMode.ElideRight,max(1,width-self.text_left()-4))]
         text=text.replace('\n','  ');layout=QTextLayout(text,self.font());option=QTextOption();option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere);layout.setTextOption(option)
         layout.beginLayout();lines=[]
@@ -589,9 +589,15 @@ class CompactBubble(Bubble):
         self.show_page('help',self._explanation_page)
         for area in self._explanation_page.findChildren(__import__('PySide6.QtWidgets',fromlist=['QScrollArea']).QScrollArea):area.verticalScrollBar().setValue(0)
     def _task_layout_changed(self):
+        view=self.status_view
+        if self.panel_page!='status' or self.is_compact() or not view.isVisible():return False
         selected,_=self.roster.selection(self.status_indicator.unread)
-        target=max(1,len(selected))*43+9
-        return self.expanded and self.status_view.full and self.panel_page=='status' and self.isVisible() and self.status_view.height()!=target
+        if self.expanded:
+            target=43 if self._speech_text else max(1,len(selected))*43+9
+            return view.full and view.height()!=target
+        text=self._speech_text or ('等待 Codex 新消息' if self.roster.items else self.status)
+        lines=len(selected) if selected and not self._speech_text else len(view.lines_for(text,extra=0))
+        return view.height()!=lines*view.line_height
     def show_page(self,key,widget):
         if self.size_transition.running:self._pending_navigation=(key,widget);self._pending_mode=None;return
         # Settings uses the same linked report morph as expanded status.
@@ -826,7 +832,8 @@ class CompactBubble(Bubble):
         if title is None or not self.status_view.isVisible():
             self.redraw();return
         if not self.size_transition.preparing and self._task_layout_changed():
-            self.size_transition.begin();self._refresh_conversation_rows();self._fit_height();self.size_transition.commit();return
+            self.size_transition.begin(status_layout=True)
+            self._update_header();self._refresh_conversation_rows();self._fit_height();self.size_transition.commit();return
         self._update_header()
         self._refresh_conversation_rows()
         self.setAccessibleName(self.heading+'；'+self.status)
@@ -874,16 +881,25 @@ class CompactBubble(Bubble):
         for target,hint in zip(self._header_actions,('刷新','数据','收回') if self.expanded else ('刷新','数据','收起','详情')):
             target.setProperty('headerActionHint',hint)
         self.add(header);self._update_header()
+    def status_hover_plot(self):
+        if self.panel_page!='status' or self.is_compact() or not self.show_quota or self.dashboard_page!='tokens':return None
+        deck=self.deck
+        if deck is not None and deck.expanded==self.expanded and deck.page=='tokens' and deck.token_range==self.token_range:
+            return deck.content.plot
+        return None
     def redraw(self):
         if self.size_transition.running:self.size_transition.deferred=True;return
         if not self.size_transition.preparing and self._task_layout_changed():
-            self.size_transition.begin();self.redraw();self.size_transition.commit();return
-        # Two size-specific chart decks are reused only across pure expansion
-        # toggles. Any source/option redraw invalidates both before reuse.
+            self.size_transition.begin(status_layout=True);self.redraw();self.size_transition.commit();return
+        plot=self.status_hover_plot()
+        retained=None
+        if plot is not None and (not self.size_transition.preparing or plot in self.size_transition.status_hovers):
+            if plot.keep_hover_during_layout():retained=self.deck
         if not self._details_navigation:
             for old in self._deck_cache.values():
                 if old is not self.deck:old.deleteLater()
             self._deck_cache.clear()
+            if retained is not None:self._deck_cache[self.expanded]=retained
         # Keep at most one prepared details subtree across a pure size toggle.
         # Only fields used by this subtree and time boundaries invalidate it.
         # Task/live-rate refreshes must not rebuild unchanged detail widgets.
@@ -907,6 +923,8 @@ class CompactBubble(Bubble):
         finally:
             if atomic_refresh:
                 self.setUpdatesEnabled(True)
+            if retained is not None and not self.size_transition.preparing:
+                plot.settle_hover_layout()
         if atomic_refresh and self.isVisible():
             self.repaint()
 
@@ -975,6 +993,8 @@ class CompactBubble(Bubble):
                 deck.selected.connect(self.select_dashboard)
                 deck.token_range_changed.connect(self.select_token_range)
                 self._deck_cache[self.expanded]=deck
+            if deck is not None and getattr(getattr(deck.content,'plot',None),'_hold_hover_layout',False):
+                deck.refresh_held_plot(self.token_snapshot,self.reset_snapshot,self.reset_error_details or self.reset_feed_error)
             self.deck=deck;deck.set_surface_scale(self.card_pixels);deck.setFixedWidth(right_width)
             row.addWidget(deck,1,Qt.AlignmentFlag.AlignTop);deck.show()
             daily=self.today_tokens_card

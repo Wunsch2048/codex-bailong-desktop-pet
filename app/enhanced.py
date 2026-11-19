@@ -763,6 +763,13 @@ class EnhancedPet(Pet):
                 if isValid(card):card.set_data(event['value'])
         elif kind=='token_usage':
             snapshot=event['snapshot']
+            prices=getattr(self,'api_prices',None)
+            if prices is not None and not snapshot.get('unavailable'):
+                report=snapshot.get('report') or {}
+                cutoff=report.get('day')
+                if cutoff:
+                    prices.observe_models(row['model'] for row in report.get('daily_models',())
+                                          if row['day']>=cutoff and row['total']>0)
             self.bubble.set_live_today(snapshot.get('_live_today'),refresh=False)
             if snapshot.get('unavailable') and self.bubble.token_snapshot:
                 snapshot=dict(self.bubble.token_snapshot,partial=True,refresh_failed=True)
@@ -781,6 +788,9 @@ class EnhancedPet(Pet):
         elif kind=='project_cost':
             if self.bubble.token_snapshot:
                 self.bubble.token_snapshot=dict(self.bubble.token_snapshot,projects=event['projects'])
+                from token_charts import TokenPlot
+                for plot in self.bubble.findChildren(TokenPlot):
+                    plot.set_data(self.bubble.token_snapshot,plot.period)
                 if self.bubble.report:self.bubble.report.set_snapshot(self.bubble.token_snapshot)
         elif kind=='project_range_error':
             if self.bubble.report:self.bubble.report.cost_range_failed(event['bounds'])

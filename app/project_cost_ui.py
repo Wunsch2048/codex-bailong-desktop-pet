@@ -1,5 +1,5 @@
 """Compact project costs with local search and stable scrolling and local detail navigation."""
-from PySide6.QtCore import Qt,Signal,QRectF,QSize,QTimer,QEasingCurve,QAbstractAnimation,QPropertyAnimation,QObject,QEvent,QPoint,QPointF,QThread
+from PySide6.QtCore import Qt,Signal,QRectF,QSize,QTimer,QEasingCurve,QAbstractAnimation,QPropertyAnimation,QVariantAnimation,QObject,QEvent,QPoint,QPointF,QThread
 from PySide6.QtGui import QPainter,QFontMetrics,QPen,QColor,QWheelEvent,QCursor
 from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLineEdit,QLabel,QToolButton,QSizePolicy,QListWidget,QListWidgetItem,QStyledItemDelegate,QStyle,QScrollArea,QStackedWidget,QFrame,QApplication,QAbstractScrollArea,QPushButton,QFileDialog,QMessageBox
 from compact_bubble import font,FONT_CSS
@@ -10,6 +10,7 @@ from data_page_motion import PageFade,ReportSubpage
 from token_calendar import compact_tokens
 from project_cost import search_rows,PRICE_SOURCE
 from report_calendar import DateButton
+from popup_motion import AnchoredPopupEffect
 
 def dollars(n):
     from cost_preferences import money
@@ -89,6 +90,10 @@ class CostActions(QFrame):
     def __init__(self,anchor,actions):
         super().__init__(anchor.window())
         self.anchor=anchor
+        self.closing=False
+        self.motion=AnchoredPopupEffect(self);self.setGraphicsEffect(self.motion)
+        self.animation=QVariantAnimation(self);self.animation.valueChanged.connect(self._advance)
+        self.animation.finished.connect(self._motion_finished)
         self.native=None;self.foreground=0
         self.outside_timer=QTimer(self);self.outside_timer.setInterval(20);self.outside_timer.timeout.connect(self.check_outside)
         self.setObjectName('cost_actions')
@@ -98,9 +103,37 @@ class CostActions(QFrame):
         layout=QVBoxLayout(self);layout.setContentsMargins(4,4,4,4);layout.setSpacing(1)
         for text,action in actions:
             button=QPushButton(text,self);button.clicked.connect(lambda _,fn=action:self.invoke(fn));layout.addWidget(button)
+    def toggle(self):
+        if self.isVisible() and not self.closing:self.dismiss()
+        else:self.open()
+
+    def _advance(self,value):
+        self.motion.level=float(value);self.motion.update()
+
+    def _animate(self,target):
+        self.animation.stop()
+        if not motion_enabled() or self.motion.level==target:
+            self._advance(target);self._motion_finished();return
+        self.motion.animate(self.animation,target)
+
+    def _motion_finished(self):
+        self.motion.soft=None;self.motion.interrupted=None
+        if self.closing:self.close()
+
+    def dismiss(self):
+        if self.closing or not self.isVisible():return
+        self.closing=True
+        self.outside_timer.stop();QApplication.instance().removeEventFilter(self)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,True)
+        self.anchor.setChecked(False);self.anchor.repaint()
+        self._animate(0.)
+
     def open(self):
+        self.closing=False;self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,False)
         self.adjustSize();point=self.anchor.mapTo(self.parentWidget(),QPoint(self.anchor.width()-self.width(),self.anchor.height()+3))
-        self.move(max(4,point.x()),point.y());self.show();self.raise_()
+        self.move(max(4,point.x()),point.y())
+        self.motion.pivot=QPointF(max(1,min(self.width()-1,self.anchor.mapTo(self.parentWidget(),self.anchor.rect().center()).x()-self.x())),0)
+        self.show();self.raise_();self._animate(1.)
         self.anchor.setChecked(True);self.anchor.repaint()
         QApplication.instance().installEventFilter(self)
         if QApplication.platformName()=='windows':
@@ -115,21 +148,22 @@ class CostActions(QFrame):
             self.close();return
         if self.native.mouse_button_down():
             hit=QApplication.widgetAt(QCursor.pos())
-            if hit is not self.anchor and hit is not self and not (hit and self.isAncestorOf(hit)):self.close()
+            if hit is not self.anchor and hit is not self and not (hit and self.isAncestorOf(hit)):self.dismiss()
     def invoke(self,action):
         self.close();action()
     def eventFilter(self,obj,event):
         kind=event.type()
         if kind==QEvent.Type.KeyPress and event.key()==Qt.Key.Key_Escape:
-            self.close();return True
+            self.dismiss();return True
         if kind in (QEvent.Type.MouseButtonPress,QEvent.Type.TouchBegin):
-            if isinstance(obj,QWidget) and obj is not self.anchor and obj is not self and not self.isAncestorOf(obj):self.close()
+            if isinstance(obj,QWidget) and obj is not self.anchor and obj is not self and not self.isAncestorOf(obj):self.dismiss()
         elif obj is self.anchor and kind in (QEvent.Type.Hide,QEvent.Type.Resize):
             self.close()
         elif obj is self.parentWidget() and kind in (QEvent.Type.Hide,QEvent.Type.Resize,QEvent.Type.WindowDeactivate):
             self.close()
         return False
     def hideEvent(self,event):
+        self.animation.stop();self.closing=False;self._advance(0.)
         self.outside_timer.stop()
         QApplication.instance().removeEventFilter(self)
         self.anchor.setChecked(False);self.anchor.repaint()
@@ -229,7 +263,7 @@ class CostSummary(QLabel):
 
 class DailyCostButton(QToolButton):
     def __init__(self,parent=None):
-        super().__init__(parent);self.tokens=0;self.amount=None;self.partial=False;self.setFixedHeight(47)
+        super().__init__(parent);self.tokens=0;self.amount=None;self.partial=False;self.coverage=None;self.setFixedHeight(47)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
         self.setAccessibleName('查看昨日项目成本');self.setCursor(Qt.CursorShape.PointingHandCursor)
         set_theme_style(self,'QToolButton{border:0;background:transparent;}')
@@ -238,13 +272,21 @@ class DailyCostButton(QToolButton):
         valid=projects.get('yesterday')==report.get('day') and 'yesterday' in projects.get('ranges',{})
         tokens=sum(p['tokens'] for p in rows);pending=sum(p['pending_tokens'] for p in rows)
         self.tokens=report.get('yesterday_total',0)
-        self.partial=bool(pending or projects.get('limited') or projects.get('errors') or projects.get('pending'))
-        self.amount=sum(p['cost'] for p in rows) if valid and not (pending and pending>=tokens) and (rows or not self.tokens) else None
-        self.setAccessibleName('查看昨日项目成本 '+dollars(self.amount)+('，部分用量未计价' if self.partial else ''));self.update()
+        priced=max(0,tokens-pending)
+        total=max(tokens,self.tokens)
+        self.coverage=priced/total if valid and total else None
+        self.partial=self.coverage is not None and self.coverage<1.
+        self.amount=sum(p['cost'] for p in rows) if valid and (priced or not total) else None
+        status='已计价 '+format(self.coverage,'.1%') if self.partial else ''
+        self.setToolTip(status)
+        self.setAccessibleName('查看昨日项目成本 '+dollars(self.amount)+('，'+status if status else ''));self.update()
     def paintEvent(self,event):
         p=QPainter(self);half=self.width()/2
         p.setPen(QColor(color('#706879')));p.setFont(font(12));p.drawText(0,14,'Token 用量')
         p.drawText(round(half+5),14,'成本 ›')
+        if self.partial:
+            label='部分计价' if self.amount is not None else '待计价'
+            p.setFont(font(10));p.drawText(self.width()-QFontMetrics(p.font()).horizontalAdvance(label),14,label)
         p.setPen(QColor(color('#393343')));p.setFont(font(20,True));p.drawText(0,40,compact_tokens(self.tokens));p.drawText(round(half+5),40,dollars(self.amount))
     def mouseReleaseEvent(self,event):
         if event.position().x()<self.width()/2:self.setDown(False);event.accept();return
@@ -391,8 +433,7 @@ class ProjectCosts(QWidget):
             anchor=getattr(self,'more_anchor',self.info_button)
             menu=self._cost_actions=CostActions(anchor,(('导出统计',self.show_export),('计价设置',self.show_pricing),('估算说明',self.show_info)))
             self.destroyed.connect(menu.deleteLater)
-        if menu.isVisible():menu.close()
-        else:menu.open()
+        menu.toggle()
     def show_pricing(self):
         from pricing_ui import open_editor
         models={m['model'] for p in self.data.get('ranges',{}).get('all',[]) for m in p['model_usage']}

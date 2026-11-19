@@ -6,10 +6,12 @@ from pathlib import PureWindowsPath,Path
 from token_calendar import counter
 from report_dates import MONTH,WEEK,date_bounds,range_key
 
-PRICE_VERSION='2026-10-30-standard-short'
+PRICE_VERSION='2026-11-17-standard-short'
 PRICE_SOURCE='https://developers.openai.com/api/docs/pricing'
 # Current standard short-context USD per million. No generic model fallback.
-RATES={'gpt-6-astra':(10,1,50),'gpt-6.1-sol':(2,.1,10),
+# GPT-6.2 rates were confirmed in the 2026-11-17 launch announcement.
+RATES={'gpt-6.2-astra':(8,.4,40),'gpt-6.2-sol':(2,.1,10),
+       'gpt-6-astra':(10,1,50),'gpt-6.1-sol':(2,.1,10),
        'gpt-6.1-terra':(1,.05,5),'gpt-6-luna':(.1,.01,.5),
        'gpt-6-sol':(2,.2,10),'gpt-5.6-luna':(.2,.02,1.2)}
 # Legacy models are still used in historical sessions. Verify their own model
@@ -140,9 +142,17 @@ def update(db,files,stop=lambda:False,budget=.35):
     initial=pending and any(str(Path(path).resolve()) not in indexed for path in files)
     return dict(pending=pending,initial_pending=initial,syncing=pending and not initial,errors=errors)
 
+def cost_parts(a,c,b,prices):
+    return [(a-c)*prices[0]/1e6,c*prices[1]/1e6,b*prices[2]/1e6]
+
+def add_chart_cost(totals,model,tokens,usd):
+    pair=totals.setdefault(model or '未识别模型',[0.,0])
+    pair[0]+=usd;pair[1]+=tokens
+
 def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
-    from cost_preferences import prices as saved_prices,price_history as saved_history
-    prices=saved_prices();history=saved_history();price_revision=pricing_revision(prices,history)
+    from cost_preferences import load as pricing_settings,prices as saved_prices,price_history as saved_history
+    settings=pricing_settings()
+    prices=saved_prices(settings);history=saved_history(settings);price_revision=pricing_revision(prices,history)
     from official_api_prices import PriceBook
     price_book=PriceBook(history)
     statuses={};limited=False;membership_health={};unresolved=0;metadata={}
@@ -189,13 +199,22 @@ def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
     for sid,revision,offset,fp in db.execute('SELECT a.session,a.revision,a.offset,a.fingerprint FROM cost_source_active a JOIN temp.cost_selected_source s ON a.path=s.path AND a.revision=s.revision'):
         revisions.setdefault(root_session(sid,parents),[]).append((sid,offset,json.loads(fp).get('digest','')))
     revisions={sid:hashlib.sha256(json.dumps(sorted(values),separators=(',',':')).encode()).hexdigest()[:20] for sid,values in revisions.items()}
-    buckets={}
+    buckets={};chart_days={};chart_hours={};billable_paths={}
+    today=current.date().isoformat()
     for _,stamp,sid,project,model,tokens,a,c,b,known in events:
         if stamp>now:continue
         # Keep incomplete events separate: one bad record must not turn a
         # whole otherwise-priced session/model/day into pending usage.
         applied=price_book.rate(model,stamp)
-        key=(project,model,sid,datetime.fromtimestamp(stamp).strftime('%Y-%m-%d'),bool(known),applied)
+        recorded=datetime.fromtimestamp(stamp);day=recorded.date().isoformat()
+        key=(project,model,sid,day,bool(known),applied)
+        if day==today and known and applied is not None:
+            source=(sid,project)
+            if source not in billable_paths:
+                root=root_session(sid,parents)
+                billable_paths[source]=bool(assignments.get(root,assignments.get(sid,(project_path(project),False)))[0])
+            if billable_paths[source]:
+                add_chart_cost(chart_hours.setdefault(str(recorded.hour),{}),model,tokens,sum(cost_parts(a,c,b,applied)))
         sums=buckets.setdefault(key,[0,0,0,0]);sums[0]+=tokens
         for i,value in enumerate((a,c,b),1):
             if value is not None:sums[i]+=value
@@ -223,6 +242,9 @@ def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
             if root in projectless or scratch:
                 path=unassigned
         grouped.append((path,model,root,day,*values,known,original_path,(sid,project),applied))
+        if known and applied is not None and original_path:
+            tokens,a,c,b=values
+            add_chart_cost(chart_days.setdefault(day,{}),model,tokens,sum(cost_parts(a,c,b,applied)))
     project_archives={}
     for path,model,sid,*_ in grouped:
         archived=archived_meta.get(sid,bool(statuses.get(sid)) and all(statuses[sid]))
@@ -260,7 +282,7 @@ def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
                     row['pending_tokens']+=tokens;row['pending_reasons'][reason]=row['pending_reasons'].get(reason,0)+tokens
                 session['pending_tokens']+=tokens
                 continue
-            parts=[(a-c)*model_prices[0]/1e6,c*model_prices[1]/1e6,b*model_prices[2]/1e6]
+            parts=cost_parts(a,c,b,model_prices)
             p['parts']=[x+y for x,y in zip(p['parts'],parts)];p['cost']+=sum(parts)
             m['cost']+=sum(parts)
             session['cost']+=sum(parts)
@@ -272,7 +294,7 @@ def snapshot(db,now,progress,files=None,home=None,calendar_range=None):
             p['model_usage']=sorted(p['model_usage'].values(),key=lambda v:-v['cost'])
             p['session_usage']=sorted(p['session_usage'].values(),key=lambda v:-v['cost'])
         result[period]=sorted(projects.values(),key=lambda p:-p['cost'])
-    return dict(ranges=result,yesterday=yesterday,calendar_days=sorted({day for _,_,_,day,*_ in grouped}),**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_history=history,price_source=PRICE_SOURCE,checked=now)
+    return dict(ranges=result,chart_cost=dict(days=chart_days,hours=chart_hours,day=today,currency=settings['currency'],fx=settings['fx']),yesterday=yesterday,calendar_days=sorted({day for _,_,_,day,*_ in grouped}),**progress,limited=limited,unresolved_events=unresolved,source_conflicts=conflicts,parent_conflicts=parent_conflicts,membership_health=membership_health,price_version=PRICE_VERSION,price_revision=price_revision,price_table=prices,price_history=history,price_source=PRICE_SOURCE,checked=now)
 
 def search_rows(data,period='all',query='',archive='active'):
     def norm(s):return unicodedata.normalize('NFKC',s).casefold().replace('\\','/')

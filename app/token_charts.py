@@ -10,7 +10,7 @@ from compact_bubble import font,INK,MUTED,FONT_CSS
 from token_calendar import usage_series,compact_tokens,TOKEN_RANGES
 from chart_reveal import ChartReveal,RasterChart,bar_shape
 from chart_curve import SmoothTrace
-from rate_chart import ComboChart,daily_rates
+from rate_chart import ComboChart,chart_cost_buckets,daily_rates
 from settings_controls import play_animation
 
 class TokenPlot(QWidget,RasterChart,ComboChart):
@@ -31,12 +31,14 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         same_rates=same_period and (self.snapshot.get('rates') or {}).get(rate_key)==(snapshot.get('rates') or {}).get(rate_key)
         if same_rates and period=='day':
             same_rates=(self.snapshot.get('rates') or {}).get('today_output')==(snapshot.get('rates') or {}).get('today_output')
-        held=self.hold_inspection() if same_period and not (same_series and same_rates) else None
-        if not (same_series and same_rates) and held is None:self.dismiss_inspection()
+        same_costs=same_period and (self.snapshot.get('projects') or {}).get('chart_cost')==(snapshot.get('projects') or {}).get('chart_cost')
+        unchanged=same_series and same_rates and same_costs
+        held=self.hold_inspection() if same_period and not unchanged else None
+        if not unchanged and held is None:self.dismiss_inspection()
         self.period=period
         self.snapshot=snapshot;self.now=now
         if not same_series:self.series=usage_series(snapshot,period,now)
-        if not (same_series and same_rates):self.invalidate_layers()
+        if not unchanged:self.invalidate_layers()
         s=self.series;bucket=s.get('bucket_days',1)
         description=f"{s['title']}，{s['total']:,} Tokens；{s['start']} 至 {s['end']}。"
         description+='每小时消耗，非累计曲线；当天00–24时，当前小时尚未结束。' if s['mode']=='line' else f'每根柱覆盖{bucket}天，悬停查看日期与用量。'
@@ -47,7 +49,7 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         self.setAccessibleName('Codex Token '+('小时曲线' if s['mode']=='line' else '用量柱状图'))
         rate_description=' 曲线按小时显示采样期间的输出速率。' if period=='day' else ' 回合均速包含思考、工具和等待时间。'
         self.setAccessibleDescription(description+rate_description);self.setToolTip('')
-        if not (same_series and same_rates):self.resume_inspection(held);self.update()
+        if not unchanged:self.resume_inspection(held);self.update()
 
     def chart_rect(self):
         # Both the title and the mixed Chinese/numeric axis use the shared
@@ -68,7 +70,8 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
             left,right=s['start'][5:].replace('-','/'),s['end'][5:].replace('-','/')
         hourly=s['mode']=='line'
         self.combo_layers(p,dynamic,bins,items,plot,s['available'],by_model=hourly or self.period=='7d',
-                          output_rates=(rates.get('today_output') or []) if hourly else None)
+                          output_rates=(rates.get('today_output') or []) if hourly else None,
+                          cost_buckets=chart_cost_buckets(bins,self.snapshot.get('projects'),day=s['start'] if hourly else None))
         self.hits=[(record['rect'],b) for record,b in zip(self._combo_records,bins)]
         self.points=[QPointF(record['rect'].center().x(),plot.bottom()) for record,b in zip(self._combo_records,bins) if not b.get('future') and s['available']]
         p.setFont(font(10 if getattr(self,'expanded',False) else 11));p.setPen(theme_color(MUTED));top=self.height()-QFontMetrics(p.font()).height()-2
@@ -85,19 +88,23 @@ class TokenPlot(QWidget,RasterChart,ComboChart):
         return text+'\n本机 Codex 日志 · 输入（含缓存）+ 输出（含推理）'
     def begin_reveal(self):self.ensure_layers();self.reveal.prepare()
     def start_reveal(self):self.reveal.start()
-    def hideEvent(self,event):self.dismiss_inspection();self.reveal.stop();super().hideEvent(event)
-    def leaveEvent(self,event):self.dismiss_inspection();super().leaveEvent(event)
+    def hideEvent(self,event):
+        if hasattr(self,'_popup'):
+            if not self._hold_hover_layout:self.dismiss_inspection()
+            self.reveal.stop()
+        super().hideEvent(event)
+    def leaveEvent(self,event):self.leave_inspection();super().leaveEvent(event)
     def mouseMoveEvent(self,event):self.inspect_at(event.position());super().mouseMoveEvent(event)
     def keyPressEvent(self,event):
         if not self.combo_key(event):super().keyPressEvent(event)
     def focusOutEvent(self,event):
-        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.dismiss_inspection()
+        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.leave_inspection()
         super().focusOutEvent(event)
 
     def event(self,event):
         if event.type()==QEvent.Type.ToolTip:
             QToolTip.hideText();self.inspect_at(QPointF(event.pos()));self.show_inspection();event.accept();return True
-        if event.type() in (QEvent.Type.Move,QEvent.Type.Resize) and hasattr(self,'_popup'):self.dismiss_inspection()
+        if event.type() in (QEvent.Type.Move,QEvent.Type.Resize) and hasattr(self,'_popup'):self.leave_inspection()
         return super().event(event)
 
 class TokenRangeTabs(QWidget):

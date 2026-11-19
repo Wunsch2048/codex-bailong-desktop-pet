@@ -13,7 +13,7 @@ from collections import deque
 from pathlib import Path
 from PySide6.QtCore import Qt,QTimer,QPoint,QPointF,QRect,QRectF,QUrl,QEvent,Signal
 from PySide6.QtGui import QPainter,QCursor,QDesktopServices,QTransform
-from PySide6.QtWidgets import QApplication,QMenu,QSystemTrayIcon,QFileDialog,QMessageBox
+from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QFileDialog,QMessageBox
 from enhanced import EnhancedPet,STATE_DIR,CONFIG
 from pet import ROOT,ASSETS,clamp_position
 from enhanced_core import motion_step,clean_text
@@ -143,7 +143,9 @@ class DesktopPet(EnhancedPet):
         self._refresh_tray_icon()
         self.tray.activated.disconnect()
         self.tray.activated.connect(lambda reason:self.recover() if reason in (QSystemTrayIcon.ActivationReason.Trigger,QSystemTrayIcon.ActivationReason.DoubleClick) else None)
-        self.tray_menu=QMenu();self.tray_menu.aboutToShow.connect(self.populate_tray);self.tray.setContextMenu(self.tray_menu)
+        from popup_motion import ContextMenu
+        self.tray_menu=ContextMenu();self.tray_menu.aboutToShow.connect(self.populate_tray)
+        self.tray.setContextMenu(self.tray_menu);self.tray_hover.set_context_menu(self.tray_menu)
         if monitor and sys.platform=='win32':
             from video_yield import VideoYield
             self.video_yield=VideoYield(self)
@@ -1193,7 +1195,8 @@ class DesktopPet(EnhancedPet):
         menu.addSeparator()
         self.menu_command(menu,'quit')
     def context_menu(self,point):
-        self.stop_walk();menu=QMenu(self);self.build_menu(menu);menu.exec(point)
+        from popup_motion import ContextMenu
+        self.stop_walk();menu=ContextMenu(self);self.build_menu(menu);menu.exec(point);menu.deleteLater()
     def toggle_startup(self,value):
         try:set_autostart(value)
         except OSError:self.say('启动设置保存失败，请打开设置检查。',5000)

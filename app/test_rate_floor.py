@@ -64,7 +64,7 @@ class RateFloorTests(unittest.TestCase):
         bubble=ChartBubble();anchor=QRect(100,300,20,20)
         record=dict(label='16:00–17:00',amount='22.20M Token',rate_item=dict(rate=29.,samples=9,valid_samples=6))
         bubble.inspect(record,anchor,host);bubble.animation.stop();bubble.level=1;APP.processEvents();valid=bubble.grab().toImage()
-        self.assertIn('6 个已完成回合',bubble.accessibleDescription());self.assertIn('含思考、工具和等待',bubble.accessibleDescription())
+        self.assertIn('6 个已完成回合',bubble.accessibleDescription());self.assertNotIn('含思考、工具和等待',bubble.accessibleDescription())
         for item in (record,dict(record,rate_item=None),dict(record,rate_item=dict(rate=0.,valid_samples=3)),dict(record,future=True),dict(record,available=False)):
             for text in inspection_notes(item):self.assertLessEqual(QFontMetrics(ui_font(10)).horizontalAdvance(text),208)
         bubble.inspect(dict(record,rate_item=None),anchor,host);bubble.animation.stop();bubble.level=1;APP.processEvents()
@@ -82,10 +82,10 @@ class RateFloorTests(unittest.TestCase):
         record=dict(label='12:00–13:00',amount='1.00M Token',rate_item=dict(rate=12,median_rate=40,valid_samples=5))
         b.inspect(record,anchor,host);b.animation.stop();b.level=1;APP.processEvents();first=b.grab().toImage()
         self.assertEqual(b.median_value(),'40.0 tok/s');self.assertIn('回合中位速率 40.0 tok/s',b.accessibleDescription())
-        self.assertEqual(b.hint_size(),(254,161))
+        self.assertEqual(b.hint_size(),(254,144))
         changed=dict(record,rate_item=dict(rate=12,median_rate=0,valid_samples=5,first_token_ms=1200))
         b.inspect(changed,anchor,host);b.animation.stop();b.level=1;APP.processEvents()
-        self.assertEqual(b.median_value(),'0.0 tok/s');self.assertEqual(b.hint_size(),(254,178));self.assertNotEqual(first,b.grab().toImage())
+        self.assertEqual(b.median_value(),'0.0 tok/s');self.assertEqual(b.hint_size(),(254,161));self.assertNotEqual(first,b.grab().toImage())
         errors=[]
         with patch.object(sys,'excepthook',side_effect=lambda *args:errors.append(args)):
             for value in (dict(record,future=True),dict(record,available=False),dict(record,rate_item=None)):

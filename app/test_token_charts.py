@@ -11,6 +11,27 @@ from token_charts import TokenChartCard
 APP=QApplication.instance() or QApplication([])
 
 class SeriesTests(unittest.TestCase):
+    def test_hover_costs_follow_the_bar_model_and_range(self):
+        from unittest.mock import patch
+        from rate_chart import chart_cost_buckets,inspection_costs
+        from token_charts import TokenPlot
+        now=datetime(2026,10,18,13,40).timestamp();day='2026-10-18'
+        snapshot=dict(today=day,hours=[0]*13+[300]+[0]*10,
+                      hour_models=[{}]*13+[{'sol':200,'luna':100}],
+                      projects=dict(chart_cost=dict(day=day,hours={'13':{'sol':[2.,200],'luna':[1.,50]}},
+                                                    days={day:{'sol':[2.,200],'luna':[1.,50]}})))
+        plot=TokenPlot(snapshot,'day',now=now);plot.resize(150,100)
+        try:
+            with patch('cost_preferences.current',return_value={'currency':'USD','fx':1}):
+                plot.ensure_layers();costs=plot._combo_records[13]['costs']
+                self.assertEqual(costs,{'Token 用量':'$3.00 部分','sol':'$2.00','luna':'$1.00 部分'})
+                self.assertEqual(plot._combo_records[14]['costs']['Token 用量'],'—')
+                selected=chart_cost_buckets([dict(start=day,end=day)],snapshot['projects'],selected='luna')
+                self.assertEqual(inspection_costs(selected[0],100,[])['Token 用量'],'$1.00 部分')
+                skipped=chart_cost_buckets([dict(start=day,end=day)],snapshot['projects'],through='2026-10-17')
+                self.assertEqual(skipped,[{}])
+        finally:plot.close();plot.deleteLater()
+
     def setUp(self):self.now=datetime(2026,10,18,13,40).timestamp()
     def test_seven_and_thirty_cross_months_fill_zero_days_and_exclude_future(self):
         snap=dict(history_days={'2026-09-19':10,'2026-10-12':20,'2026-10-18':30,'2026-10-19':999})

@@ -97,6 +97,12 @@ class CardDeck(QWidget):
             self.range_menu.currentIndexChanged.connect(lambda _:self.token_range_changed.emit(self.range_menu.currentData()))
             row.addStretch(1);row.addWidget(self.range_menu)
         self.stack=QStackedWidget();self.stack.setFixedHeight(70 if expanded else 78);layout.addWidget(self.stack);self.set_page(page,False)
+    def refresh_held_plot(self,snapshot,reset_snapshot,error):
+        self.snapshot=snapshot;self.reset_snapshot=reset_snapshot;self.error=error
+        plot=self.pages['tokens'].plot
+        plot.set_data(snapshot,self.token_range)
+        reset=self.pages.pop('reset',None)
+        if reset is not None:self.stack.removeWidget(reset);reset.deleteLater()
     def set_surface_scale(self,pixels):
         self.setFixedHeight(pixels(105 if self.expanded else DASH_HEIGHT))
         self.stack.setFixedHeight(pixels(70 if self.expanded else 78))

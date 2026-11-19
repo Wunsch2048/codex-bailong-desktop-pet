@@ -1,5 +1,6 @@
 """Official Standard/short-context USD prices with observation-time history."""
 import json,os,re
+import time
 from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
@@ -62,6 +63,38 @@ class OfficialApiPrices(OfficialCreditRates):
     parse=staticmethod(parse_document)
 
 
+    RETRY_SECONDS=15*60
+
+    def __init__(self,path,parent=None,clock=time.time,network=None):
+        super().__init__(path,parent,clock,network)
+        self.timer.setInterval(self.RETRY_SECONDS*1000)
+        self._observed_models=set()
+        self._requested_models=set()
+
+    def observe_models(self,models):
+        self._observed_models={
+            re.sub(r'-\d{4}-\d{2}-\d{2}$','',name.lower())
+            for name in models if isinstance(name,str) and re.fullmatch(r'gpt-[0-9][a-z0-9.-]{0,110}',name.lower())
+        }
+        self.ensure_due()
+
+    def ensure_due(self):
+        now=self.clock()
+        if self.busy or self.last_request is not None and 0<=now-self.last_request<30:return
+        data=self.cache.data
+        attempted,checked=data['attempted_at'],data['checked_at']
+        from project_cost import RATES
+        known=set(RATES)|data['baseline'].keys()
+        if data['versions']:known.update(data['versions'][-1]['rates'])
+        missing=self._observed_models-known
+        if attempted>checked and 0<=now-attempted<self.RETRY_SECONDS:return
+        retry=attempted>checked
+        discover=bool(missing-self._requested_models)
+        if retry or discover or self.cache.due(now):
+            self._requested_models=missing
+            self.request()
+
+
 def cache_path():
     return __import__('platform_paths').data_dir()/'official-api-prices.json'
 
@@ -85,7 +118,10 @@ def price_history(manual,builtin):
     # No check timestamps in the pricing identity: unchanged daily checks do
     # not invalidate accounting caches. First-seen time is not an official date.
     data=catalogue()
-    return dict(versions=data['versions'],manual=manual,builtin=data.get('baseline',builtin))
+    # Upgrades may add a model baseline. Preserve pinned rates for models
+    # already present in older caches.
+    baseline={**builtin,**data.get('baseline',{})}
+    return dict(versions=data['versions'],manual=manual,builtin=baseline)
 
 
 def historical_rate(model,stamp,history):

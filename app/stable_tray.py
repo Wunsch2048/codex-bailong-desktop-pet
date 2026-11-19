@@ -47,6 +47,8 @@ class StableTray(QObject):
     def setToolTip(self,text):pass  # custom HintBubble owns text, never a native tooltip
     def toolTip(self):return ''
     def setContextMenu(self,menu):
+        if self._menu is menu:return
+        if self._menu is not None:self._menu.aboutToHide.disconnect(self._menu_closed)
         self._menu=menu
         if menu:menu.aboutToHide.connect(self._menu_closed)
     def contextMenu(self):return self._menu

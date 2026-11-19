@@ -28,6 +28,35 @@ Prices per 1M tokens.
 | gpt-6.1-sol | $999 | $999 | $999 |
 '''
 
+class NewModelPricingTests(unittest.TestCase):
+    def test_upgrade_backfills_verified_launch_rates_in_old_cache(self):
+        from official_api_prices import price_history
+        from project_cost import RATES
+        cached=dict(baseline={'gpt-6.1-sol':[1,.05,5]},versions=[])
+        with patch('official_api_prices.catalogue',return_value=cached):
+            book=PriceBook(price_history({},RATES))
+        self.assertEqual(book.rate('gpt-6.2-astra',1795000000),(8,.4,40))
+        self.assertEqual(book.rate('gpt-6.2-sol',1795000000),(2,.1,10))
+        self.assertEqual(book.rate('gpt-6.1-sol',1795000000),(1,.05,5))
+
+    def test_new_model_checks_once_and_network_failure_retries(self):
+        now=[1800000000.]
+        service=OfficialApiPrices(Path('unused-price-test.json'),clock=lambda:now[0],network=Network())
+        self.addCleanup(service.deleteLater)
+        service.cache.data=ApiPriceCache.empty()
+        service.cache.data.update(checked_at=now[0]-20,attempted_at=now[0]-20)
+        with patch.object(service,'request') as request:
+            service.observe_models(['gpt-6.1-sol'])
+            request.assert_not_called()
+            service.observe_models(['gpt-6.3-sol-2026-11-19'])
+            request.assert_called_once()
+            service.cache.data['attempted_at']=now[0]
+            now[0]+=60;service.observe_models(['gpt-6.3-sol'])
+            request.assert_called_once()
+            now[0]+=service.RETRY_SECONDS;service.ensure_due()
+            self.assertEqual(request.call_count,2)
+
+
 class ApiPricesTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)

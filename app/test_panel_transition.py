@@ -49,6 +49,47 @@ class PanelTests(unittest.TestCase):
         self.assertTrue(b.layout.isEnabled())
         b.toggle_details();t.animation.setCurrentTime(70);self.assertTrue(small.width()<t.visible_geometry().width()<target.width())
         t.complete();self.assertEqual(b.size(),small)
+    def test_normal_card_height_animates_for_session_count_and_speech(self):
+        b=self.b;t=b.size_transition
+        def observe(sid,state):
+            b.roster.observe(dict(session=sid,state=state,conversation_name=sid))
+            b.refresh_status()
+        def moves(from_height,direction):
+            self.assertTrue(t.running);self.assertTrue(t.morph.status_height_only)
+            self.assertEqual(t.visible_geometry().height(),from_height)
+            target=t.target_rect.height()
+            self.assertGreater((target-from_height)*direction,0)
+            t.animation.setCurrentTime(t.animation.duration()//3)
+            middle=t.visible_geometry().height()
+            self.assertGreater((middle-from_height)*direction,0)
+            self.assertGreater((target-middle)*direction,0)
+            from PySide6.QtGui import QPainter,QPixmap
+            from surface_morph import pixel_size,raster_offset
+            m=t.morph;canvas=t.canvas_rect;dpr=m.end.frame.devicePixelRatioF()
+            final=m.end.frame.toImage()
+            for progress in (.12,.34,.58,.92):
+                frame=QPixmap(pixel_size(canvas.width(),dpr),pixel_size(canvas.height(),dpr))
+                frame.setDevicePixelRatio(dpr);frame.fill(Qt.GlobalColor.transparent)
+                painter=QPainter(frame);m.paint(painter,progress,canvas);painter.end()
+                rect=m.geometry(progress)
+                draw=raster_offset(rect.topLeft(),canvas.topLeft(),dpr,m.end.screen_origin)
+                x=pixel_size(draw.x(),dpr);y=pixel_size(draw.y(),dpr)
+                bottom=pixel_size(rect.height()-(m.end.rect.height()-m.end.shared_bounds['conversations'].bottom()),dpr)
+                settled=pixel_size(m.end.shared_bounds['conversations'].bottom(),dpr)
+                image=frame.toImage()
+                for offset,source in ((y,6),(y+bottom-settled,settled+3)):
+                    start_x=pixel_size(14,dpr);width=final.width()-2*start_x
+                    self.assertEqual(image.copy(x+start_x,offset+source,width,9),final.copy(start_x,source,width,9))
+            t.complete();self.assertEqual(b.height(),target);return target
+        one=b.height()
+        observe('first','working')
+        self.assertFalse(t.running)
+        observe('second','working')
+        two=moves(one,1)
+        b.message('一句话',speech=True);moves(two,-1)
+        b.message('恢复状态');moves(one,1)
+        observe('second','idle');moves(two,-1)
+
     def test_normal_detail_transition_never_exposes_blank_contents(self):
         self.b.toggle_details();m=self.b.size_transition.morph
         for i in range(101):

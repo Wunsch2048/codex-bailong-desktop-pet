@@ -45,10 +45,14 @@ def run(output):
             turn=dict(id='t',stamp=time.time(),models=['sample-model'],tokens=1000,input=800,cached=100,output=200,cost=.01,pending_tokens=0,known=True,unknown=False)
             costs.open_session(dict(session,turns=[turn]));app.processEvents();part=costs.findChild(TurnRow);result['inlineTurnParts']=part is not None and part.token_parts==[700,100,200];costs.close()
             key=('isolated-probe','s','all','price',1,'a');turn_cache().finish(key,[dict(id='s',turns=[turn])]);old,exact=turn_cache().lookup(('isolated-probe','s','all','price',2,'b'));result['retainedTurnCache']=old==[turn] and not exact
-            service.request=lambda:None;card=LiveRateCard(dict(rate=46.1,details=[dict(name='a',rate=31.8),dict(name='b',rate=14.3)]));card.setGeometry(300,400,121,20);card.show();card.popup.inspect(card.value,card);card.popup.animation.setCurrentTime(160);app.processEvents();result['compactBubble']=card.popup.width()==294 and card.popup.height()==140
+            service.request=lambda:None;card=LiveRateCard(dict(rate=46.1,details=[dict(name='a',rate=31.8),dict(name='b',rate=14.3)]));card.setGeometry(300,400,121,20);card.show();card.popup.inspect(card.value,card)
+            card.popup.animation.setCurrentTime(card.popup.animation.duration());app.processEvents()
+            result['compactBubble']=card.popup.width()==294 and card.popup.height()==114
+            result['serviceSummary']=card.popup.service is service and card.popup.total==46.1 and bool(service.value.get('title'))
             click=QMouseEvent(QEvent.Type.MouseButtonRelease,QPointF(card.rect().center()),QPointF(card.mapToGlobal(card.rect().center())),Qt.MouseButton.LeftButton,Qt.MouseButton.NoButton,Qt.KeyboardModifier.NoModifier)
-            app.sendEvent(card,click);app.processEvents();result['serviceDetails']=not card.service_panel.doc.isEmpty();result['directServiceEntry']=card.service_panel.page=='service' and card.service_panel.isVisible() and not card.popup.isVisible()
-            app.sendEvent(card.service_panel,QEvent(QEvent.Type.WindowDeactivate));result['outsideClosesService']=not card.service_panel.isVisible();card.close();host.close()
+            app.sendEvent(card,click);result['clickKeepsHoverOnly']=card.popup.isVisible() and not hasattr(card,'service_panel')
+            card._hide_hint(animated=True);card.popup.animation.setCurrentTime(card.popup.animation.duration())
+            result['hoverClosed']=not card.popup.isVisible();card.close();host.close()
             result['qtSsl']=QSslSocket.supportsSsl()
             # Public read-only endpoints; no login or paid inference endpoint.
             network=QNetworkAccessManager();loop=QEventLoop();pending=[];responses={}
@@ -65,7 +69,7 @@ def run(output):
             for reply in pending:
                 if not reply.isFinished():reply.abort()
                 reply.deleteLater()
-        result['passed']=all(result.get(k) is True for k in ('pricingSaved','separateOfficialUnits','priceHistory','compactPricingHome','officialApiPage','officialCreditsPage','csvExport','costSummaryReuse','boundedSessionRow','inlineTurnParts','retainedTurnCache','compactBubble','serviceDetails','directServiceEntry','outsideClosesService','qtSsl'))
+        result['passed']=all(result.get(k) is True for k in ('pricingSaved','separateOfficialUnits','priceHistory','compactPricingHome','officialApiPage','officialCreditsPage','csvExport','costSummaryReuse','boundedSessionRow','inlineTurnParts','retainedTurnCache','compactBubble','serviceSummary','clickKeepsHoverOnly','hoverClosed','qtSsl'))
     except Exception as error:result.update(passed=False,error=repr(error))
     finally:prefs.path=old_path;prefs._cached=old_cache;service.request=original
     Path(output).write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8');return 0 if result['passed'] else 1

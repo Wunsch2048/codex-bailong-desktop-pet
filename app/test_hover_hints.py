@@ -59,11 +59,29 @@ class HoverHintTests(unittest.TestCase):
         for scale in (1.,1.25):
             with self.subTest(scale=scale),patch.object(self.b,'card_pixels',side_effect=lambda pixels:round(pixels*scale)):
                 self.h._show()
-                live.popup.inspect(live.value,live);live.popup.geometry_motion.setCurrentTime(200)
+                live.popup.inspect(live.value,live);self.h.popup.animation.setCurrentTime(self.h.popup.animation.duration())
                 self.assertEqual(self.h.popup.width(),round(268*scale))
                 self.assertEqual(self.h.popup.width(),live.popup.width())
                 self.assertEqual(self.h.popup.level,1.)
                 live.popup.dismiss(True)
+    def test_quota_popup_keeps_its_surface_during_status_height_change(self):
+        from weakref import ref
+        from quota_summary import QuotaSummary
+        card=QuotaSummary([dict(name='一周',remaining=65)],parent=self.b,
+                          anomaly=dict(change=-22,description='同条件下推测用量下降。'))
+        card.move(28,34);card.show();APP.processEvents()
+        badge=card.alert_badge
+        self.h.target=ref(badge);self.h._show()
+        popup=self.h.popup
+        self.assertTrue(popup.isVisible())
+        with patch('hover_hints.QCursor.pos',side_effect=lambda:badge.mapToGlobal(badge.rect().center())),patch.object(popup,'hide',wraps=popup.hide) as hide:
+            for sid in ('first','second'):
+                self.b.roster.observe(dict(session=sid,state='working'));self.b.refresh_status()
+            t=self.b.size_transition
+            self.assertTrue(t.running);self.assertIn(self.h,t.status_hovers)
+            t.complete();APP.processEvents()
+            self.assertTrue(popup.isVisible());hide.assert_not_called()
+
     def test_style_events_do_not_traverse_hover_ancestry(self):
         with patch.object(self.b,'isAncestorOf',side_effect=AssertionError('irrelevant ancestry')):
             self.assertFalse(self.h.eventFilter(self.b._header_actions[0],QEvent(QEvent.Type.StyleChange)))
@@ -78,7 +96,7 @@ class HoverHintTests(unittest.TestCase):
         popup=ObservedHint();anchor=QRect(self.b._header_actions[0].mapToGlobal(QPoint()),self.b._header_actions[0].size())
         try:
             with patch('hover_hints.motion_enabled',return_value=True):
-                popup.present('刷新','',anchor,self.b.screen());QTest.qWait(250)
+                popup.present('刷新','',anchor,self.b.screen());popup.animation.setCurrentTime(popup.animation.duration());APP.processEvents()
                 self.assertEqual(popup.level,1.);self.assertIn('刷新',paints)
                 geometry=QRect(popup.geometry());paints.clear()
                 popup.present('数据','',anchor,self.b.screen());QTest.qWait(100)
@@ -134,6 +152,31 @@ class HoverHintTests(unittest.TestCase):
         self.assertFalse(self.h.delay.isActive());self.assertFalse(self.h.popup.isVisible())
         self.b.show();APP.processEvents();self.outside();self.hover(0);self.assertTrue(wait_for(self.h.popup.isVisible))
         self.b.move(self.b.x()+10,self.b.y());APP.processEvents();self.assertFalse(self.h.popup.isVisible())
+    def test_tray_menu_uses_current_menu_and_closes_visible_hint(self):
+        from popup_motion import ContextMenu
+        tray=FakeTray();h=TrayHints(tray,self.b);menu=ContextMenu(self.b);menu.addAction('设置')
+        h.set_context_menu(menu)
+        with patch('hover_hints.QCursor.pos',return_value=tray.geometry().center()),patch('popup_motion.motion_enabled',return_value=True):
+            try:
+                h.enter();h._show();self.assertTrue(h.popup.isVisible())
+                menu.popup(tray.geometry().center());APP.processEvents()
+                self.assertFalse(h.popup.isVisible());self.assertFalse(h.watch.isActive())
+                menu.animation.setCurrentTime(menu.animation.duration()//2)
+                self.assertGreater(menu.motion.level,0.);self.assertLess(menu.motion.level,1.)
+                frames=[]
+                for stamp in (228,248,276):
+                    menu.animation.setCurrentTime(stamp);frames.append(menu.grab().toImage())
+                interior=QRect(5,5,frames[0].width()-10,frames[0].height()-10)
+                self.assertTrue(all(frame.copy(interior)==frames[0].copy(interior) for frame in frames[1:]))
+                menu.animation.setCurrentTime(menu.animation.duration())
+                QTest.keyClick(menu,Qt.Key.Key_Escape)
+                menu.animation.setCurrentTime(74);menu.grab()
+                self.assertLess(menu.windowOpacity(),1.)
+                self.assertIsNot(menu.graphicsEffect(),menu.motion)
+                menu.animation.setCurrentTime(menu.animation.duration())
+                self.assertFalse(menu.isVisible())
+            finally:menu.close();h.close()
+
     def test_tray_hover_survives_data_changes_and_stops_polling_after_leave(self):
         tray=FakeTray();h=TrayHints(tray,self.b)
         try:

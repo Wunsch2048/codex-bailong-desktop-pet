@@ -97,9 +97,9 @@ class CyclePlot(QWidget,RasterChart,ComboChart):
     def keyPressEvent(self,event):
         if not self.combo_key(event):super().keyPressEvent(event)
     def focusOutEvent(self,event):
-        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.dismiss_inspection()
+        if event.reason()!=Qt.FocusReason.ActiveWindowFocusReason:self.leave_inspection()
         super().focusOutEvent(event)
-    def leaveEvent(self,event):self.dismiss_inspection();self.hoverText.emit('');super().leaveEvent(event)
+    def leaveEvent(self,event):self.leave_inspection();self.hoverText.emit('');super().leaveEvent(event)
     def mouseReleaseEvent(self,event):
         if event.button()==Qt.MouseButton.LeftButton:
             for rect,c in self.hits:
@@ -243,8 +243,7 @@ class QuotaCompareView(QWidget):
         if self.actions is None:
             self.actions=CostActions(anchor,(('估算与对比条件',self.show_rules),('官方 Credits 价表',self.show_rates)))
             self.destroyed.connect(self.actions.deleteLater)
-        if self.actions.isVisible():self.actions.close()
-        else:self.actions.open()
+        self.actions.toggle()
     def subpage_host(self):
         ancestor=self.parentWidget()
         while ancestor is not None:
@@ -291,9 +290,16 @@ class QuotaCompareView(QWidget):
         rank=index+(1 if self.cycles and self.cycles[0]['closed'] else 0)
         return '上一轮额度' if rank<=1 else f'前{rank}轮额度'
     def select_current(self,*args):
-        self.selected_id=self.choice.currentData();self.update_selected(animate=True)
+        # The window and chart stay visible while the selected cycle settles.
+        # A caption crossfade makes both dates faint during consecutive clicks.
+        self.selected_id=self.choice.currentData()
+        enabled=self.updatesEnabled()
+        if enabled:self.setUpdatesEnabled(False)
+        try:self.update_selected()
+        finally:
+            if enabled:self.setUpdatesEnabled(True)
     def select_id(self,key):self.choice.setCurrentIndex(self.choice.findData(key))
-    def update_selected(self,animate=False):
+    def update_selected(self):
         c=next((c for c in self.cycles if c['id']==self.selected_id),None)
         self.choice.setEnabled(bool(self.cycles));self.plot.set_data(self.cycles,self.selected_id)
         index=self.choice.currentIndex();self.previous.setEnabled(index>=0 and index<len(self.cycles)-1);self.next.setEnabled(index>0)
@@ -325,7 +331,7 @@ class QuotaCompareView(QWidget):
         if not c:
             self.choice.title='暂无额度周期';self.choice.animate_caption(self.choice.title,False);self.period_line.setText('重置后开始记录新一轮')
             self.metrics.set_values('—','—');self.quality='缺少额度记录，无法只靠 Token 还原总量。';return
-        self.choice.title=quota_text(c);self.choice.animate_caption(self.choice.title,animate)
+        self.choice.title=quota_text(c);self.choice.animate_caption(self.choice.title,False)
         kind={'natural':'自然重置','extra':'额外补充','inferred':'起点推定','changed':'套餐或窗口变化'}.get(c['kind'],'起点推定')
         self.period_line.setText(kind);self.period_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.metrics.set_values(compact_tokens(c['used']),compact_tokens(c['estimated_total']) if c['estimated_total'] else '—')

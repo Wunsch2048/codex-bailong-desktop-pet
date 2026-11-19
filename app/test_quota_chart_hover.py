@@ -20,8 +20,9 @@ class QuotaHoverTests(unittest.TestCase):
     def inspect(self,index=1):
         self.plot.inspect_at(self.plot.hits[index][0].center());self.plot.show_inspection()
         self.assertTrue(self.plot._popup.isVisible())
-    def test_first_show_is_opaque_and_rows_are_available(self):
+    def test_fully_open_frame_is_opaque_and_rows_are_available(self):
         self.inspect();popup=self.plot._popup
+        popup.animation.setCurrentTime(popup.animation.duration())
         self.assertEqual(popup.level,1.);self.assertEqual(popup.record['rows'][0][0],'已用 Token')
         image=popup.grab().toImage();self.assertEqual(image.pixelColor(image.width()//2,image.height()//2).alpha(),255)
     def test_painted_gutters_are_part_of_continuous_hit_cells(self):

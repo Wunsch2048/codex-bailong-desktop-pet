@@ -1,18 +1,18 @@
 """One short clock for either independent digit slots or a whole numeric value."""
 import math
 import re
-from PySide6.QtCore import QObject,QVariantAnimation,QAbstractAnimation,QEasingCurve,Qt,QPointF,QRectF,QTimer
+from PySide6.QtCore import QObject,QVariantAnimation,QAbstractAnimation,QEasingCurve,Qt,QRectF,QTimer
 from PySide6.QtGui import QFontMetricsF
 from settings_controls import motion_enabled,play_animation
 
-DIGIT_EASING=QEasingCurve(QEasingCurve.Type.BezierSpline)
-DIGIT_EASING.addCubicBezierSegment(QPointF(.42,0),QPointF(.58,1),QPointF(1,1))
+DIGIT_EASING=QEasingCurve(QEasingCurve.Type.InOutSine)
+DIGIT_DURATION_MS=320
+MAX_DIGIT_DURATION_MS=420
 
 class NumberRoll(QObject):
     def __init__(self,widget,digits=False,allow_decrease=False):
         super().__init__(widget);self.widget=widget;self.digits=digits;self.current='';self.target='';self.value=None;self.target_value=None
-        self.progress=1.;self.direction=1;self.pending=None;self.digit_tracks={};self.allow_decrease=allow_decrease
-        self._clock_progress=1.
+        self.progress=1.;self.direction=1;self.pending=None;self.allow_decrease=allow_decrease;self.digit_tracks={}
         self._font_key=None;self._slots_key=None;self._slots=();self._old_slots=();self._paint_rect=None;self.rebuilding=False;self._rebuild_ticket=0
         self.animation=QVariantAnimation(self);self.animation.setDuration(180);self.animation.setStartValue(0.);self.animation.setEndValue(1.)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic);self.animation.valueChanged.connect(self.advance);self.animation.finished.connect(self.finish)
@@ -27,38 +27,42 @@ class NumberRoll(QObject):
         if self.animation.state()==QAbstractAnimation.State.Running:
             self.pending=(text,value) if text!=self.target else None;self.target_value=value if text==self.target else self.target_value;return
         if text==self.current:self.value=self.target_value=value;return
-        # Day rollovers/corrections and unit switches are not growing digits.
+        # Day resets, corrections and unit changes use the settled layout.
         suffix=lambda s:''.join(c for c in s if c.isalpha())
         if self.digits and ((value<self.value and not self.allow_decrease) or suffix(text)!=suffix(self.current)):
             self.snap(text,value);return
-        self.digit_tracks,steps=self.tracks(self.current,text) if self.digits else ({},0)
-        self.animation.setDuration(min(420,220+steps*10) if steps>1 else 180)
+        self.digit_tracks=self.tracks(self.current,text) if self.digits else {}
+        longest=max(self.digit_tracks.values(),default=1)
+        duration=min(MAX_DIGIT_DURATION_MS,DIGIT_DURATION_MS+(longest-1)*12)
+        self.animation.setDuration(duration if self.digits else 180)
         self.animation.setEasingCurve(QEasingCurve.Type.Linear if self.digits else QEasingCurve.Type.OutCubic)
-        self._clock_progress=0.
         self.target=text;self.target_value=value;self.direction=1 if value>=self.value else -1;self.progress=0.;play_animation(self.animation)
     @staticmethod
     def tracks(before,after):
-        pattern=r'(\d+)(\.\d+)?(.*)'
-        old=re.fullmatch(pattern,before);new=re.fullmatch(pattern,after)
-        if not old or not new or old.groups()[2]!=new.groups()[2] or len(old[2] or '')!=len(new[2] or ''):
-            return {},0
-        first=int(old[1]+(old[2] or '').replace('.',''))
-        last=int(new[1]+(new[2] or '').replace('.',''))
-        steps=abs(last-first)
-        if steps<=1:return {},steps
-        direction=1 if last>first else -1
-        tracks={};place=1
-        whole=max((old[1],new[1]),key=len)
-        for index,char in enumerate(reversed(whole+(new[2] or '')+new[3])):
-            if index<len(new[3]) or char=='.':continue
-            start,end=first//place,last//place
-            if end!=start:
-                carry=place-first%place if direction>0 else first%place+1
-                delay=0. if place==1 else min(.68,.65*carry/steps)
-                blank=place>=10**(min(len(old[1]),len(new[1]))+len((new[2] or '').replace('.','')))
-                tracks[index]=(start,abs(end-start),delay,blank)
+        pattern=r'([0-9]+(?:,[0-9]{3})*)(\.[0-9]+)?(.*)'
+        old=re.fullmatch(pattern,before)
+        new=re.fullmatch(pattern,after)
+        if not old or not new or old[3]!=new[3] or len(old[2] or '')!=len(new[2] or ''):
+            return {}
+        def integer(match):
+            return int((match[1]+(match[2] or '')).replace('.','').replace(',',''))
+        first,last=integer(old),integer(new)
+        layout=max((before,after),key=len)
+        amount=layout[:len(layout)-len(new[3])]
+        tracks={}
+        place=1
+        for index,char in enumerate(reversed(amount),start=len(new[3])):
+            if not char.isdigit():continue
+            count=abs(last//place-first//place)
+            if count%10==0:count=0
+            if count>10:
+                # Keep the correct landing digit and enough visible travel.
+                remainder=count%10
+                count=remainder+10 if remainder<=3 else remainder
+            if count>1:tracks[index]=count
             place*=10
-        return tracks,steps
+        return tracks
+
     def snap(self,text=None,value=None):
         self.animation.stop()
         if text is None:text,value=self.pending or (self.target,self.target_value)
@@ -67,7 +71,6 @@ class NumberRoll(QObject):
         if self._paint_rect is None:self.widget.update()
         else:self.widget.update(self._paint_rect.toAlignedRect())
     def advance(self,value):
-        self._clock_progress=float(value)
         self.progress=DIGIT_EASING.valueForProgress(value) if self.digits else value
         self.redraw()
     def finish(self):
@@ -102,7 +105,6 @@ class NumberRoll(QObject):
             baseline=rect.center().y()+(fm.ascent()-fm.descent())/2
             digit_clip=rect.intersected(QRectF(rect.left(),baseline+ink.top()-1,rect.width(),ink.height()+2))
             distance=digit_clip.height()
-            offset=self.progress*distance*self.direction
             target=self.target if running else self.current
             key=(self._font_key,self.current,target,rect.x(),rect.y(),rect.width(),rect.height())
             if key!=self._slots_key:
@@ -120,6 +122,11 @@ class NumberRoll(QObject):
                     b,new_slot=new[index] if index<len(new) else ('',old[index][1])
                     slots.append((a,b,new_slot));old_slots.append(old_slot)
                 self._slots=tuple(slots);self._old_slots=tuple(old_slots);self._slots_key=key
+            progress=self.progress if running else 1.
+            # The sine easing's speed is continuous across digit boundaries.
+            speed=2.*math.sqrt(max(0.,progress*(1.-progress)))
+            softness=min(1.25,distance*.09)*speed
+            opacity=p.opacity()
             tracks=self.digit_tracks if running and fm.horizontalAdvance(self.current)<=rect.width() and fm.horizontalAdvance(target)<=rect.width() else {}
             for index,((a,b,slot),old_slot) in enumerate(zip(self._slots,self._old_slots)):
                 right=old_slot.right()+(slot.right()-old_slot.right())*(self.progress if running else 1.)
@@ -127,24 +134,45 @@ class NumberRoll(QObject):
                 before=QRectF(right-aw,rect.y(),aw,rect.height())
                 after=QRectF(right-bw,rect.y(),bw,rect.height())
                 flags=Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter
-                if index in tracks:
-                    start,count,delay,blank=tracks[index]
-                    local_progress=max(0.,(self._clock_progress-delay)/(1-delay))
-                    phase=count*DIGIT_EASING.valueForProgress(local_progress)
-                    step=min(count,int(phase));fraction=phase-step
-                    p.save();p.setClipRect(digit_clip)
-                    for shift in range(1 if step==count else 2):
-                        digit_value=start+(step+shift)*self.direction
-                        if blank and digit_value==0:continue
-                        digit_text=str(digit_value%10)
-                        width=fm.horizontalAdvance(digit_text)
-                        p.drawText(QRectF(right-width,rect.y()+(shift-fraction)*distance*self.direction,width,rect.height()),flags,digit_text)
-                    p.restore()
-                elif a==b:p.drawText(after,flags,b)
-                else:
-                    p.save();p.setClipRect(digit_clip)
-                    p.drawText(before.translated(0,-offset),flags,a);p.drawText(after.translated(0,self.direction*distance-offset),flags,b)
-                    p.restore()
+                count=tracks.get(index,1)
+                if a==b and count==1:
+                    p.drawText(after,flags,b)
+                    continue
+                p.save()
+                p.setClipRect(digit_clip,Qt.ClipOperation.IntersectClip)
+                phase=progress*count
+                step=min(count-1,int(phase))
+                fraction=phase-step
+                if count>1:
+                    start=int(a or '0')
+                    if step:
+                        a=str((start+step*self.direction)%10)
+                        width=fm.horizontalAdvance(a)
+                        before=QRectF(right-width,rect.y(),width,rect.height())
+                    if step+1<count:
+                        b=str((start+(step+1)*self.direction)%10)
+                        width=fm.horizontalAdvance(b)
+                        after=QRectF(right-width,rect.y(),width,rect.height())
+                offset=fraction*distance*self.direction
+                for text,box,shift,alpha in (
+                    (a,before,-offset if a.isdigit() else 0.,1.-fraction),
+                    (b,after,self.direction*distance-offset if b.isdigit() else 0.,fraction),
+                ):
+                    if not text:continue
+                    if text.isdigit():
+                        # Glyphs remain readable while the clip hides their outer edges.
+                        alpha=.55+.45*alpha
+                    elif alpha<=0.:continue
+                    box.translate(0,shift)
+                    if text.isdigit() and softness>.08:
+                        # Two faint samples soften only the glyph in motion.
+                        p.setOpacity(opacity*alpha*.22*speed)
+                        p.drawText(box.translated(0,-softness),flags,text)
+                        p.drawText(box.translated(0,softness),flags,text)
+                        alpha*=1.-.18*speed
+                    p.setOpacity(opacity*alpha)
+                    p.drawText(box,flags,text)
+                p.restore()
         p.restore()
     def width(self,font,text=None):
         fm,digit=self.metrics(font);text=self.target if text is None else text

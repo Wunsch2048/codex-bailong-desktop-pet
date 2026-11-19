@@ -150,9 +150,9 @@ class ModeTests(unittest.TestCase):
     def test_read_completion_disappears_and_retains_other_running_conversation(self):
         b=self.b;icon=b.status_indicator;clock=[0.];icon.clock=lambda:clock[0]
         for sid,state in [('a','complete'),('b','working')]:b.roster.observe(dict(session=sid,state=state,title='会话'+sid))
-        icon.notify_complete(dict(session='a',turn='turn-a'));icon.observe(dict(session='b',state='working',active=1));b.redraw()
+        icon.notify_complete(dict(session='a',turn='turn-a'));icon.observe(dict(session='b',state='working',active=1));b.redraw();b.size_transition.complete();APP.processEvents()
         self.assertEqual(len(b.status_view.text().splitlines()),2)
-        clock[0]=3.;self.assertTrue(icon.acknowledge_seen([('a','turn-a')]));b.redraw()
+        clock[0]=3.;self.assertTrue(icon.acknowledge_seen([('a','turn-a')]));b.redraw();b.size_transition.complete();APP.processEvents()
         self.assertEqual(icon.visual(),'busy');self.assertNotIn('会话a',b.status_view.text());self.assertIn('会话b',b.status_view.text())
 
 class ChartEntryTests(unittest.TestCase):

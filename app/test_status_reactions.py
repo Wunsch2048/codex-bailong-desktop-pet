@@ -69,7 +69,7 @@ class ScrollTests(unittest.TestCase):
         self.view.animation.setCurrentTime(300);APP.processEvents();self.view.animation.setCurrentTime(300);APP.processEvents()
         self.assertEqual(self.view.current,'最新状态19');self.assertIsNone(self.view.pending)
     def test_expansion_keeps_full_plain_text_and_collapsed_compact_size(self):
-        self.b.message('很长的完整状态内容。'*25);self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
+        self.b.message('很长的完整状态内容。'*25);self.b.size_transition.complete();APP.processEvents();self.b.toggle_details();self.b.size_transition.complete();APP.processEvents()
         self.assertTrue(self.view.full);self.assertEqual(self.view.text(),self.b.status)
         expanded=self.b.height();self.b.toggle_details();self.b.size_transition.complete();APP.processEvents();self.assertLess(self.b.height(),expanded)
 

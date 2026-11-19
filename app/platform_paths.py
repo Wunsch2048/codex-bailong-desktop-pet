@@ -27,5 +27,8 @@ def app_root():
     """
     if getattr(sys,'frozen',False):
         exe=Path(sys.executable).resolve()
-        return exe.parents[1]/'Resources' if MACOS and exe.parent.name=='MacOS' else exe.parent
+        # Only a real Name.app/Contents/MacOS layout maps to Contents/Resources;
+        # a plain folder that happens to be called MacOS keeps the executable folder.
+        bundle=exe.parent.name=='MacOS' and exe.parents[1].name=='Contents' and exe.parents[2].suffix=='.app'
+        return exe.parents[1]/'Resources' if MACOS and bundle else exe.parent
     return Path(__file__).resolve().parents[1]

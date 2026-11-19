@@ -218,6 +218,14 @@ class AppRootTests(unittest.TestCase):
             plain=Path(folder)/'dist/BailongEnhanced/BailongEnhanced'
             with patch('platform_paths.MACOS',True),patch('sys.frozen',True,create=True),patch('sys.executable',str(plain)):
                 self.assertEqual(platform_paths.app_root(),plain.resolve().parent)
+    def test_frozen_macos_plain_macos_folder_keeps_the_executable_folder(self):
+        import platform_paths
+        with tempfile.TemporaryDirectory() as folder:
+            # A folder named MacOS that is not inside Name.app/Contents is an ordinary program folder.
+            for parts in ('dist/MacOS/BailongEnhanced','dist/Contents/MacOS/BailongEnhanced','Bailong.app/MacOS/BailongEnhanced'):
+                exe=Path(folder)/parts
+                with self.subTest(exe=parts),patch('platform_paths.MACOS',True),patch('sys.frozen',True,create=True),patch('sys.executable',str(exe)):
+                    self.assertEqual(platform_paths.app_root(),exe.resolve().parent)
     def test_callers_resolve_through_app_root(self):
         import autostart,book_reference,pet,platform_paths,typography
         root=platform_paths.app_root()

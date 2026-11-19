@@ -51,7 +51,7 @@ class BubbleTests(unittest.TestCase):
         b.show();settle()
         for sid in ('a','b','c'):
             b.roster.observe(dict(session=sid,state='working',title=sid))
-        b.refresh_status()
+        b.refresh_status();settle()
         for expanded in (False,True):
             if expanded:
                 b.toggle_details();settle()
@@ -129,7 +129,7 @@ class BubbleTests(unittest.TestCase):
     def test_expanded_view_preserves_full_message_and_stale_explanation(self):
         text='长状态消息，包含完整工作进度和执行结果。'*10
         self.bubble.status=text;self.bubble.quota_caption='接口暂不可用 · 下方为上次记录';self.bubble.reset_feed_error=True
-        self.bubble.windows=[dict(name='一周',remaining=None,resetsAt=None)];self.bubble.redraw();small=self.bubble.height()
+        self.bubble.windows=[dict(name='一周',remaining=None,resetsAt=None)];self.bubble.redraw();settle();small=self.bubble.height()
         self.bubble.toggle_details();settle()
         labels=[w.text() for w in self.bubble.findChildren(QLabel) if w.isVisible()]
         self.assertIn(text,labels);self.assertIn(self.bubble.quota_caption,labels)

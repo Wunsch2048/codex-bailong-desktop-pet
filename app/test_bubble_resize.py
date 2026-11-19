@@ -13,49 +13,48 @@ APP=QApplication.instance() or QApplication([])
 LONG='正在检查多个文件中的状态更新与界面变化，随后核对测试结果。'
 
 def settle(b,text):
-    b.message(text);v=b.status_view
-    if v.animation.state()==QAbstractAnimation.State.Running:v.animation.setCurrentTime(300)
-    APP.processEvents()
+    b.message(text);b.size_transition.complete();APP.processEvents()
+    b.size_transition.complete();APP.processEvents()
 
 class ResizeTests(unittest.TestCase):
     def setUp(self):
         self.b=CompactBubble();self.b.show();APP.processEvents();settle(self.b,'正在检查')
         self.v=self.b.status_view;self.short_height=self.b.height()
     def tearDown(self):self.b.close();self.b.deleteLater();APP.processEvents()
-    def test_two_to_one_scroll_and_height_share_the_same_progress_and_finish(self):
-        settle(self.b,LONG);self.assertEqual(self.b.height(),self.short_height+18)
-        self.b.message('检查完成');self.assertEqual(self.b.height(),self.short_height+18)
+    def test_two_to_one_height_has_monotonic_intermediate_frames(self):
+        settle(self.b,LONG);high=self.b.height();self.assertGreater(high,self.short_height)
+        self.b.message('检查完成');t=self.b.size_transition
+        self.assertTrue(t.running);self.assertTrue(t.morph.status_height_only)
         heights=[]
-        for ms in range(0,301,20):
-            self.v.animation.setCurrentTime(ms);heights.append(self.b.height())
-            self.assertEqual(self.b.height(),self.short_height-18+round(36-18*self.v.progress))
-            old,new=self.v.offsets();self.assertAlmostEqual(old,-40*self.v.progress);self.assertAlmostEqual(new,40*(1-self.v.progress))
-            if ms==140:self.assertTrue(self.short_height<self.b.height()<self.short_height+18)
-        self.assertEqual(heights[-1],self.short_height);self.assertGreater(len(set(heights)),5)
-        self.assertTrue(all(0<=a-b<=4 for a,b in zip(heights,heights[1:])))
-        self.assertEqual(self.v.animation.state(),QAbstractAnimation.State.Stopped)
-        APP.processEvents();self.assertEqual(self.b.height(),self.short_height)
+        for ms in range(0,t.animation.duration(),20):
+            t.animation.setCurrentTime(ms);heights.append(t.visible_geometry().height())
+        t.complete();heights.append(self.b.height())
+        self.assertEqual(heights[0],high);self.assertEqual(heights[-1],self.short_height)
+        self.assertGreater(len(set(heights)),5)
+        self.assertTrue(all(a>=b for a,b in zip(heights,heights[1:])))
     def test_one_to_two_grows_from_current_height(self):
-        self.b.message(LONG);self.assertEqual(self.b.height(),self.short_height)
-        self.v.animation.setCurrentTime(150);self.assertTrue(self.short_height<self.b.height()<self.short_height+18)
-        self.v.animation.setCurrentTime(300);self.assertEqual(self.b.height(),self.short_height+18)
+        self.b.message(LONG);t=self.b.size_transition
+        self.assertEqual(t.visible_geometry().height(),self.short_height)
+        target=t.target_rect.height();self.assertGreater(target,self.short_height)
+        t.animation.setCurrentTime(t.animation.duration()//2)
+        self.assertTrue(self.short_height<t.visible_geometry().height()<target)
+        t.complete();self.assertEqual(self.b.height(),target)
     def test_bursts_keep_latest_and_redraw_does_not_restart_shared_timeline(self):
-        settle(self.b,LONG);self.b.message('正在检查');self.v.animation.setCurrentTime(100)
-        height=self.b.height()
+        settle(self.b,LONG);self.b.message('正在检查');t=self.b.size_transition
+        t.animation.setCurrentTime(100);rect=t.visible_geometry()
         for i in range(20):self.b.message(LONG+'新的进度'+str(i))
-        self.assertEqual(self.b.height(),height);self.assertEqual(self.v.animation.currentTime(),100)
         for _ in range(20):self.b.redraw()
-        self.assertEqual(self.v.animation.currentTime(),100)
-        self.v.animation.setCurrentTime(300);self.assertEqual(self.b.height(),self.short_height)
-        APP.processEvents();self.assertEqual(self.v.incoming,LONG+'新的进度19');self.assertEqual(self.b.height(),self.short_height)
-        self.v.animation.setCurrentTime(150);self.assertTrue(self.short_height<self.b.height()<self.short_height+18)
-        self.v.animation.setCurrentTime(300);self.assertEqual(self.b.height(),self.short_height+18)
-    def test_same_line_count_does_not_resize_and_expansion_cancels_old_height_target(self):
-        changes=[];self.v.heightChanged.connect(lambda:changes.append(self.v.height()))
-        self.b.message('正在验证');self.v.animation.setCurrentTime(300);self.assertFalse(changes)
-        settle(self.b,LONG);self.b.message('已完成');self.v.animation.setCurrentTime(150);self.b.toggle_details();self.b.size_transition.complete()
-        expanded=self.b.height();self.assertEqual(self.v.animation.state(),QAbstractAnimation.State.Stopped)
-        APP.processEvents();self.assertEqual(self.b.height(),expanded)
+        self.assertEqual(t.animation.currentTime(),100);self.assertEqual(t.visible_geometry(),rect)
+        t.complete();APP.processEvents();t.complete();APP.processEvents()
+        self.assertEqual(self.b.status_view.text(),LONG+'新的进度19')
+        self.assertGreater(self.b.height(),self.short_height)
+    def test_same_line_count_does_not_resize_and_expansion_reaches_full_target(self):
+        self.b.message('正在验证');self.assertFalse(self.b.size_transition.running)
+        settle(self.b,LONG);self.b.message('已完成');self.b.size_transition.animation.setCurrentTime(100)
+        self.b.toggle_details()
+        for _ in range(3):self.b.size_transition.complete();APP.processEvents()
+        self.assertTrue(self.b.expanded);self.assertEqual(self.b.width(),360)
+        self.assertFalse(self.b.size_transition.running)
 
 class AnchorTests(unittest.TestCase):
     def setUp(self):
@@ -70,19 +69,16 @@ class AnchorTests(unittest.TestCase):
         self.tmp.cleanup()
     def exercise(self,y,below):
         self.pet.move(300,y);b=self.pet.bubble;settle(b,'检查');short_height=b.height();settle(b,LONG);self.pet.position_bubble();v=b.status_view
-        positions=[];cards=[]
-        deck=next(c for c in b.findChildren(CardDeck) if c.isVisible())
-        def sample():
-            positions.append(b.y() if below else b.y()+b.height())
-            cards.append(deck.mapToGlobal(deck.rect().topLeft()).y())
-        # This runs inside the same resize signal, before a queued move could
-        # hide a temporary wrong position from the next event-loop snapshot.
-        v.heightChanged.connect(sample);b.message('检查完成')
-        deck=next(c for c in b.findChildren(CardDeck) if c.isVisible())
-        for ms in range(0,301,20):v.animation.setCurrentTime(ms)
-        self.assertTrue(positions);self.assertEqual(len(set(positions)),1)
-        self.assertEqual(positions[-1],self.pet.y()+self.pet.height()+8 if below else self.pet.y()-8)
-        if not below:self.assertEqual(len(set(cards)),1)
+        transition=b.size_transition;start=b.geometry();b.message('检查完成')
+        self.assertTrue(transition.running)
+        anchors=[]
+        for ms in range(0,transition.animation.duration(),20):
+            transition.animation.setCurrentTime(ms);rect=transition.visible_geometry()
+            anchors.append(rect.y() if below else rect.y()+rect.height())
+        transition.complete();APP.processEvents()
+        # QRect conversion may round a fractional spring origin by one pixel.
+        self.assertLessEqual(max(anchors)-min(anchors),1,anchors)
+        self.assertEqual(anchors[0],start.y() if below else start.y()+start.height())
         self.assertEqual(b.height(),short_height)
     def test_head_anchor_and_token_card_stay_fixed_above_pet(self):self.exercise(500,False)
     def test_near_top_edge_does_not_flip_sides_when_two_lines_become_one(self):

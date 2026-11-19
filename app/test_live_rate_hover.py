@@ -105,7 +105,10 @@ class LiveRateHoverTests(unittest.TestCase):
         card._watch_hint();QTest.qWait(40)
         self.position=card.mapToGlobal(card.rect().center());card._watch_hint();QTest.qWait(200)
         self.assertTrue(card.popup.isVisible())
-        self.position=QPoint(700,500);card._watch_hint();QTest.qWait(365)
+        self.position=QPoint(700,500);card._watch_hint()
+        for _ in range(50):
+            if not card.popup.isVisible():break
+            QTest.qWait(20)
         self.assertFalse(card.popup.isVisible());self.assertFalse(card.hint_watch.isActive())
 
     def test_popup_pointer_and_scroll_survive_same_surface_rebuild(self):

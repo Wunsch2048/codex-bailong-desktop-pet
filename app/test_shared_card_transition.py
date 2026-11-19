@@ -47,7 +47,7 @@ class SharedCardTransitionTests(unittest.TestCase):
     def test_conversation_text_stays_visible_between_endpoints(self):
         for sid in ('a','b'):
             self.b.roster.observe(dict(session=sid,state='working',active=1,title='检查会话 '+sid,display='正在编辑文件'))
-        self.b.redraw();APP.processEvents()
+        self.b.redraw();APP.processEvents();self.b.size_transition.complete();APP.processEvents()
         for direction in ('expand','collapse'):
             t=self.transition();m=t.morph;canvas=t.canvas_rect;ratio=self.b.devicePixelRatioF()
             part=m.shared_parts['conversations']

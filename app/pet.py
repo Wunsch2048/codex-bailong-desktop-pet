@@ -230,6 +230,15 @@ class Pet(QWidget):
             if sound.is_file():
                 try:winsound.PlaySound(str(sound),winsound.SND_FILENAME|winsound.SND_ASYNC|winsound.SND_NODEFAULT)
                 except RuntimeError:pass
+        elif sys.platform=='darwin' and QApplication.platformName()=='cocoa':
+            # afplay starts in a few ms without blocking the UI thread.
+            sound=ROOT/'app/sounds/click.wav'
+            if sound.is_file():
+                import subprocess
+                old=getattr(self,'_click_process',None)
+                if old is not None and old.poll() is None:old.terminate() # like SND_ASYNC, a new click replaces the previous one
+                try:self._click_process=subprocess.Popen(['/usr/bin/afplay',str(sound)],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,close_fds=True)
+                except OSError:self._click_process=None
     def choose(self,item):
         self.click_timer.stop();self.last_click=None;self.generation+=1
         try:self.play_click_sound();self.play(item,'variant');self.say_action_line(item)

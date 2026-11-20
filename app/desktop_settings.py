@@ -1,6 +1,7 @@
 """Non-modal settings, live controls and character diagnostics."""
 from theme_runtime import set_theme_style,theme_style_source
 import copy
+import os,sys
 import threading
 from PySide6.QtCore import Qt,QThread,Signal,QTimer
 from PySide6.QtGui import QShortcut,QKeySequence
@@ -672,7 +673,11 @@ class SettingsDialog(QDialog):
         if item:self.pet.choose(item,interactive=False,manual=True)
     def select_converter(self):
         if self.job and self.job.isRunning():self.library_status.setText('正在检查或导入，请稍等…');return
-        path,_=QFileDialog.getOpenFileName(self,'选择 FFmpeg 转换工具（仅导入 WebM 时使用）','','FFmpeg (ffmpeg*.exe);;所有文件 (*)')
+        start,pattern='','FFmpeg (ffmpeg*.exe);;所有文件 (*)'
+        if sys.platform=='darwin':
+            # Homebrew installs ffmpeg without an extension; open in its bin folder when present.
+            start=next((p for p in ('/opt/homebrew/bin','/usr/local/bin') if os.path.isdir(p)),'');pattern='FFmpeg (ffmpeg);;所有文件 (*)'
+        path,_=QFileDialog.getOpenFileName(self,'选择 FFmpeg 转换工具（仅导入 WebM 时使用）',start,pattern)
         if not path:return
         self.library_status.setText('正在后台验证转换工具…')
         self.job=ConverterJob(path,None,self)

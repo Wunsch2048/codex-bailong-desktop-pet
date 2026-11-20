@@ -72,9 +72,25 @@ def save_material_root(state,path):
     path=plain(path)
     atomic_json(Path(state)/'material-location.json',dict(schema=1,path=str(path)))
 
+def system_alias(p):
+    """macOS only: rewrite Apple's fixed /var, /tmp and /etc aliases to /private; every other path and platform is returned unchanged.
+
+    Temporary and per-user cache folders live under /var on macOS, so the link checks
+    below would reject them all. User-created links are not followed here.
+    """
+    if sys.platform=='darwin':
+        for alias in ('/var','/tmp','/etc'):
+            base=Path(alias)
+            if p==base or base in p.parents:
+                # Rewrite only when the alias really is Apple's link to /private; otherwise keep the path as given.
+                target=Path('/private')/base.name
+                return target/p.relative_to(base) if base.resolve()==target else p
+    return p
+
 def plain(path):
     p=Path(path).absolute()
     if not p.is_absolute() or p==Path(p.anchor):raise ValueError('请选择独立的应用文件夹')
+    p=system_alias(p)
     for part in (p,*p.parents):
         if part.is_symlink() or part.is_junction():raise ValueError('目录不能是符号链接或目录联接')
     return p.parent.resolve()/p.name

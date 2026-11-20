@@ -72,6 +72,39 @@ class StorageTests(unittest.TestCase):
         locations.save_material_root(state,external)
         self.assertEqual(locations.material_root(state),external)
         self.assertFalse(external.exists())
+    def test_system_alias_leaves_every_path_unchanged_off_macos(self):
+        for platform in ('win32','linux'):
+            for value in ('/var/folders/x','/tmp/x','/etc/x',str(self.root/'data')):
+                with self.subTest(platform=platform,value=value),patch.object(locations.sys,'platform',platform):
+                    path=Path(value);self.assertIs(locations.system_alias(path),path)
+    def test_macos_alias_is_rewritten_only_when_it_resolves_to_private(self):
+        real_resolve=Path.resolve
+        for alias in ('/var','/tmp','/etc'):
+            path=Path(alias)/'child/file'
+            for resolved,expected in ((Path('/private'+alias),Path('/private'+alias)/'child/file'),(Path(alias),path),(Path('/Volumes/Other'+alias),path),(Path('/private/other'),path)):
+                def fake(self,*args,**kwargs):
+                    return resolved if self==Path(alias) else real_resolve(self,*args,**kwargs)
+                with self.subTest(alias=alias,resolved=str(resolved)),patch.object(locations.sys,'platform','darwin'),patch.object(Path,'resolve',fake):
+                    self.assertEqual(locations.system_alias(path),expected)
+                    if expected==path:self.assertIs(locations.system_alias(path),path)
+    @unittest.skipUnless(locations.sys.platform=='darwin','macOS system aliases')
+    def test_macos_system_aliases_are_canonical_but_user_links_stay_rejected(self):
+        import index_maintenance
+        for alias in ('/var','/tmp','/etc'):
+            with self.subTest(alias=alias):
+                self.assertEqual(locations.system_alias(Path(alias)/'child/file'),Path('/private'+alias)/'child/file')
+                self.assertEqual(locations.plain(Path(alias)/'bailong-missing/child'),Path('/private'+alias)/'bailong-missing/child')
+        for value in ('/variable/x','/usr/local/x','/private/var/x'):
+            with self.subTest(value=value):self.assertEqual(locations.system_alias(Path(value)),Path(value))
+        with tempfile.TemporaryDirectory(dir='/tmp') as folder:
+            root=Path(folder);self.assertFalse(str(root).startswith('/private'))
+            target=root/'real';target.mkdir();link=root/'linked';link.symlink_to(target,target_is_directory=True)
+            self.assertEqual(locations.plain(root/'app'),root.resolve()/'app')
+            self.assertEqual(index_maintenance.plain(root/'tokens.sqlite3'),root.resolve()/'tokens.sqlite3')
+            for check in (locations.plain,index_maintenance.plain):
+                with self.subTest(check=check.__module__):
+                    with self.assertRaises(ValueError):check(link/'tokens.sqlite3')
+                    with self.assertRaises(ValueError):check(link)
     def test_install_discovery_uses_registered_directory_and_running_version(self):
         self.isolated=patch.dict(os.environ,BAILONG_ISOLATED='0');self.isolated.start();self.addCleanup(self.isolated.stop)
         custom=self.root/'D/Apps/BailongEnhanced'

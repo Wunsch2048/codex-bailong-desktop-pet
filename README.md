@@ -63,6 +63,8 @@ Linux 适配源码已合入主分支，预览包由 [helantianshen](https://gith
 
 ### macOS
 
+部分 macOS 适配源码已合入主分支，安装包仍由社区维护。
+
 [Kki1ds 社区版](https://github.com/Kki1ds/codex-bailong-desktop-pet)提供 Apple Silicon DMG，未公证、无应用内更新。[下载与安装说明](https://github.com/Kki1ds/codex-bailong-desktop-pet/releases)以维护者仓库为准。
 
 社区包由对应作者测试和发布，平台问题请前往对应仓库反馈；Windows 安装器和程序补丁不适用于 Linux 或 macOS。

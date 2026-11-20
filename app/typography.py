@@ -8,8 +8,12 @@ from PySide6.QtGui import QFont,QFontDatabase,QGuiApplication
 LATIN_FAMILY='Chakra Petch'
 CHINESE_FAMILY='Noto Sans SC'
 FONT_FAMILIES=[LATIN_FAMILY,CHINESE_FAMILY,'Microsoft YaHei UI','Microsoft YaHei','Segoe UI','sans-serif']
+if sys.platform=='darwin':
+    # The bundled faces come first on every platform; only the system fallbacks differ on macOS.
+    FONT_FAMILIES=[LATIN_FAMILY,CHINESE_FAMILY,'PingFang SC','Hiragino Sans GB','Helvetica Neue','sans-serif']
 FONT_CSS='font-family:'+','.join('"'+name+'"' for name in FONT_FAMILIES)+';font-weight:500;'
-ROOT=Path(sys.executable).resolve().parent if getattr(sys,'frozen',False) else Path(__file__).resolve().parents[1]
+from platform_paths import app_root
+ROOT=app_root()
 BUNDLED_FONTS=('ChakraPetch-Regular.ttf','ChakraPetch-Medium.ttf','ChakraPetch-SemiBold.ttf',
                'NotoSansSC-Regular.otf','NotoSansSC-Medium.otf','NotoSansSC-Bold.otf')
 _font_ids=None
